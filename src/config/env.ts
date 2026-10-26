@@ -21,7 +21,7 @@ export const LOG_CONFIG = {
 } as const;
 
 export const TOAST_CONFIG = {
-  ERROR_DURATION: parseInt(import.meta.env.VITE_TOAST_ERROR_DURATION || "8000", 10),
+  ERROR_DURATION: parseInt(import.meta.env.VITE_TOAST_ERROR_DURATION || "3000", 10),
 } as const;
 
 export default {

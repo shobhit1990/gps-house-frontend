@@ -5,7 +5,7 @@ import { baseQueryWithInterceptor } from "./utils/baseQuery";
 export const api = createApi({
   reducerPath: "api",
   baseQuery: baseQueryWithInterceptor,
-  tagTypes: ["Auth"],
+  tagTypes: ["Auth", "Master"],
   endpoints: () => ({}),
 });
 
