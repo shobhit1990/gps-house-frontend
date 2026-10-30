@@ -6,8 +6,10 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Plus, RefreshCw, Search } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddTransporterDialog, type TransporterDraft } from "@/components/Transporter/AddTransporterDialog";
+import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery } from "@/store/services/api/Master";
+import { useGetTransportersQuery } from "@/store/services/api/Transporter";
 
 type TransporterRecord = {
 	id: number;
@@ -57,7 +59,24 @@ export default function Transporter() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<TransporterRecord[]>([]);
+	const { data: transporterList = [], isFetching, refetch } = useGetTransportersQuery();
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const rows = useMemo<TransporterRecord[]>(() => {
+		const clientNames = new Map(clientMaster.map((client) => [client.id, client.name]));
+		return transporterList.map((transporter, index) => ({
+			id: index + 1,
+			username: transporter.username ?? "",
+			client: clientNames.get(transporter.client) ?? transporter.client ?? "",
+			vehicleCount: 0,
+			payment: "",
+			contactPerson: transporter.name ?? "",
+			phone: transporter.phone ?? "",
+			email: transporter.email ?? "",
+			company: transporter.company ?? "",
+			inactiveTime: transporter.inactiveTime == null ? "" : String(transporter.inactiveTime),
+			timezone: transporter.timezone ?? "",
+		}));
+	}, [transporterList, clientMaster]);
 	const [clientFilter, setClientFilter] = useState("");
 	const [transporterFilter, setTransporterFilter] = useState("");
 	const [activeFilters, setActiveFilters] = useState({ client: "", transporter: "" });
@@ -83,8 +102,7 @@ export default function Transporter() {
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const pageRows = filteredRows.slice(page * pageSize, (page + 1) * pageSize);
 
-	const saveTransporter = (draft: TransporterDraft) => {
-		setRows((current) => [...current, { ...draft, id: current.length + 1, vehicleCount: 0 }]);
+	const saveTransporter = () => {
 		setShowAddDialog(false);
 	};
 
@@ -146,8 +164,8 @@ export default function Transporter() {
 							<span className={`rounded-full border px-2.5 py-1 text-[10px] ${isDark ? "border-white/[0.08] bg-white/[0.04] text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>{rows.length} records</span>
 						</div>
 					</div>
-					<button type="button" onClick={() => window.location.reload()} aria-label="Refresh transporters" className={`flex h-9 w-9 items-center justify-center rounded-lg border ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-400 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh transporters" className={`flex h-9 w-9 items-center justify-center rounded-lg border disabled:opacity-60 ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-400 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 

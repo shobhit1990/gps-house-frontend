@@ -7,7 +7,7 @@ export const addDeviceFields: VehicleFieldConfig[] = [
 	{ name: "secondarySim", label: "Secondary Sim Number", placeholder: "Sim Number", maxLength: 24, inputMode: "numeric", pattern: "[0-9]{24}", helper: "Only contains 24 digit" },
 	{ name: "secondarySimOperator", label: "Secondary Sim Operator", type: "select", options: ["Airtel Gprs (airtelgprs.com)"] },
 	{ name: "deviceType", label: "Device Type", type: "select", required: true, options: ["Concox (8505)"] },
-	{ name: "deviceClient", label: "Client", type: "select", required: true, options: ["Select Client", "Default Client"] },
+	{ name: "deviceClient", label: "Client", type: "select", required: true, options: ["Select Client"] },
 	{ name: "devicePassword", label: "Password", placeholder: "Password", type: "password", optional: true },
 	{ name: "deviceActive", label: "Active", type: "checkbox" },
 	{ name: "ignitionPositive", label: "Ignition wire connected in (+)ve", type: "checkbox" },

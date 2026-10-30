@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery } from "@/store/services/api/Master";
 
 type InventoryRecord = InventoryFormValues & {
 	id: number;
@@ -71,7 +72,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "transfer", label: "Transfer" },
 ];
 
-const clients = ["arun.singh", "tushar.shukla", "gpshouse"];
 const statusOptions = ["All", "In Stock", "Used"];
 const demoHeaders = ["Inventory Type", "Imei", "Sim", "Operator", "Secondary Sim Number", "Secondary Sim Operator", "Device Type", "Client", "Technician", "Inventory Status", "Password", "Status", "Wire+", "Assigned", "Added"] as const;
 
@@ -91,6 +91,8 @@ const displayMonth = (value: string) => {
 const sheetValue = (row: Record<string, unknown>, header: string) => String(row[header] ?? "").trim();
 
 export default function DeviceInventory() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

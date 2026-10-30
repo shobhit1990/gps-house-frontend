@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Eye, EyeOff } from "lucide-react";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
+import { useGetClientMasterQuery } from "@/store/services/api/Master";
 
 const inventoryImeis = [
 	"358657100887871",
@@ -22,6 +23,7 @@ type AddDeviceProps = {
 
 export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProps) {
 	const [inventoryOpen, setInventoryOpen] = useState(false);
+	const { data: clients = [] } = useGetClientMasterQuery();
 	const [selectedImei, setSelectedImei] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
 	const [passwordVisible, setPasswordVisible] = useState(false);
@@ -105,9 +107,9 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 							onChange={(event) => onChange(field.name, event.target.value)}
 							className={`${inputClass} appearance-none pr-9`}
 						>
-							{field.options?.map((option, index) => (
+							{[...(field.options ?? []), ...(field.name === "deviceClient" ? clients.map((client) => client.name) : [])].map((option, index) => (
 								<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
-									{option}
+									{field.optionLabels?.[option] ?? option}
 								</option>
 							))}
 						</select>

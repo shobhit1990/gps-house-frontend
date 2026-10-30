@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { toast } from "sonner";
+import { buildTransporterPayload } from "@/components/VehicleForm/vehiclePayloads";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useCreateBillingDetailsMutation } from "@/store/services/api/BillingDetails";
+import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useCreateTransporterMutation } from "@/store/services/api/Transporter";
 import { CalendarDays, Eye, EyeOff, Info, Search, X } from "lucide-react";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
@@ -41,18 +47,6 @@ const defaultRolePermissions: Record<string, boolean> = {
 };
 
 const usernamePattern = /^[A-Za-z0-9_\-*@]+$/;
-
-export type TransporterDraft = {
-	username: string;
-	client: string;
-	contactPerson: string;
-	phone: string;
-	email: string;
-	company: string;
-	inactiveTime: string;
-	timezone: string;
-	payment: string;
-};
 
 type FormState = {
 	username: string;
@@ -146,7 +140,7 @@ function FieldLabel({
 				{required ? <span className="text-rose-400"> *</span> : null}
 				{optional ? <span className={`font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}> (Optional)</span> : null}
 			</span>
-			{info ? <Info aria-label={info} title={info} className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`} /> : null}
+			{info ? <span title={info} className="inline-flex"><Info aria-label={info} className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`} /></span> : null}
 		</span>
 	);
 }
@@ -158,10 +152,14 @@ export function AddTransporterDialog({
 }: {
 	isDark: boolean;
 	onClose: () => void;
-	onSave: (draft: TransporterDraft) => void;
+	onSave: () => void;
 }) {
+	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
+	const [createBillingDetails, { isLoading: creatingBilling }] = useCreateBillingDetailsMutation();
+	const isSaving = creatingTransporter || creatingBilling;
 	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
 	const languageOptions = useMemo(
 		() => (languages.length > 0 ? languages.map((item) => item.language).filter(Boolean) : fallbackLanguages),
 		[languages],
@@ -225,7 +223,7 @@ export function AddTransporterDialog({
 		setFormError("");
 	};
 
-	const save = (event: FormEvent<HTMLFormElement>) => {
+	const save = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.company.trim() || !values.client || !values.timezone || !values.inactiveTime || !values.language || !values.subscriptionStart || !values.subscriptionDue) {
 			setActiveTab("Add Transporter");
@@ -242,17 +240,45 @@ export function AddTransporterDialog({
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
-		onSave({
-			username: values.username.trim(),
-			client: values.client,
-			contactPerson: values.name.trim(),
-			phone: values.phone.trim(),
-			email: values.email.trim(),
-			company: values.company.trim(),
-			inactiveTime: values.inactiveTime,
-			timezone: values.timezone,
-			payment: values.paymentMode,
-		});
+		const hasBilling = [values.billingName, values.gstNumber, values.billingEmail, values.billingPhone, values.billingAddress, values.paymentMode].some((value) => value.trim());
+		if (hasBilling && !values.billingName.trim()) {
+			setActiveTab("Billing Detail");
+			setFormError("Billing Name is required to save billing details.");
+			return;
+		}
+
+		let transporterId: string;
+		try {
+			const saved = await createTransporter(buildTransporterPayload(values, transporterRoles.filter((role) => rolePermissions[role]))).unwrap();
+			transporterId = saved.externalId;
+		} catch (error) {
+			console.error("Failed to create transporter.", error);
+			setFormError(apiErrorMessage(error, "Could not save the transporter. Please try again."));
+			return;
+		}
+
+		if (hasBilling) {
+			try {
+				await createBillingDetails({
+					transporter: transporterId,
+					billingName: values.billingName.trim(),
+					gstNumber: values.gstNumber.trim() || undefined,
+					billingEmail: values.billingEmail.trim() || undefined,
+					billingPhone: values.billingPhone.trim() || undefined,
+					billingAddress: values.billingAddress.trim() || undefined,
+					paymentMode: values.paymentMode || undefined,
+					status: Status.ACTIVE,
+				}).unwrap();
+			} catch (error) {
+				console.error("Failed to create billing details.", error);
+				toast.error(apiErrorMessage(error, "Transporter saved, but billing details could not be saved."));
+				onSave();
+				return;
+			}
+		}
+
+		toast.success("Transporter saved.");
+		onSave();
 	};
 
 	const control = (node: ReactNode, hint?: string) => (
@@ -361,9 +387,9 @@ export function AddTransporterDialog({
 									<>
 										<FieldLabel label="Client" required isDark={isDark} />
 										<span className="relative block">
-											<select value={values.client} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-												<option value="">Select Client</option>
-												<option>Default Client</option>
+											<select value={values.client} disabled={clientsLoading} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+												<option value="">{clientsLoading ? "Loading clients…" : "Select Client"}</option>
+												{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
 											</select>
 											<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
 										</span>
@@ -524,9 +550,9 @@ export function AddTransporterDialog({
 									<span className="relative block">
 										<select value={values.paymentMode} onChange={(event) => update("paymentMode", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
 											<option value="">Select</option>
-											<option>Cash</option>
-											<option>Online</option>
-											<option>Cheque</option>
+											<option value="cash">Cash</option>
+											<option value="online">Online</option>
+											<option value="cheque">Cheque</option>
 										</select>
 										<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
 									</span>
@@ -540,8 +566,8 @@ export function AddTransporterDialog({
 					<button type="button" onClick={resetForm} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.10] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
-						Save
+					<button type="submit" disabled={isSaving} className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
+						{isSaving ? "Saving…" : "Save"}
 					</button>
 				</footer>
 			</form>

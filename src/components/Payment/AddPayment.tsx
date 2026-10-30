@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ChevronDown, X } from "lucide-react";
+import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 export type PaymentFormValues = {
 	type: string;
@@ -19,7 +20,6 @@ type AddPaymentProps = {
 	onSubmit: (values: PaymentFormValues) => void;
 };
 
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const typeOptions = ["One-time", "Rental"];
 const termOptions = ["Monthly", "Quarterly", "Half Yearly", "Yearly"];
 
@@ -43,6 +43,8 @@ const emptyValues = (): PaymentFormValues => ({
 });
 
 export function AddPayment({ onClose, onSubmit }: AddPaymentProps) {
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();

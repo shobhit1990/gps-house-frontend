@@ -115,14 +115,7 @@ export function Layout({ children }: LayoutProps) {
       </div>
 
       <div id="mobile-sidebar" className={`lg:block ${showMobileSidebar ? "block" : "hidden"}`}>
-        <Sidebar
-          userRole={userRole}
-          isMobile={isMobile}
-          showMobileSidebar={showMobileSidebar}
-          setShowMobileSidebar={setShowMobileSidebar}
-          collapsed={collapsed}
-          setCollapsed={setCollapsed}
-        />
+        <Sidebar onLogout={handleLogout} />
       </div>
 
       {showMobileSidebar && (

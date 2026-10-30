@@ -60,8 +60,7 @@ const Login = () => {
           token: response.accessToken,
           refreshToken: response.refreshToken,
           user: {
-            id: response.id ?? response.userId,
-            primaryId: response.id ?? response.userId,
+            id: response.userId,
             username: response.username || formData.email.trim(),
             name: response.name,
             role: response.roleName || response.roleCode,

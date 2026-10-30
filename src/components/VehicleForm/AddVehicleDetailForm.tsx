@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { X } from "lucide-react";
-import { vehicles } from "@/components/data/vehicles";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { ServiceMaintenanceForm, type ServiceMaintenanceHandle, type ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
 
 export type VehicleDetailFormValues = {
@@ -27,9 +27,6 @@ type AddVehicleDetailFormProps = {
 const tabs = ["Add Vehicle Detail", "Service And Maintenance"] as const;
 type DetailTab = (typeof tabs)[number];
 
-const clients = ["arun.singh", "tushar.shukla"];
-const transporters = ["Aviator"];
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const ownedByOptions = ["market", "own"];
 const bodyOptions = ["Lowbed", "Open", "Container", "Trailer"];
 
@@ -59,6 +56,9 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const serviceRef = useRef<ServiceMaintenanceHandle>(null);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const [activeTab, setActiveTab] = useState<DetailTab>(tabs[0]);
 	const [values, setValues] = useState<VehicleDetailFormValues>(detailDefaults);
 	const [formError, setFormError] = useState("");
@@ -120,9 +120,7 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 	const select = (name: keyof VehicleDetailFormValues, placeholder: string, options: string[], required?: boolean) => (
 		<select required={required} value={values[name]} onChange={(event) => update(name, event.target.value)} className={inputClass}>
 			<option value="">{placeholder}</option>
-			{options.map((option) => (
-				<option key={option} value={option}>{option}</option>
-			))}
+			{options.map((option) => <option key={option} value={option}>{option}</option>)}
 		</select>
 	);
 
@@ -180,9 +178,9 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 					)}
 					{activeTab === "Add Vehicle Detail" ? (
 						<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-							{field("Client", select("client", "Select Client", clients, true), true)}
-							{field("Transporter", select("transporter", "Select Transporter", transporters, true), true)}
-							{field("Vehicle", select("vehicleNo", "Select", vehicleOptions, true), true)}
+							{field("Client", select("client", "Select Client", clients.map((client) => client.name), true), true)}
+							{field("Transporter", select("transporter", "Select Transporter", transporters.map((transporter) => transporter.name), true), true)}
+							{field("Vehicle", select("vehicleNo", "Select", vehicles.map((vehicle) => vehicle.name), true), true)}
 							{field("Owner Name", <input value={values.ownerName} placeholder="Owner Name" onChange={(event) => update("ownerName", event.target.value)} className={inputClass} />)}
 							{field("Owned By", select("ownedBy", "Select", ownedByOptions))}
 							{field("Vehicle Brand", <input value={values.vehicleBrand} placeholder="Vehicle Brand" onChange={(event) => update("vehicleBrand", event.target.value)} className={inputClass} />)}

@@ -40,6 +40,7 @@ export type PreferenceSettings = {
   currency: string;
   fuelType: string;
   fuelCost: string;
+  fuelCosts: { fuelType: string; fuelCost: string }[];
   dateFormat: string;
   timeFormat: string;
 };
@@ -223,6 +224,7 @@ export const createDraft = (): SettingsDraft => ({
     currency: "INR",
     fuelType: "",
     fuelCost: "",
+    fuelCosts: [{ fuelType: "", fuelCost: "" }],
     dateFormat: "dd/MM/yyyy",
     timeFormat: "HH:mm:ss",
   },

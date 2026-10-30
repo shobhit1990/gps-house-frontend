@@ -314,7 +314,7 @@ export default function Vehicle() {
 				month: "",
 			},
 		]);
-		setShowAddDialog(false);
+		// Keep the form open so the Payment Details tab can still be saved.
 		setStatusFilter("All");
 		setPage(0);
 	};
@@ -360,27 +360,7 @@ export default function Vehicle() {
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>Vehicle inventory, device status and subscriptions</p>
 					</div>
 					<div className="flex items-center gap-2">
-						<button
-							type="button"
-							onClick={resetFilters}
-							aria-label="Refresh vehicle list"
-							title="Refresh vehicle list"
-							className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${
-								isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"
-							}`}
-						>
-							<RefreshCw className="h-4 w-4" />
-						</button>
-						<button
-							type="button"
-							aria-label="Vehicle page settings"
-							title="Vehicle page settings"
-							className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${
-								isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"
-							}`}
-						>
-							<Settings2 className="h-4 w-4" />
-						</button>
+
 					</div>
 				</section>
 

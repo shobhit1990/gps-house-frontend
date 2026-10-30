@@ -1,16 +1,25 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
-import { vehicles } from "@/components/data/vehicles";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddJobSheet, type JobSheetFormValues } from "@/components/ManageTechnician/AddJobSheet";
+import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetJobSheetsQuery, useUpdateJobSheetMutation } from "@/store/services/api/JobSheet";
+import { useGetTechnicianMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 type JobStatus = "Pending" | "Completed";
 
-type JobSheetRecord = JobSheetFormValues & {
-	id: number;
+type JobSheetRecord = {
+	id: string;
+	technicianName: string;
+	vehicle: string;
 	transporter: string;
+	contactPerson: string;
+	phone: string;
+	instruction: string;
 	task: string;
 	remark: string;
 	assignOn: string;
@@ -20,7 +29,7 @@ type JobSheetRecord = JobSheetFormValues & {
 	closedBy: string;
 };
 
-type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "orderNo" | "assignOn" | "doneOn" | "document" | "status" | "closedBy" | "action";
+type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "assignOn" | "doneOn" | "document" | "status" | "closedBy" | "action";
 type StatusFilter = "All" | JobStatus;
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -32,7 +41,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "instruction", label: "Instruction" },
 	{ key: "task", label: "Task" },
 	{ key: "remark", label: "Remark" },
-	{ key: "orderNo", label: "Order No." },
 	{ key: "assignOn", label: "Assign On" },
 	{ key: "doneOn", label: "Done On" },
 	{ key: "document", label: "Document" },
@@ -41,18 +49,51 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "action", label: "Action" },
 ];
 
-const textValue = (value: string) => (value.trim() ? value : "—");
+const textValue = (value: unknown) => {
+	const text = value == null ? "" : String(value);
+	return text.trim() ? text : "—";
+};
 
-const today = () => {
-	const now = new Date();
-	return `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+const dateLabel = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "";
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
 export default function JobSheet() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<JobSheetRecord[]>([]);
+	const { data: jobSheets = [], isLoading, isFetching, isError, refetch } = useGetJobSheetsQuery();
+	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: technicians = [] } = useGetTechnicianMasterQuery();
+	const [updateJobSheet] = useUpdateJobSheetMutation();
+	const [completingId, setCompletingId] = useState<string | null>(null);
+	const rows = useMemo<JobSheetRecord[]>(() => {
+		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
+		const technicianNames = new Map(technicians.map((technician) => [technician.id, technician.name]));
+		return jobSheets.map((job) => {
+			const completed = job.status !== Status.ACTIVE;
+			const technicianName = technicianNames.get(job.technician) ?? job.technician ?? "";
+			return {
+				id: job.externalId,
+				technicianName,
+				vehicle: vehicleNames.get(job.vehicle) ?? job.vehicle ?? "",
+				transporter: "",
+				contactPerson: job.contactPersonName ?? "",
+				phone: job.phone ?? "",
+				instruction: job.instruction ?? "",
+				task: "",
+				remark: job.reason ?? "",
+				assignOn: dateLabel(job.createdAt),
+				doneOn: completed ? dateLabel(job.updatedAt) : "",
+				document: "",
+				status: completed ? "Completed" : "Pending",
+				closedBy: completed ? technicianName : "",
+			};
+		});
+	}, [jobSheets, vehicles, technicians]);
 	const [search, setSearch] = useState("");
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
 	const [pageSize, setPageSize] = useState(10);
@@ -68,38 +109,31 @@ export default function JobSheet() {
 		return rows.filter((row) => {
 			if (statusFilter !== "All" && row.status !== statusFilter) return false;
 			if (!query) return true;
-			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.orderNo, row.status].join(" ").toLowerCase().includes(query);
+			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.status].join(" ").toLowerCase().includes(query);
 		});
 	}, [rows, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveJob = (values: JobSheetFormValues) => {
-		const vehicle = vehicles.find((item) => item.vehicle === values.vehicle);
-		setRows((current) => [
-			...current,
-			{
-				...values,
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				transporter: vehicle?.branch ?? "",
-				task: "",
-				remark: "",
-				assignOn: today(),
-				doneOn: "",
-				document: "",
-				status: "Pending",
-				closedBy: "",
-			},
-		]);
+	const saveJob = () => {
 		setSearch("");
 		setStatusFilter("All");
 		setPage(0);
 		setShowAddDialog(false);
 	};
 
-	const completeJob = (id: number) => {
-		setRows((current) => current.map((row) => (row.id === id ? { ...row, status: "Completed", doneOn: today(), closedBy: row.technicianName } : row)));
+	const completeJob = async (id: string) => {
+		setCompletingId(id);
+		try {
+			await updateJobSheet({ externalId: id, body: { status: Status.INACTIVE, reason: "Job completed" } }).unwrap();
+			toast.success("Job marked as completed.");
+		} catch (error) {
+			console.error("Failed to complete job sheet.", error);
+			toast.error(apiErrorMessage(error, "Could not complete the job."));
+		} finally {
+			setCompletingId(null);
+		}
 	};
 
 	const cell = (key: ColumnKey, row: JobSheetRecord) => {
@@ -111,7 +145,7 @@ export default function JobSheet() {
 		if (key === "action") {
 			if (row.status === "Completed") return <span className="text-slate-500">Closed</span>;
 			return (
-				<button type="button" onClick={() => completeJob(row.id)} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+				<button type="button" onClick={() => completeJob(row.id)} disabled={completingId === row.id} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 					Complete
 				</button>
 			);
@@ -142,8 +176,8 @@ export default function JobSheet() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Job Sheet</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} jobs</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setStatusFilter("All"); setPage(0); }} aria-label="Refresh job sheets" title="Refresh job sheets" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh job sheets" title="Refresh job sheets" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -210,8 +244,8 @@ export default function JobSheet() {
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No job sheets available</p>
-											<p className="mt-1 text-xs text-slate-500">Add a job or change the status filter.</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>{isLoading ? "Loading job sheets…" : isError ? "Could not load job sheets" : "No job sheets available"}</p>
+											<p className="mt-1 text-xs text-slate-500">{isError ? "Use refresh to try again." : "Add a job or change the status filter."}</p>
 										</td>
 									</tr>
 								)}
@@ -236,7 +270,7 @@ export default function JobSheet() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddJobSheet onClose={() => setShowAddDialog(false)} onSubmit={saveJob} />}
+			{showAddDialog && <AddJobSheet onClose={() => setShowAddDialog(false)} onSaved={saveJob} />}
 		</div>
 	);
 }

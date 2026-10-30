@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
-import { CalendarDays, Eye, EyeOff, Info, Plus, Search, X } from "lucide-react";
+import { toast } from "sonner";
+import { CalendarDays, Eye, EyeOff, Info, Loader2, Plus, Search, X } from "lucide-react";
 import { AddDevice } from "@/components/VehicleForm/AddDeviceForm";
 import { AddSensorForm } from "@/components/VehicleForm/AddSensorForm";
-import { AddVehicle } from "@/components/VehicleForm/AddVehicle";
+import { AddVehicle, vehicleDetailDefaults } from "@/components/VehicleForm/AddVehicle";
 import { Payment } from "@/components/VehicleForm/Payment";
 import { addVehicleFields, type VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
-import { useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useCreatePaymentDetailsMutation, useUpdatePaymentDetailsMutation } from "@/store/services/api/PaymentDetails";
+import { useCreateTransporterMutation, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
+import { useCreateVehicleMutation, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
+import { buildPaymentDetailsPayload, buildTransporterPayload, buildVehiclePayload } from "@/components/VehicleForm/vehiclePayloads";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
@@ -20,6 +25,15 @@ type AddVehicleFormProps = {
 };
 
 type FieldConfig = VehicleFieldConfig;
+
+/** Which backend record each tab's Save creates. Tabs without an API are not listed. */
+type SaveTarget = "transporter" | "vehicle" | "paymentDetails";
+
+const saveLabels: Record<SaveTarget, string> = {
+	transporter: "Transporter",
+	vehicle: "Vehicle",
+	paymentDetails: "Payment details",
+};
 
 const tabs = [
 	"Add Transporter",
@@ -54,6 +68,38 @@ const transporterRoles = [
 	"No Share Access",
 ];
 
+const saveTargetByTab: Partial<Record<string, SaveTarget>> = {
+	"Add Transporter": "transporter",
+	"Transporter Access Manage": "transporter",
+	"Add Vehicle": "vehicle",
+	"Payment Details (Optional)": "paymentDetails",
+};
+
+const usernamePattern = /^[A-Za-z0-9_\-*@]+$/;
+
+const apiErrorMessage = (error: unknown, fallback: string) => {
+	if (!error || typeof error !== "object" || !("data" in error)) {
+		return error instanceof Error ? error.message : fallback;
+	}
+
+	const data = error.data;
+	if (!data || typeof data !== "object") return fallback;
+
+	const payload = data as {
+		message?: unknown;
+		errors?: Array<{ field?: string; message?: string }>;
+	};
+	if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+	if (Array.isArray(payload.message)) return payload.message.filter((message): message is string => typeof message === "string").join(" ");
+	if (Array.isArray(payload.errors)) {
+		const details = payload.errors
+			.map(({ field, message }) => (message ? `${field ? `${field}: ` : ""}${message}` : ""))
+			.filter(Boolean);
+		if (details.length > 0) return details.join(" ");
+	}
+	return fallback;
+};
+
 const defaultRolePermissions: Record<string, boolean> = {
 	"Basic reports": true,
 	"Tickets": true,
@@ -69,7 +115,7 @@ const fieldsByTab: Record<string, FieldConfig[]> = {
 		{ name: "password", label: "Password", placeholder: "Password", type: "password", required: true },
 		{ name: "confirmPassword", label: "Confirm Password", placeholder: "Confirm Password", type: "password", required: true },
 		{ name: "company", label: "Company Name", placeholder: "Company Name", required: true },
-		{ name: "client", label: "Client", placeholder: "Select Client", type: "select", required: true, options: ["Select Client", "Default Client"] },
+		{ name: "client", label: "Client", placeholder: "Select Client", type: "select", required: true, options: ["Select Client"] },
 		{ name: "timezone", label: "Timezone", type: "select", required: true, options: fallbackTimezones },
 		{ name: "inactiveTime", label: "Inactive Time", type: "select", required: true, options: ["12", "24", "48", "72"] },
 		{ name: "language", label: "Language", type: "select", required: true, options: fallbackLanguages },
@@ -93,7 +139,6 @@ const fieldsByTab: Record<string, FieldConfig[]> = {
 	"Add Sensor Details": [],
 	"Add Vehicle": [],
 	"Payment Details (Optional)": [
-		{ name: "paymentType", label: "Type", type: "select" },
 		{ name: "paymentTransporter", label: "Transporter", type: "select", required: true },
 		{ name: "sellingPrice", label: "Selling Price", type: "number" },
 		{ name: "paymentTerm", label: "Payment Term", type: "select", required: true },
@@ -171,7 +216,7 @@ function FormField({
 					>
 						{field.options?.map((option, index) => (
 							<option key={option} value={index === 0 && option?.startsWith("Select ") ? "" : option}>
-								{option}
+								{field.optionLabels?.[option] ?? option}
 							</option>
 						))}
 					</select>
@@ -219,6 +264,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	const isDark = theme !== "light";
 	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+	const { data: clients = [] } = useGetClientMasterQuery();
 	const languageOptions = useMemo(
 		() =>
 			languages.length > 0
@@ -237,10 +283,17 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		const transporterFields = fieldsByTab["Add Transporter"].map((field) => {
 			if (field.name === "language") return { ...field, options: languageOptions };
 			if (field.name === "timezone") return { ...field, options: timezoneOptions };
+			if (field.name === "client") {
+				return {
+					...field,
+					options: ["Select Client", ...clients.map((client) => client.id)],
+					optionLabels: Object.fromEntries(clients.map((client) => [client.id, client.name])),
+				};
+			}
 			return field;
 		});
 		return { ...fieldsByTab, "Add Transporter": transporterFields };
-	}, [languageOptions, timezoneOptions]);
+	}, [languageOptions, timezoneOptions, clients]);
 	const [activeTab, setActiveTab] = useState(tabs[0]);
 	const [formError, setFormError] = useState("");
 	const [showAddSensorDialog, setShowAddSensorDialog] = useState(false);
@@ -249,6 +302,15 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(
 		() => Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
 	);
+	const [savedIds, setSavedIds] = useState<Partial<Record<SaveTarget, string>>>({});
+	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
+	const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
+	const [createVehicle, { isLoading: creatingVehicle }] = useCreateVehicleMutation();
+	const [updateVehicle, { isLoading: updatingVehicle }] = useUpdateVehicleMutation();
+	const [createPaymentDetails, { isLoading: creatingPayment }] = useCreatePaymentDetailsMutation();
+	const [updatePaymentDetails, { isLoading: updatingPayment }] = useUpdatePaymentDetailsMutation();
+	const isSaving =
+		creatingTransporter || updatingTransporter || creatingVehicle || updatingVehicle || creatingPayment || updatingPayment;
 	const [values, setValues] = useState<VehicleFormValues>({
 		timezone: "(GMT+5:30) Asia/Calcutta",
 		inactiveTime: "12",
@@ -270,6 +332,9 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		sellingPrice: "0",
 		installationDate: "2026-05-10",
 		rentalDueDate: "2026-05-10",
+		...vehicleDetailDefaults,
+		manufactureDate: "2026-10-26",
+		purchaseDate: "2026-10-26",
 	});
 
 	useEffect(() => {
@@ -320,6 +385,12 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 				: visibleFields;
 		setValues((current) => {
 			const nextValues = { ...current };
+			if (activeTab === "Add Vehicle") {
+				Object.assign(nextValues, vehicleDetailDefaults, {
+					manufactureDate: "2026-10-26",
+					purchaseDate: "2026-10-26",
+				});
+			}
 			fieldsToReset.forEach((field) => {
 				nextValues[field.name] =
 					field.name === "active" || field.name === "deviceActive"
@@ -339,45 +410,79 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		setFormError("");
 	};
 
-	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		const requiredVehicleField = addVehicleFields.find(
-			(field) => field.required && !values[field.name]?.trim(),
-		);
-		if (requiredVehicleField) {
-			setActiveTab("Add Vehicle");
-			setFormError(`${requiredVehicleField.label} is required.`);
-			return;
-		}
-		const paymentFields = fieldsByTab["Payment Details (Optional)"];
-		const paymentStarted = [
-			"paymentType",
-			"paymentTransporter",
-			"paymentTerm",
-			"technicianName",
-			"rental",
-			"paymentRemark",
-		].some((name) => values[name]?.trim()) || (values.sellingPrice ?? "0") !== "0";
-		if (paymentStarted) {
-			const requiredPaymentField = paymentFields.find(
-				(field) => field.required && !values[field.name]?.trim(),
-			);
-			if (requiredPaymentField) {
-				setActiveTab("Payment Details (Optional)");
-				setFormError(`${requiredPaymentField.label} is required when payment details are provided.`);
-				return;
+	const missingRequired = (fields: FieldConfig[]) =>
+		fields.find((field) => field.required && !values[field.name]?.trim());
+
+	/** Returns an error message for the tab's data, or null when it can be saved. */
+	const validate = (target: SaveTarget): { tab: string; message: string } | null => {
+		if (target === "transporter") {
+			const missing = missingRequired(fieldsByTab["Add Transporter"]);
+			if (missing) return { tab: "Add Transporter", message: `${missing.label} is required.` };
+			if (!usernamePattern.test(values.username.trim())) {
+				return { tab: "Add Transporter", message: "Username can only contain A-z, 0-9, _, -, *, @." };
+			}
+			if (values.password !== values.confirmPassword) {
+				return { tab: "Add Transporter", message: "Password and Confirm Password must match." };
 			}
 		}
-		if (values.password && values.password !== values.confirmPassword) {
-			setActiveTab("Add Transporter");
-			setFormError("Password and Confirm Password must match.");
+		if (target === "vehicle") {
+			const missing = missingRequired(addVehicleFields);
+			if (missing) return { tab: "Add Vehicle", message: `${missing.label} is required.` };
+		}
+		if (target === "paymentDetails") {
+			const missing = missingRequired(fieldsByTab["Payment Details (Optional)"]);
+			if (missing) return { tab: "Payment Details (Optional)", message: `${missing.label} is required.` };
+		}
+		return null;
+	};
+
+	const saveRecord = async (target: SaveTarget) => {
+		const externalId = savedIds[target];
+		if (target === "transporter") {
+			const body = buildTransporterPayload(values, transporterRoles.filter((role) => rolePermissions[role]));
+			return externalId ? updateTransporter({ externalId, body }).unwrap() : createTransporter(body).unwrap();
+		}
+		if (target === "vehicle") {
+			const body = buildVehiclePayload(values);
+			return externalId ? updateVehicle({ externalId, body }).unwrap() : createVehicle(body).unwrap();
+		}
+		const body = buildPaymentDetailsPayload(values);
+		return externalId ? updatePaymentDetails({ externalId, body }).unwrap() : createPaymentDetails(body).unwrap();
+	};
+
+	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const target = saveTargetByTab[activeTab];
+		if (!target) {
+			toast.info(`Saving "${activeTab}" is not available yet.`);
 			return;
 		}
-		const submittedValues = { ...values };
-		transporterRoles.forEach((role, index) => {
-			submittedValues[`rolePermission${index + 1}`] = String(rolePermissions[role] ?? false);
-		});
-		onSubmit(submittedValues);
+		const error = validate(target);
+		if (error) {
+			setActiveTab(error.tab);
+			setFormError(error.message);
+			return;
+		}
+
+		const isUpdate = Boolean(savedIds[target]);
+		try {
+			const saved = await saveRecord(target);
+			setSavedIds((current) => ({ ...current, [target]: saved.externalId || current[target] }));
+			if (target === "transporter" && saved.externalId) {
+				setValues((current) => ({
+					...current,
+					vehicleTransporter: current.vehicleTransporter || saved.externalId,
+					paymentTransporter: current.paymentTransporter || saved.externalId,
+				}));
+			}
+			setFormError("");
+			toast.success(`${saveLabels[target]} ${isUpdate ? "updated" : "saved"}.`);
+			if (target === "vehicle" && !isUpdate) onSubmit(values);
+			if (activeTabIndex < tabs.length - 1) setActiveTab(tabs[activeTabIndex + 1]);
+		} catch (saveError) {
+			console.error(`Failed to save ${target}.`, saveError);
+			setFormError(apiErrorMessage(saveError, `Could not save ${saveLabels[target].toLowerCase()}. Please try again.`));
+		}
 	};
 
 	return (
@@ -626,10 +731,11 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 					isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
 				}`}>
 					<div className="flex gap-2">
-						<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${
+						<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
 							isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
 						}`}>
-							Save
+							{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+							{saveTargetByTab[activeTab] && savedIds[saveTargetByTab[activeTab]] ? "Update" : "Save"}
 						</button>
 						{activeTab !== "Transporter Access Manage" && (
 							<button type="button" onClick={resetCurrentTab} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${

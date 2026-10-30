@@ -1,13 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { Eye, EyeOff, X } from "lucide-react";
+import { toast } from "sonner";
+import { Eye, EyeOff, Loader2, X } from "lucide-react";
+import type { Client, CreateClientRequest } from "@/interfaces/Client";
+import { useCreateClientMutation, useUpdateClientMutation } from "@/store/services/api/Client";
 import {
 	useGetLanguagesQuery,
 	useGetOwnerMasterQuery,
 	useGetTimezonesQuery,
 } from "@/store/services/api/Master";
 
-export type ClientFormValues = {
+type ClientFormValues = {
 	ownerName: string;
 	username: string;
 	password: string;
@@ -26,8 +29,9 @@ export type ClientFormValues = {
 };
 
 type AddClientFormProps = {
+	/** Client being edited; omit to create a new one. */
+	client?: Client | null;
 	onClose: () => void;
-	onSubmit: (values: ClientFormValues) => void;
 };
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
@@ -52,6 +56,44 @@ const emptyValues: ClientFormValues = {
 	active: true,
 };
 
+const valuesFromClient = (client: Client): ClientFormValues => ({
+	...emptyValues,
+	ownerName: client.ownerName ?? "",
+	username: client.username ?? "",
+	company: client.company ?? "",
+	name: client.name ?? "",
+	email: client.email ?? "",
+	phone: client.phone ?? "",
+	address: client.address ?? "",
+	language: client.language ?? "",
+	domain: client.domain ?? "",
+	maxVehicleCount: client.maxVehicleCount != null ? String(client.maxVehicleCount) : "",
+	timezone: client.timezone ?? "",
+	active: client.active ?? true,
+});
+
+const buildClientPayload = (values: ClientFormValues, image: string): CreateClientRequest => ({
+	ownerName: values.ownerName,
+	username: values.username.trim(),
+	password: values.password,
+	company: values.company.trim(),
+	name: values.name.trim() || undefined,
+	email: values.email.trim() || undefined,
+	phone: values.phone.trim() || undefined,
+	address: values.address.trim() || undefined,
+	language: values.language,
+	domain: values.domain.trim() || undefined,
+	maxVehicleCount: values.maxVehicleCount.trim() ? Number(values.maxVehicleCount) : undefined,
+	timezone: values.timezone,
+	image: image || undefined,
+	active: values.active,
+});
+
+const apiErrorMessage = (error: unknown, fallback: string) => {
+	const data = (error as { data?: { message?: string } })?.data;
+	return data?.message || fallback;
+};
+
 function cropToSquare(source: string) {
 	return new Promise<string>((resolve, reject) => {
 		const image = new Image();
@@ -73,7 +115,8 @@ function cropToSquare(source: string) {
 	});
 }
 
-export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
+export function AddClientForm({ client, onClose }: AddClientFormProps) {
+	const isEdit = Boolean(client);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: owners = [], isLoading: ownersLoading } = useGetOwnerMasterQuery();
@@ -96,11 +139,14 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 	);
 	const titleId = useId();
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const [values, setValues] = useState<ClientFormValues>(emptyValues);
+	const [values, setValues] = useState<ClientFormValues>(() => (client ? valuesFromClient(client) : emptyValues));
 	const [formError, setFormError] = useState("");
+	const [createClient, { isLoading: isCreating }] = useCreateClientMutation();
+	const [updateClient, { isLoading: isUpdating }] = useUpdateClientMutation();
+	const isSaving = isCreating || isUpdating;
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-	const [imagePreview, setImagePreview] = useState("");
+	const [imagePreview, setImagePreview] = useState(client?.image ?? "");
 	const [cropOpen, setCropOpen] = useState(false);
 
 	useEffect(() => {
@@ -135,8 +181,8 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 	};
 
 	const resetForm = () => {
-		setValues(emptyValues);
-		setImagePreview("");
+		setValues(client ? valuesFromClient(client) : emptyValues);
+		setImagePreview(client?.image ?? "");
 		setFormError("");
 		setShowPassword(false);
 		setShowConfirmPassword(false);
@@ -175,7 +221,7 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 		}
 	};
 
-	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!values.ownerName) {
 			setFormError("Owner Name is required.");
@@ -185,11 +231,31 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 			setFormError("Username can only contain A-z, 0-9, _, -, *, and @.");
 			return;
 		}
+		if (!isEdit && !values.password) {
+			setFormError("Password is required.");
+			return;
+		}
 		if (values.password !== values.confirmPassword) {
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
-		onSubmit({ ...values, username: values.username.trim() });
+
+		const body = buildClientPayload(values, imagePreview);
+		try {
+			if (client) {
+				// Leave the password unchanged when the field is left blank while editing.
+				const { password, ...rest } = body;
+				await updateClient({ externalId: client.externalId, body: password ? body : rest }).unwrap();
+				toast.success(`${body.username} updated.`);
+			} else {
+				await createClient(body).unwrap();
+				toast.success(`${body.username} added.`);
+			}
+			onClose();
+		} catch (error) {
+			console.error("Failed to save client.", error);
+			setFormError(apiErrorMessage(error, "Could not save the client. Please try again."));
+		}
 	};
 
 	const field = (label: string, control: ReactNode, hint?: string, required?: boolean, optional?: boolean) => (
@@ -218,7 +284,7 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
 						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Add Client</h2>
+						<h2 id={titleId} className="text-[15px] font-semibold">{isEdit ? "Edit Client" : "Add Client"}</h2>
 					</div>
 					<button type="button" onClick={onClose} aria-label="Close client form" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
 						<X className="h-5 w-5 stroke-[3]" />
@@ -260,24 +326,24 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 						{field(
 							"Password",
 							<span className="relative flex">
-								<input required type={showPassword ? "text" : "password"} value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={`${inputClass} pr-11`} />
+								<input required={!isEdit} type={showPassword ? "text" : "password"} value={values.password} placeholder={isEdit ? "Leave blank to keep current" : "Password"} onChange={(event) => update("password", event.target.value)} className={`${inputClass} pr-11`} />
 								<button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} className={`absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg border-l ${isDark ? "border-white/[0.09] bg-white/[0.04] text-slate-400 hover:text-cyan-100" : "border-slate-200 bg-slate-50 text-slate-600 hover:text-cyan-700"}`}>
 									{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 								</button>
 							</span>,
 							undefined,
-							true,
+							!isEdit,
 						)}
 						{field(
 							"Confirm Password",
 							<span className="relative flex">
-								<input required type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} placeholder="Confirm Password" onChange={(event) => update("confirmPassword", event.target.value)} className={`${inputClass} pr-11`} />
+								<input required={!isEdit} type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} placeholder="Confirm Password" onChange={(event) => update("confirmPassword", event.target.value)} className={`${inputClass} pr-11`} />
 								<button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} className={`absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg border-l ${isDark ? "border-white/[0.09] bg-white/[0.04] text-slate-400 hover:text-cyan-100" : "border-slate-200 bg-slate-50 text-slate-600 hover:text-cyan-700"}`}>
 									{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 								</button>
 							</span>,
 							undefined,
-							true,
+							!isEdit,
 						)}
 						{field("Company Name", <input required value={values.company} placeholder="Company Name" onChange={(event) => update("company", event.target.value)} className={inputClass} />, undefined, true)}
 						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, undefined, false, true)}
@@ -356,8 +422,9 @@ export function AddClientForm({ onClose, onSubmit }: AddClientFormProps) {
 					<button type="button" onClick={resetForm} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						Save
+					<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+						{isEdit ? "Update" : "Save"}
 					</button>
 				</footer>
 			</form>

@@ -44,6 +44,13 @@ import TravelSummaryReport from "@/pages/Reports/TravelSummaryReport";
 import VehicleLogReport from "@/pages/Reports/VehicleLogReport";
 import Settings from "@/pages/Settings";
 import AddAlert from "@/pages/Alert/AddAlert";
+import NotificationList from "@/pages/Alert/NotificationList";
+import ServiceAndMaintenance from "@/pages/Alert/ServiceAndMaintenance";
+import ParkScheduler from "@/pages/Alert/ParkScheduler";
+import Announcement from "@/pages/Alert/Announcement";
+import Owners from "@/pages/Master/Owners";
+import RaisedTicket from "@/pages/Support/RaisedTicket";
+import AnsweredTickets from "@/pages/Support/AnsweredTickets";
 
 const queryClient = new QueryClient();
 
@@ -65,6 +72,7 @@ const AppContent = () => {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/owners" element={<Owners />} />
         <Route path="/vehicles" element={<Vehicle />} />
         <Route path="/devices" element={<Devices />} />
         <Route path="/transporters" element={<Transporter />} />
@@ -99,6 +107,12 @@ const AppContent = () => {
         <Route path="/travel-summary-report" element={<TravelSummaryReport />} />
         <Route path="/vehicle-log-report" element={<VehicleLogReport />} />
         <Route path="/add-alerts" element={<AddAlert />} />
+        <Route path="/notification-list" element={<NotificationList />} />
+        <Route path="/service-maintenance" element={<ServiceAndMaintenance />} />
+        <Route path="/parked-scheduler" element={<ParkScheduler />} />
+        <Route path="/announcement" element={<Announcement />} />
+        <Route path="/raise-ticket" element={<RaisedTicket />} />
+        <Route path="/answer-tickets" element={<AnsweredTickets />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

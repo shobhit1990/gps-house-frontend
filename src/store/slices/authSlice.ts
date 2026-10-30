@@ -1,36 +1,11 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "../store";
+import type { MenuItem, MenuPermissions } from "@/interfaces/Menu";
 
-export interface MenuPermissions {
-  view: boolean;
-  add: boolean;
-  edit: boolean;
-  delete: boolean;
-  filter: boolean;
-  print: boolean;
-  excel: boolean;
-}
-
-export interface MenuItem {
-  id: string;
-  key: string;
-  label: string;
-  icon: string;
-  url: string | null;
-  isTitle: boolean;
-  priority: number;
-  parent: {
-    id: string;
-    key: string;
-    label: string;
-    icon: string;
-  } | null;
-  permissions: MenuPermissions;
-  children: MenuItem[];
-}
+export type { MenuItem, MenuPermissions };
 
 export interface User {
-  id: number;
+  id: string;
   authUserId?: string;
   staffId?: string;
   username: string;

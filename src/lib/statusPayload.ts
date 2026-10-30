@@ -10,7 +10,6 @@ export function statusChangeBody(
   return payload;
 }
 
-/** Always read status-change reason from API field `reason`. */
 export function normalizeReason(value: unknown): string {
   if (value == null) return "";
   return String(value).trim();

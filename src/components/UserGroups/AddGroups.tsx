@@ -1,6 +1,10 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, X } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronDown, Loader2, X } from "lucide-react";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
 
 export type GroupFormValues = {
 	name: string;
@@ -8,21 +12,25 @@ export type GroupFormValues = {
 };
 
 type AddGroupsProps = {
-	groups: { name: string }[];
 	onClose: () => void;
-	onSubmit: (values: GroupFormValues) => void;
+	onSubmit: () => void;
 };
 
-const assignedToOptions = ["arun.singh", "tushar.shukla", "gpshouse"];
+export const groupAssignedToOptions = [
+	{ value: "vehicle", label: "Vehicle" },
+	{ value: "transporter", label: "Transporter" },
+];
 
 const emptyValues = (): GroupFormValues => ({ name: "", assignedTo: "" });
 
-export function AddGroups({ groups, onClose, onSubmit }: AddGroupsProps) {
+export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const [values, setValues] = useState<GroupFormValues>(emptyValues);
 	const [formError, setFormError] = useState("");
+	const { data: groups = [] } = useGetGroupsQuery();
+	const [createGroup, { isLoading: isSaving }] = useCreateGroupMutation();
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -44,18 +52,25 @@ export function AddGroups({ groups, onClose, onSubmit }: AddGroupsProps) {
 		setFormError("");
 	};
 
-	const submit = (event: FormEvent) => {
+	const submit = async (event: FormEvent) => {
 		event.preventDefault();
 		const name = values.name.trim();
 		if (!name || !values.assignedTo) {
 			setFormError("Group Name and Assigned To are required.");
 			return;
 		}
-		if (groups.some((group) => group.name.toLowerCase() === name.toLowerCase())) {
+		if (groups.some((group) => group.groupName?.toLowerCase() === name.toLowerCase())) {
 			setFormError("A group with this name already exists.");
 			return;
 		}
-		onSubmit({ name, assignedTo: values.assignedTo });
+		try {
+			await createGroup({ groupName: name, assignedTo: values.assignedTo, status: Status.ACTIVE, reason: "Group created" }).unwrap();
+			toast.success(`${name} saved.`);
+			onSubmit();
+		} catch (error) {
+			console.error("Failed to create group.", error);
+			setFormError(apiErrorMessage(error, "Could not save the group. Please try again."));
+		}
 	};
 
 	return (
@@ -94,7 +109,7 @@ export function AddGroups({ groups, onClose, onSubmit }: AddGroupsProps) {
 							<span className="relative block">
 								<select required value={values.assignedTo} onChange={(event) => update("assignedTo", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 									<option value="">Select</option>
-									{assignedToOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+									{groupAssignedToOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</span>
@@ -109,7 +124,8 @@ export function AddGroups({ groups, onClose, onSubmit }: AddGroupsProps) {
 					<button type="button" onClick={() => { setValues(emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 						Save
 					</button>
 				</footer>

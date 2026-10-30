@@ -1,18 +1,32 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddUser, type UserFormValues, type UserGroupValues } from "@/components/UserGroups/AddUser";
+import { AddUser } from "@/components/UserGroups/AddUser";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import type { User as UserEntity } from "@/interfaces/User";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetGroupsQuery } from "@/store/services/api/Group";
+import { useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useDeleteUserMutation, useGetUsersQuery } from "@/store/services/api/User";
 
-type GroupRecord = UserGroupValues & { id: number };
-
-type UserRecord = UserFormValues & {
-	id: number;
+type UserRecord = {
+	id: string;
+	username: string;
+	group: string;
+	company: string;
+	contactPerson: string;
+	phone: string;
+	companyAddress: string;
+	timezone: string;
+	active: boolean;
 	added: string;
+	password: string;
 };
 
-type ColumnKey = "username" | "group" | "company" | "contactPerson" | "phone" | "email" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
+type ColumnKey = "username" | "group" | "company" | "contactPerson" | "phone" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "username", label: "Username" },
@@ -20,7 +34,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "company", label: "Company" },
 	{ key: "contactPerson", label: "Contact Person" },
 	{ key: "phone", label: "Phone No." },
-	{ key: "email", label: "Email" },
 	{ key: "address", label: "Address" },
 	{ key: "timezone", label: "Timezone" },
 	{ key: "status", label: "Status" },
@@ -32,50 +45,65 @@ const columns: { key: ColumnKey; label: string }[] = [
 
 const textValue = (value: string) => (value.trim() ? value : "—");
 
-const todayLabel = () => {
-	const now = new Date();
-	return `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+const dateLabel = (value?: string) => {
+	const date = value ? new Date(value) : null;
+	if (!date || Number.isNaN(date.getTime())) return "";
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
 export default function User() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [groups, setGroups] = useState<GroupRecord[]>([]);
-	const [rows, setRows] = useState<UserRecord[]>([]);
+	const { data: users = [], isLoading, isFetching, isError, refetch } = useGetUsersQuery();
+	const { data: groups = [] } = useGetGroupsQuery();
+	const { data: timezones = [] } = useGetTimezonesQuery();
+	const [deleteUser, { isLoading: isDeleting }] = useDeleteUserMutation();
+	const rows = useMemo(() => {
+		const groupNames = new Map(groups.map((group) => [group.externalId, group.groupName]));
+		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
+		return users.map((user: UserEntity): UserRecord => ({
+			id: user.externalId,
+			username: user.userName ?? "",
+			group: groupNames.get(user.group) ?? user.group ?? "",
+			company: user.companyName ?? "",
+			contactPerson: user.contactPersonName ?? "",
+			phone: user.phone != null ? String(user.phone) : "",
+			companyAddress: user.companyAddress ?? "",
+			timezone: timezoneNames.get(user.timezone) ?? user.timezone ?? "",
+			active: user.status !== Status.INACTIVE,
+			added: dateLabel(user.createdAt),
+			password: user.password ?? "",
+		}));
+	}, [users, groups, timezones]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
-	const [visiblePasswords, setVisiblePasswords] = useState<number[]>([]);
+	const [visiblePasswords, setVisiblePasswords] = useState<string[]>([]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.username, row.group, row.company, row.contactPerson, row.phone, row.email, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) => [row.username, row.group, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveGroup = (values: UserGroupValues) => {
-		setGroups((current) => [
-			...current,
-			{ ...values, id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1 },
-		]);
+	const removeUser = async (row: UserRecord) => {
+		try {
+			await deleteUser(row.id).unwrap();
+			toast.success(`${row.username} deleted.`);
+		} catch (error) {
+			console.error("Failed to delete user.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the user."));
+		}
 	};
 
-	const saveUser = (values: UserFormValues) => {
-		setRows((current) => [
-			...current,
-			{
-				...values,
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				added: todayLabel(),
-			},
-		]);
+	const saveUser = () => {
 		setSearch("");
 		setPage(0);
 		setShowAddDialog(false);
@@ -98,14 +126,14 @@ export default function User() {
 		}
 		if (key === "resetPassword") {
 			return (
-				<button type="button" onClick={() => { setRows((current) => current.map((item) => (item.id === row.id ? { ...item, password: "", confirmPassword: "" } : item))); setVisiblePasswords((current) => current.filter((id) => id !== row.id)); }} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+				<button type="button" onClick={() => toast.info("Reset password is not available yet.")} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 					Reset
 				</button>
 			);
 		}
 		if (key === "delete") {
 			return (
-				<button type="button" aria-label={`Delete ${row.username}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+				<button type="button" aria-label={`Delete ${row.username}`} onClick={() => removeUser(row)} disabled={isDeleting} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 					<Trash2 className="h-3.5 w-3.5" />
 				</button>
 			);
@@ -130,8 +158,8 @@ export default function User() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>User</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} users</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh users" title="Refresh users" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh users" title="Refresh users" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -190,7 +218,7 @@ export default function User() {
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No users available</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>{isLoading ? "Loading users…" : isError ? "Could not load users" : "No users available"}</p>
 											<p className="mt-1 text-xs text-slate-500">Add a user to see them here.</p>
 										</td>
 									</tr>
@@ -216,7 +244,7 @@ export default function User() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddUser groups={groups} onClose={() => setShowAddDialog(false)} onAddGroup={saveGroup} onSubmit={saveUser} />}
+			{showAddDialog && <AddUser onClose={() => setShowAddDialog(false)} onSubmit={saveUser} />}
 		</div>
 	);
 }

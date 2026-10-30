@@ -1,15 +1,29 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddGroups, type GroupFormValues } from "@/components/UserGroups/AddGroups";
+import { AddGroups, groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { useAuth } from "@/contexts/AuthContext";
+import type { Group } from "@/interfaces/Group";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useDeleteGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
 
-type GroupRecord = GroupFormValues & {
-	id: number;
+type GroupRecord = {
+	id: string;
+	name: string;
+	assignedTo: string;
 	vehicles: string;
 	transporters: string;
 };
+
+const toRecord = (group: Group): GroupRecord => ({
+	id: group.externalId,
+	name: group.groupName ?? "",
+	assignedTo: groupAssignedToOptions.find((option) => option.value === group.assignedTo)?.label ?? group.assignedTo ?? "",
+	vehicles: "",
+	transporters: "",
+});
 
 type ColumnKey = "name" | "assignedTo" | "vehicles" | "transporters" | "delete";
 
@@ -27,7 +41,9 @@ export default function Groups() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<GroupRecord[]>([]);
+	const { data: groups = [], isLoading, isFetching, isError, refetch } = useGetGroupsQuery();
+	const [deleteGroup, { isLoading: isDeleting }] = useDeleteGroupMutation();
+	const rows = useMemo(() => groups.map(toRecord), [groups]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -44,16 +60,17 @@ export default function Groups() {
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveGroup = (values: GroupFormValues) => {
-		setRows((current) => [
-			...current,
-			{
-				...values,
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				vehicles: "",
-				transporters: "",
-			},
-		]);
+	const removeGroup = async (row: GroupRecord) => {
+		try {
+			await deleteGroup(row.id).unwrap();
+			toast.success(`${row.name} deleted.`);
+		} catch (error) {
+			console.error("Failed to delete group.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the group."));
+		}
+	};
+
+	const saveGroup = () => {
 		setSearch("");
 		setPage(0);
 		setShowAddDialog(false);
@@ -63,7 +80,7 @@ export default function Groups() {
 		if (key === "name") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.name}</span>;
 		if (key === "delete") {
 			return (
-				<button type="button" aria-label={`Delete ${row.name}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+				<button type="button" aria-label={`Delete ${row.name}`} onClick={() => removeGroup(row)} disabled={isDeleting} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 					<Trash2 className="h-3.5 w-3.5" />
 				</button>
 			);
@@ -88,8 +105,8 @@ export default function Groups() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Group</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} groups</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh groups" title="Refresh groups" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh groups" title="Refresh groups" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -148,7 +165,7 @@ export default function Groups() {
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No groups available</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>{isLoading ? "Loading groups…" : isError ? "Could not load groups" : "No groups available"}</p>
 											<p className="mt-1 text-xs text-slate-500">Add a group to see it here.</p>
 										</td>
 									</tr>
@@ -174,7 +191,7 @@ export default function Groups() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddGroups groups={rows} onClose={() => setShowAddDialog(false)} onSubmit={saveGroup} />}
+			{showAddDialog && <AddGroups onClose={() => setShowAddDialog(false)} onSubmit={saveGroup} />}
 		</div>
 	);
 }

@@ -6,7 +6,9 @@ import { exchangeTargets, landingOptions, type LandingPage } from "./model";
 import { useSettings } from "./SettingsState";
 import { Field, PanelIntro, PillTabs, primaryButtonClass, quietButtonClass, SelectInput, ToggleRow } from "./ui";
 
-const templates: Record<(typeof exchangeTargets)[number]["id"], string[]> = {
+type ExchangeTarget = (typeof exchangeTargets)[number]["id"];
+
+const templates: Record<ExchangeTarget, string[]> = {
   vehicle: ["Vehicle No", "Vehicle Type", "Device IMEI", "Transporter"],
   poi: ["Name", "Latitude", "Longitude", "Address"],
   payment: ["Vehicle No", "Amount", "Paid On", "Status"],
@@ -17,7 +19,7 @@ export function GeneralPanel({ section }: { section: string }) {
   const { draft, update } = useSettings();
   const general = draft.general;
   const [pendingLanding, setPendingLanding] = useState<LandingPage>(general.landingPage);
-  const [exchange, setExchange] = useState<(typeof exchangeTargets)[number]["id"]>("vehicle");
+  const [exchange, setExchange] = useState<ExchangeTarget>("vehicle");
 
   const patch = (next: Partial<typeof general>) => update("general", { ...general, ...next });
 
@@ -50,7 +52,7 @@ export function GeneralPanel({ section }: { section: string }) {
           title="File exchange"
           description="Download a blank template or upload a filled file for vehicles, points of interest, payments and billing."
         />
-        <PillTabs value={exchange} onChange={setExchange} options={exchangeTargets.map((item) => ({ id: item.id, label: item.label }))} />
+        <PillTabs<ExchangeTarget> value={exchange} onChange={setExchange} options={exchangeTargets.map((item) => ({ id: item.id, label: item.label }))} />
         <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-5 dark:border-white/[0.08] dark:bg-[#03091c]/40">
           <p className="text-sm font-medium text-slate-900 dark:text-white">{current.label}</p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{current.hint}</p>

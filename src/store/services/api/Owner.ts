@@ -1,189 +1,105 @@
-import { createApi } from "@reduxjs/toolkit/query/react";
+import { api } from "../api";
+import { Status } from "@/enums/Status";
 import { statusChangeBody } from "@/lib/statusPayload";
-import { baseQueryWithInterceptor } from "../utils/baseQuery";
+import type {
+  CreateOwnerRequest,
+  DeleteOwnerResponse,
+  Owner,
+  OwnerApiRecord,
+  UpdateOwnerRequest,
+  UpdateOwnerStatusRequest,
+} from "@/interfaces/Owner";
+import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-export type OwnerPayload = {
-  ownerName: string;
-};
+function normalizeStatus(status?: string): Status {
+  const value = status?.toLowerCase();
+  return Object.values(Status).includes(value as Status) ? (value as Status) : Status.ACTIVE;
+}
 
-export type OwnerResponse = {
-  id: string | number;
-  externalId: string;
-  ownerName: string;
-  status: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-const normalizeOwner = (owner: any): OwnerResponse => {
-  const normalizedStatus =
-    typeof owner?.status === "string"
-      ? owner.status.charAt(0).toUpperCase() +
-      owner.status.slice(1).toLowerCase()
-      : owner?.status ?? "Active";
-
+function normalizeOwner(owner: OwnerApiRecord): Owner {
   return {
-    id: owner?.id,
-    externalId: owner.id,
-    ownerName: owner?.name ?? "",
-    status: normalizedStatus,
-    createdAt: owner?.createdAt,
-    updatedAt: owner?.updatedAt,
+    id: owner.id,
+    externalId: String(owner.externalId ?? owner.id),
+    ownerName: owner.ownerName ?? "",
+    status: normalizeStatus(owner.status),
+    reason: owner.reason,
+    createdAt: owner.createdAt,
+    updatedAt: owner.updatedAt,
   };
-};
+}
 
-export const ownersApi = createApi({
-  reducerPath: "ownersApi",
-  baseQuery: baseQueryWithInterceptor,
-  tagTypes: ["Owners"],
-
+export const ownerApi = api.injectEndpoints({
   endpoints: (builder) => ({
-    createOwner: builder.mutation<OwnerResponse, OwnerPayload>({
-      query: (payload) => ({
+    getOwners: builder.query<Owner[], void>({
+      query: () => "/owner/get-all",
+      transformResponse: (response: ApiEnvelope<OwnerApiRecord[]>) => unwrapList(response).map(normalizeOwner),
+      providesTags: (result) => [
+        { type: "Owners", id: "LIST" },
+        ...(result ?? []).map((owner) => ({ type: "Owners" as const, id: owner.externalId })),
+      ],
+    }),
+
+    getOwnerById: builder.query<Owner, string>({
+      query: (externalId) => `/owner/get-by-id/${externalId}`,
+      transformResponse: (response: ApiEnvelope<OwnerApiRecord>) => normalizeOwner(unwrapResponse(response)),
+      providesTags: (_result, _error, externalId) => [{ type: "Owners", id: externalId }],
+    }),
+
+    createOwner: builder.mutation<Owner, CreateOwnerRequest>({
+      query: ({ ownerName }) => ({
         url: "/owner/create",
         method: "POST",
-        body: payload,
+        body: { ownerName: ownerName },
       }),
-
+      transformResponse: (response: ApiEnvelope<OwnerApiRecord>) => normalizeOwner(unwrapResponse(response)),
       invalidatesTags: [{ type: "Owners", id: "LIST" }],
     }),
 
-    getOwners: builder.query<OwnerResponse[], void>({
-      query: () => ({
-        url: "/owner/get-all",
-        method: "GET",
-      }),
-
-      transformResponse: (response: any) => {
-        const list = Array.isArray(response?.data)
-          ? response.data
-          : Array.isArray(response)
-            ? response
-            : [];
-
-        return list.map(normalizeOwner);
-      },
-
-      providesTags: (result) =>
-        result
-          ? [
-            { type: "Owners", id: "LIST" },
-
-            ...result.map((owner) => ({
-              type: "Owners" as const,
-              id: owner .id,
-            })),
-          ]
-          : [{ type: "Owners", id: "LIST" }],
-    }),
-
-    getOwnerById: builder.query<OwnerResponse, string>({
-      query: (externalId) => ({
-        url: `/owner/get-by-id/${externalId}`,
-        method: "GET",
-      }),
-
-      transformResponse: (response: any) => {
-        return normalizeOwner(response?.data ?? response);
-      },
-
-      providesTags: (result, error, externalId) => [
-        {
-          type: "Owners",
-          id: externalId,
-        },
-      ],
-    }),
-
-    updateOwner: builder.mutation<
-      OwnerResponse,
-      {
-        externalId: string;
-        ownerName: string;
-      }
-    >({
+    updateOwner: builder.mutation<Owner, UpdateOwnerRequest>({
       query: ({ externalId, ownerName }) => ({
         url: `/owner/update/${externalId}`,
         method: "PUT",
-        body: {
-          name: ownerName,
-        },
+        body: { ownerName: ownerName },
       }),
-
-      transformResponse: (response: any) => {
-        return normalizeOwner(response?.data ?? response);
-      },
-
-      invalidatesTags: (result, error, { externalId }) => [
-        {
-          type: "Owners",
-          id: externalId,
-        },
-        {
-          type: "Owners",
-          id: "LIST",
-        },
+      transformResponse: (response: ApiEnvelope<OwnerApiRecord>) => normalizeOwner(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "Owners", id: externalId },
+        { type: "Owners", id: "LIST" },
       ],
     }),
 
-    deleteOwner: builder.mutation<
-      {
-        success: boolean;
-        id: string | number;
-      },
-      string
-    >({
-      query: (externalId) => ({
-        url: `/owner/delete/${externalId}`,
-        method: "DELETE",
-      }),
-
-      invalidatesTags: (result, error, externalId) => [
-        {
-          type: "Owners",
-          id: externalId,
-        },
-        {
-          type: "Owners",
-          id: "LIST",
-        },
-      ],
-    }),
-
-    updateOwnerStatus: builder.mutation<
-      OwnerResponse,
-      {
-        id: string | number;
-        externalId: string;
-        status: string;
-        reason?: string;
-      }
-    >({
+    updateOwnerStatus: builder.mutation<Owner, UpdateOwnerStatusRequest>({
       query: ({ externalId, status, reason }) => ({
         url: `/owner/update/${externalId}`,
         method: "PUT",
         body: statusChangeBody(status, reason),
       }),
+      transformResponse: (response: ApiEnvelope<OwnerApiRecord>) => normalizeOwner(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "Owners", id: externalId },
+        { type: "Owners", id: "LIST" },
+      ],
+    }),
 
-      invalidatesTags: (result, error, { id }) => [
-        {
-          type: "Owners",
-          id,
-        },
-        {
-          type: "Owners",
-          id: "LIST",
-        },
+    deleteOwner: builder.mutation<DeleteOwnerResponse, string>({
+      query: (externalId) => ({
+        url: `/owner/delete/${externalId}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: (_result, _error, externalId) => [
+        { type: "Owners", id: externalId },
+        { type: "Owners", id: "LIST" },
       ],
     }),
   }),
+  overrideExisting: false,
 });
 
 export const {
-  useCreateOwnerMutation,
   useGetOwnersQuery,
   useGetOwnerByIdQuery,
+  useCreateOwnerMutation,
   useUpdateOwnerMutation,
-  useDeleteOwnerMutation,
   useUpdateOwnerStatusMutation,
-} = ownersApi;
+  useDeleteOwnerMutation,
+} = ownerApi;

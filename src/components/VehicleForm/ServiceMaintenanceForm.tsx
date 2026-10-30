@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { Plus, Search } from "lucide-react";
-import { vehicles } from "@/components/data/vehicles";
+import { useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 export type ServiceMaintenanceMode = "custom" | "template";
 
@@ -40,7 +40,6 @@ export type ServiceMaintenanceHandle = {
 	submit: () => { error: string } | { values: ServiceMaintenanceValues };
 };
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const templates = ["General Service", "Engine Oil", "Tyre Check"];
 
 const today = () => {
@@ -82,6 +81,8 @@ const emptyValues = (): ServiceMaintenanceValues => ({
 
 export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(function ServiceMaintenanceForm(_props, ref) {
 	const { theme } = useTheme();
+	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const vehicleOptions = vehicles.map((vehicle) => vehicle.name);
 	const isDark = theme !== "light";
 	const menuRef = useRef<HTMLDivElement>(null);
 	const fileRef = useRef<HTMLInputElement>(null);

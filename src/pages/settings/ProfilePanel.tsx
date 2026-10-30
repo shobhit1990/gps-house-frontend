@@ -1,3 +1,4 @@
+import { Plus, Trash2 } from "lucide-react";
 import { useSettings } from "./SettingsState";
 import { Field, PanelIntro, SelectInput, TextArea, TextInput } from "./ui";
 
@@ -7,6 +8,19 @@ export function ProfilePanel({ section }: { section: string }) {
   if (section === "preferences") {
     const preferences = draft.preferences;
     const patch = (next: Partial<typeof preferences>) => update("preferences", { ...preferences, ...next });
+    const fuelCosts =
+      preferences.fuelCosts.length > 0
+        ? preferences.fuelCosts
+        : preferences.fuelType || preferences.fuelCost
+          ? [{ fuelType: preferences.fuelType, fuelCost: preferences.fuelCost }]
+          : [];
+    const updateFuelCosts = (next: typeof fuelCosts) =>
+      patch({
+        fuelCosts: next,
+        fuelType: next[0]?.fuelType ?? "",
+        fuelCost: next[0]?.fuelCost ?? "",
+      });
+
     return (
       <div>
         <PanelIntro
@@ -33,24 +47,71 @@ export function ProfilePanel({ section }: { section: string }) {
               <option value="USD">US Dollar ($)</option>
             </SelectInput>
           </Field>
-          <Field label="Fuel type">
-            <SelectInput value={preferences.fuelType} onChange={(event) => patch({ fuelType: event.target.value })}>
-              <option value="">Select fuel type</option>
-              <option value="Petrol">Petrol</option>
-              <option value="Diesel">Diesel</option>
-              <option value="CNG">CNG</option>
-              <option value="Electric">Electric</option>
-            </SelectInput>
-          </Field>
-          <Field label="Fuel cost">
-            <TextInput
-              type="number"
-              min={0}
-              placeholder="Enter cost"
-              value={preferences.fuelCost}
-              onChange={(event) => patch({ fuelCost: event.target.value })}
-            />
-          </Field>
+          <div className="sm:col-span-2">
+            <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Fuel Cost</h3>
+            <div className="space-y-3">
+              {fuelCosts.map((fuelCost, index) => (
+                <div key={index} className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto_auto]">
+                  <Field label="Fuel Type">
+                    <SelectInput
+                      value={fuelCost.fuelType}
+                      onChange={(event) => {
+                        const next = [...fuelCosts];
+                        next[index] = { ...fuelCost, fuelType: event.target.value };
+                        updateFuelCosts(next);
+                      }}
+                    >
+                      <option value="">Select fuel type</option>
+                      <option value="Petrol">Petrol</option>
+                      <option value="Diesel">Diesel</option>
+                      <option value="CNG">CNG</option>
+                      <option value="Electric">Electric</option>
+                    </SelectInput>
+                  </Field>
+                  <Field label="Cost">
+                    <TextInput
+                      type="number"
+                      min={0}
+                      placeholder="Enter cost"
+                      value={fuelCost.fuelCost}
+                      onChange={(event) => {
+                        const next = [...fuelCosts];
+                        next[index] = { ...fuelCost, fuelCost: event.target.value };
+                        updateFuelCosts(next);
+                      }}
+                    />
+                  </Field>
+                  <button
+                    type="button"
+                    aria-label="Add fuel cost"
+                    title="Add fuel cost"
+                    onClick={() => updateFuelCosts([...fuelCosts, { fuelType: "", fuelCost: "" }])}
+                    className="mb-1 inline-flex h-8 w-8 items-center justify-center rounded-full text-emerald-600 transition hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-400/10"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete fuel cost"
+                    title="Delete fuel cost"
+                    onClick={() => updateFuelCosts(fuelCosts.filter((_, rowIndex) => rowIndex !== index))}
+                    className="mb-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-sky-600 transition hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-400/10"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              {fuelCosts.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => updateFuelCosts([{ fuelType: "", fuelCost: "" }])}
+                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-700 dark:border-white/[0.08] dark:text-slate-300"
+                >
+                  <Plus className="h-4 w-4" /> Add fuel cost
+                </button>
+              )}
+            </div>
+          </div>
           <Field label="Date format" required>
             <SelectInput value={preferences.dateFormat} onChange={(event) => patch({ dateFormat: event.target.value })}>
               <option value="dd/MM/yyyy">dd/MM/yyyy</option>

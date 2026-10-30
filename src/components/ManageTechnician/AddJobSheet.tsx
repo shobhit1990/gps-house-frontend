@@ -1,37 +1,41 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, X } from "lucide-react";
-import { vehicles } from "@/components/data/vehicles";
+import { toast } from "sonner";
+import { ChevronDown, Loader2, X } from "lucide-react";
+import { Status } from "@/enums/Status";
+import type { MasterOption } from "@/interfaces/EntityMaster";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useCreateJobSheetMutation } from "@/store/services/api/JobSheet";
+import { useGetTechnicianMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 export type JobSheetFormValues = {
 	vehicle: string;
-	technicianName: string;
+	technician: string;
 	contactPerson: string;
 	phone: string;
-	orderNo: string;
 	instruction: string;
 };
 
 type AddJobSheetProps = {
 	onClose: () => void;
-	onSubmit: (values: JobSheetFormValues) => void;
+	onSaved: () => void;
 };
-
-const technicians = ["ravi.tech", "amit.kumar"];
 
 const emptyValues = (): JobSheetFormValues => ({
 	vehicle: "",
-	technicianName: "",
+	technician: "",
 	contactPerson: "",
 	phone: "",
-	orderNo: "",
 	instruction: "",
 });
 
-export function AddJobSheet({ onClose, onSubmit }: AddJobSheetProps) {
+export function AddJobSheet({ onClose, onSaved }: AddJobSheetProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
+	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: technicians = [] } = useGetTechnicianMasterQuery();
+	const [createJobSheet, { isLoading: isSaving }] = useCreateJobSheetMutation();
 	const [values, setValues] = useState<JobSheetFormValues>(emptyValues);
 	const [formError, setFormError] = useState("");
 
@@ -65,23 +69,38 @@ export function AddJobSheet({ onClose, onSubmit }: AddJobSheetProps) {
 		</label>
 	);
 
-	const select = (key: keyof JobSheetFormValues, placeholder: string, options: string[], required = false) => (
+	const select = (key: keyof JobSheetFormValues, placeholder: string, options: MasterOption[], required = false) => (
 		<span className="relative block">
 			<select required={required} value={values[key]} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 				<option value="">{placeholder}</option>
-				{options.map((option) => <option key={option} value={option}>{option}</option>)}
+				{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
 			</select>
 			<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 		</span>
 	);
 
-	const submit = (event: FormEvent) => {
+	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.technicianName || !values.contactPerson.trim() || !values.phone.trim()) {
-			setFormError("Technician Name, Contact Person Name, and Phone No. are required.");
+		if (!values.vehicle || !values.technician || !values.contactPerson.trim() || !values.phone.trim()) {
+			setFormError("Vehicle, Technician Name, Contact Person Name, and Phone No. are required.");
 			return;
 		}
-		onSubmit({ ...values, contactPerson: values.contactPerson.trim(), phone: values.phone.trim() });
+		try {
+			await createJobSheet({
+				vehicle: values.vehicle,
+				technician: values.technician,
+				contactPersonName: values.contactPerson.trim(),
+				phone: values.phone.trim(),
+				instruction: values.instruction.trim() || undefined,
+				status: Status.ACTIVE,
+				reason: "New jobsheet created",
+			}).unwrap();
+			toast.success("Job sheet added.");
+			onSaved();
+		} catch (error) {
+			console.error("Failed to create job sheet.", error);
+			setFormError(apiErrorMessage(error, "Could not save the job sheet. Please try again."));
+		}
 	};
 
 	return (
@@ -111,11 +130,10 @@ export function AddJobSheet({ onClose, onSubmit }: AddJobSheetProps) {
 						</p>
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-						{field("Vehicle", select("vehicle", "Select Vehicle", vehicles.map((vehicle) => vehicle.vehicle)))}
-						{field("Technician Name", select("technicianName", "Select Technician", technicians, true), true)}
+						{field("Vehicle", select("vehicle", "Select Vehicle", vehicles, true), true)}
+						{field("Technician Name", select("technician", "Select Technician", technicians, true), true)}
 						{field("Contact Person Name", <input required value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, true)}
 						{field("Phone No.", <input required value={values.phone} placeholder="Phone No." onChange={(event) => update("phone", event.target.value)} className={inputClass} />, true)}
-						{field("Order No.", <input value={values.orderNo} placeholder="Order No." onChange={(event) => update("orderNo", event.target.value)} className={inputClass} />)}
 						<label className="block min-w-0 sm:col-span-2 xl:col-span-4">
 							<span className={labelClass}>Instruction</span>
 							<textarea value={values.instruction} placeholder="Landmark / Timing / Remark" rows={4} onChange={(event) => update("instruction", event.target.value)} className={`w-full resize-y rounded-md border px-3 py-2 text-[12px] outline-none transition focus:ring-2 ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"}`} />
@@ -124,7 +142,8 @@ export function AddJobSheet({ onClose, onSubmit }: AddJobSheetProps) {
 				</div>
 
 				<footer className={`flex shrink-0 items-center justify-end border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 						Save
 					</button>
 				</footer>

@@ -1,6 +1,11 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, X } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronDown, Loader2, X } from "lucide-react";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetClientMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useCreateTechnicianMutation } from "@/store/services/api/Technician";
 
 export type TechnicianFormValues = {
 	username: string;
@@ -8,20 +13,19 @@ export type TechnicianFormValues = {
 	confirmPassword: string;
 	company: string;
 	timezone: string;
+	client: string;
 	name: string;
 	email: string;
 	phone: string;
 	address: string;
-	allowAllVehicles: boolean;
 	active: boolean;
 };
 
 type AddTechnicianListProps = {
 	onClose: () => void;
-	onSubmit: (values: TechnicianFormValues) => void;
+	onSaved: () => void;
 };
 
-const timezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
 
 const emptyValues = (): TechnicianFormValues => ({
@@ -29,21 +33,26 @@ const emptyValues = (): TechnicianFormValues => ({
 	password: "",
 	confirmPassword: "",
 	company: "",
-	timezone: timezones[0],
+	timezone: "",
+	client: "",
 	name: "",
 	email: "",
 	phone: "",
 	address: "",
-	allowAllVehicles: false,
 	active: true,
 });
 
-export function AddTechnicianList({ onClose, onSubmit }: AddTechnicianListProps) {
+const optional = (value: string) => value.trim() || undefined;
+
+export function AddTechnicianList({ onClose, onSaved }: AddTechnicianListProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const [values, setValues] = useState<TechnicianFormValues>(emptyValues);
 	const [formError, setFormError] = useState("");
+	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const [createTechnician, { isLoading: isSaving }] = useCreateTechnicianMutation();
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -77,10 +86,10 @@ export function AddTechnicianList({ onClose, onSubmit }: AddTechnicianListProps)
 		</label>
 	);
 
-	const submit = (event: FormEvent) => {
+	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.company.trim() || !values.timezone) {
-			setFormError("Username, Password, Confirm Password, Company Name, and Timezone are required.");
+		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.company.trim() || !values.timezone || !values.client) {
+			setFormError("Username, Password, Confirm Password, Company Name, Timezone, and Client are required.");
 			return;
 		}
 		if (!usernamePattern.test(values.username.trim())) {
@@ -91,7 +100,32 @@ export function AddTechnicianList({ onClose, onSubmit }: AddTechnicianListProps)
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
-		onSubmit({ ...values, username: values.username.trim() });
+		const phone = values.phone.trim();
+		if (phone && !/^\d+$/.test(phone)) {
+			setFormError("Phone can only contain digits.");
+			return;
+		}
+		try {
+			await createTechnician({
+				userName: values.username.trim(),
+				password: values.password,
+				confirmPassword: values.confirmPassword,
+				companyName: values.company.trim(),
+				name: optional(values.name),
+				email: optional(values.email),
+				phone: phone ? Number(phone) : undefined,
+				address: optional(values.address),
+				timezone: values.timezone,
+				client: values.client,
+				status: values.active ? Status.ACTIVE : Status.INACTIVE,
+				reason: "Technician created",
+			}).unwrap();
+			toast.success(`${values.username.trim()} added.`);
+			onSaved();
+		} catch (error) {
+			console.error("Failed to create technician.", error);
+			setFormError(apiErrorMessage(error, "Could not save the technician. Please try again."));
+		}
 	};
 
 	return (
@@ -128,25 +162,35 @@ export function AddTechnicianList({ onClose, onSubmit }: AddTechnicianListProps)
 						<label className="block min-w-0">
 							<span className={labelClass}>Timezone <span className="text-rose-400">*</span></span>
 							<span className="relative block">
-								<select required value={values.timezone} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
-									{timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
+								<select required value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+									<option value="">{timezonesLoading ? "Loading timezones…" : "Select Timezone"}</option>
+									{timezones.map((timezone) => {
+										const id = timezone.externalId ?? String(timezone.id ?? "");
+										return <option key={id} value={id}>{timezone.timezone}</option>;
+									})}
+								</select>
+								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+							</span>
+						</label>
+						<label className="block min-w-0">
+							<span className={labelClass}>Client <span className="text-rose-400">*</span></span>
+							<span className="relative block">
+								<select required value={values.client} disabled={clientsLoading} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+									<option value="">{clientsLoading ? "Loading clients…" : "Select Client"}</option>
+									{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</span>
 						</label>
 						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, false, true)}
 						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, false, true)}
-						{field("Phone", <input value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, false, true)}
+						{field("Phone", <input inputMode="numeric" value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, false, true)}
 						<label className="block min-w-0 sm:col-span-2">
 							<span className={labelClass}>Address <span className="font-normal text-slate-500">(Optional)</span></span>
 							<input value={values.address} placeholder="Address" onChange={(event) => update("address", event.target.value)} className={inputClass} />
 						</label>
 					</div>
 					<div className="mt-5 flex flex-col gap-2.5">
-						<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-							<input type="checkbox" checked={values.allowAllVehicles} onChange={(event) => update("allowAllVehicles", event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
-							Allow access to all vehicle list
-						</label>
 						<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
 							<input type="checkbox" checked={values.active} onChange={(event) => update("active", event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
 							Active
@@ -158,7 +202,8 @@ export function AddTechnicianList({ onClose, onSubmit }: AddTechnicianListProps)
 					<button type="button" onClick={() => { setValues(emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 						Save
 					</button>
 				</footer>

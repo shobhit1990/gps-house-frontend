@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
 import { Download, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 export type UploadedDriver = {
 	name: string;
@@ -39,8 +40,6 @@ type UploadDriverFormProps = {
 	onSubmit: (values: UploadDriverValues) => void;
 };
 
-const clients = ["arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 
 const templateColumns = [
 	"Name",
@@ -139,6 +138,10 @@ const readDrivers = async (file: File) => {
 };
 
 export function UploadDriverForm({ onClose, onSubmit }: UploadDriverFormProps) {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();

@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, Refre
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddPayment, type PaymentFormValues } from "@/components/Payment/AddPayment";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type PaymentRecord = PaymentFormValues & {
 	id: number;
@@ -26,7 +27,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "remark", label: "Remark" },
 ];
 
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 
 const displayDate = (value: string) => {
 	const [year, month, day] = value.split("-");
@@ -37,6 +37,8 @@ const displayDate = (value: string) => {
 const textValue = (value: string) => (value.trim() ? value : "—");
 
 export default function Payment() {
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

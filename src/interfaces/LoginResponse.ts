@@ -1,3 +1,5 @@
+import type { MenuItem } from "./Menu";
+
 export interface LoginResponse {
   message: string;
   userId: string;
@@ -6,7 +8,7 @@ export interface LoginResponse {
   name: string;
   accessToken: string;
   refreshToken: string;
-  menus?: unknown[];
+  menus?: MenuItem[];
   roleCode: string;
   roleName?: string;
 }

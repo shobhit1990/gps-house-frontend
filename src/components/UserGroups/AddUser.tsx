@@ -1,6 +1,13 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, Info, X } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronDown, Info, Loader2, X } from "lucide-react";
+import { groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
+import { useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useCreateUserMutation } from "@/store/services/api/User";
 
 export type UserGroupValues = {
 	name: string;
@@ -16,29 +23,20 @@ export type UserFormValues = {
 	timezone: string;
 	company: string;
 	companyAddress: string;
-	email: string;
 	phone: string;
 	dataRestriction: string;
 	active: boolean;
 	schoolUser: boolean;
 };
 
-type UserGroupOption = {
-	name: string;
-};
-
 type AddUserProps = {
-	groups: UserGroupOption[];
 	onClose: () => void;
-	onAddGroup: (values: UserGroupValues) => void;
-	onSubmit: (values: UserFormValues) => void;
+	onSubmit: () => void;
 };
 
 const tabs = ["Add Group", "Add User"] as const;
 type UserTab = (typeof tabs)[number];
 
-const timezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
-const assignedToOptions = ["arun.singh", "tushar.shukla", "gpshouse"];
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
 
 const emptyGroup = (): UserGroupValues => ({ name: "", assignedTo: "" });
@@ -49,17 +47,16 @@ const emptyUser = (): UserFormValues => ({
 	confirmPassword: "",
 	contactPerson: "",
 	group: "",
-	timezone: timezones[0],
+	timezone: "",
 	company: "",
 	companyAddress: "",
-	email: "",
 	phone: "",
 	dataRestriction: "",
 	active: true,
 	schoolUser: false,
 });
 
-export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps) {
+export function AddUser({ onClose, onSubmit }: AddUserProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -67,6 +64,14 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 	const [groupValues, setGroupValues] = useState<UserGroupValues>(emptyGroup);
 	const [values, setValues] = useState<UserFormValues>(emptyUser);
 	const [formError, setFormError] = useState("");
+	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
+	const { data: timezoneMaster = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+	const timezones = timezoneMaster
+		.map((timezone) => ({ value: timezone.externalId ?? String(timezone.id ?? ""), label: timezone.timezone ?? "" }))
+		.filter((timezone) => timezone.value && timezone.label);
+	const [createGroup, { isLoading: creatingGroup }] = useCreateGroupMutation();
+	const [createUser, { isLoading: creatingUser }] = useCreateUserMutation();
+	const isSaving = creatingGroup || creatingUser;
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -105,25 +110,31 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 		</label>
 	);
 
-	const submitGroup = (event: FormEvent) => {
+	const submitGroup = async (event: FormEvent) => {
 		event.preventDefault();
 		const name = groupValues.name.trim();
 		if (!name || !groupValues.assignedTo) {
 			setFormError("Group Name and Assigned To are required.");
 			return;
 		}
-		if (groups.some((group) => group.name.toLowerCase() === name.toLowerCase())) {
+		if (groups.some((group) => group.groupName?.toLowerCase() === name.toLowerCase())) {
 			setFormError("A group with this name already exists.");
 			return;
 		}
-		onAddGroup({ name, assignedTo: groupValues.assignedTo });
-		setValues((current) => ({ ...current, group: name }));
-		setGroupValues(emptyGroup());
-		setFormError("");
-		setActiveTab("Add User");
+		try {
+			const group = await createGroup({ groupName: name, assignedTo: groupValues.assignedTo, status: Status.ACTIVE, reason: "Group created" }).unwrap();
+			toast.success(`${name} saved.`);
+			setValues((current) => ({ ...current, group: group.externalId }));
+			setGroupValues(emptyGroup());
+			setFormError("");
+			setActiveTab("Add User");
+		} catch (error) {
+			console.error("Failed to create group.", error);
+			setFormError(apiErrorMessage(error, "Could not save the group. Please try again."));
+		}
 	};
 
-	const submitUser = (event: FormEvent) => {
+	const submitUser = async (event: FormEvent) => {
 		event.preventDefault();
 		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.group || !values.timezone || !values.company.trim()) {
 			setFormError("Username, Password, Confirm Password, Group, Timezone, and Company Name are required.");
@@ -137,7 +148,29 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
-		onSubmit({ ...values, username: values.username.trim(), company: values.company.trim() });
+		const text = (value: string) => value.trim() || undefined;
+		try {
+			await createUser({
+				userName: values.username.trim(),
+				password: values.password,
+				confirmPassword: values.confirmPassword,
+				group: values.group,
+				timezone: values.timezone,
+				companyName: values.company.trim(),
+				contactPersonName: text(values.contactPerson),
+				phone: text(values.phone),
+				companyAddress: text(values.companyAddress),
+				dataRestrictionDays: values.dataRestriction ? Number(values.dataRestriction) : undefined,
+				isSchoolUser: values.schoolUser,
+				status: values.active ? Status.ACTIVE : Status.INACTIVE,
+				reason: "New user created",
+			}).unwrap();
+			toast.success(`${values.username.trim()} saved.`);
+			onSubmit();
+		} catch (error) {
+			console.error("Failed to create user.", error);
+			setFormError(apiErrorMessage(error, "Could not save the user. Please try again."));
+		}
 	};
 
 	const resetCurrent = () => {
@@ -204,7 +237,7 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 								<span className="relative block">
 									<select required value={groupValues.assignedTo} onChange={(event) => updateGroup("assignedTo", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 										<option value="">Select</option>
-										{assignedToOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+										{groupAssignedToOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 									</select>
 									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 								</span>
@@ -220,9 +253,9 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 								<label className="block min-w-0">
 									<span className={labelClass}>Group <span className="text-rose-400">*</span></span>
 									<span className="relative block">
-										<select required value={values.group} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
-											<option value="">Select Group</option>
-											{groups.map((group) => <option key={group.name} value={group.name}>{group.name}</option>)}
+										<select required value={values.group} disabled={groupsLoading} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">{groupsLoading ? "Loading groups…" : "Select Group"}</option>
+											{groups.map((group) => <option key={group.externalId} value={group.externalId}>{group.groupName}</option>)}
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</span>
@@ -230,15 +263,15 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 								<label className="block min-w-0">
 									<span className={labelClass}>Timezone <span className="text-rose-400">*</span></span>
 									<span className="relative block">
-										<select required value={values.timezone} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
-											{timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
+										<select required value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">{timezonesLoading ? "Loading timezones…" : "Select Timezone"}</option>
+											{timezones.map((timezone) => <option key={timezone.value} value={timezone.value}>{timezone.label}</option>)}
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</span>
 								</label>
 								{field("Company Name", <input required value={values.company} placeholder="Company Name" onChange={(event) => update("company", event.target.value)} className={inputClass} />, true)}
 								{field("Company Address", <input value={values.companyAddress} placeholder="Company Address" onChange={(event) => update("companyAddress", event.target.value)} className={inputClass} />, false, true)}
-								{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, false, true)}
 								{field("Phone", <input value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, false, true)}
 								<label className="block min-w-0">
 									<span className={labelClass}>Data Restriction (in Days) <span className="font-normal text-slate-500">(Optional)</span></span>
@@ -279,7 +312,8 @@ export function AddUser({ groups, onClose, onAddGroup, onSubmit }: AddUserProps)
 					<button type="button" onClick={resetCurrent} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 						Save
 					</button>
 				</footer>

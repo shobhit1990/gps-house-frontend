@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { Plus, Trash2, X } from "lucide-react";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 export type DriverDocumentValues = {
 	id: number;
@@ -47,8 +48,6 @@ type AddDriverDetailFormProps = {
 const tabs = ["Add Driver Detail", "Upload Documents"] as const;
 type DriverTab = (typeof tabs)[number];
 
-const clients = ["arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const licenseOptions = ["LMV", "HMV", "HGMV", "MCWG"];
 
 const isoDate = (date: Date) => {
@@ -96,6 +95,10 @@ const detailDefaults = () => ({
 });
 
 export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormProps) {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();

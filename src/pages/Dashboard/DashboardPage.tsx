@@ -264,7 +264,7 @@ export default function DashboardPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[1900px] border-collapse text-left">
                     <thead>
-                      <tr className="border-b border-white/[0.07] bg-white/[0.025] text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      <tr className="border-b border-white/[0.07] bg-white/[0.025] text-[9px] font-semibold uppercase tracking-[0.14em] text-black-500">
                         <th className="px-4 py-3.5 font-medium sm:px-5">Vehicle</th>
                         <th className="px-3 py-3.5 font-medium">Branch</th>
                         <th className="px-3 py-3.5 font-medium">Last known location</th>
@@ -311,44 +311,44 @@ export default function DashboardPage() {
                                   <VehicleGlyph kind={vehicle.kind} color={vehicle.color} />
                                 </span>
                                 <div>
-                                  <p className={`text-[11px] font-semibold ${isSelected ? "text-cyan-100" : "text-slate-100"}`}>
+                                  <p className={`text-[11px] font-semibold ${isSelected ? "text-black-900" : "text-black-900"}`}>
                                     {vehicle.vehicle}
                                   </p>
-                                  <p className="mt-1 text-[9px] capitalize text-slate-500">
+                                  <p className="mt-1 text-[9px] capitalize text-black-900">
                                     {vehicle.kind === "car" ? "Four-wheeler" : "Two-wheeler"}
                                   </p>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-3 py-3.5 text-[11px] text-slate-300">
-                              {vehicle.branch || <span className="text-slate-600">—</span>}
+                            <td className="px-3 py-3.5 text-[11px] text-black-300">
+                              {vehicle.branch || <span className="text-black-600">—</span>}
                             </td>
                             <td className="max-w-[230px] px-3 py-3.5">
                               <div className="flex items-start gap-2">
                                 <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-cyan-200/65" />
-                                <span className="line-clamp-2 text-[10px] leading-[1.55] text-slate-400">
+                                <span className="line-clamp-2 text-[10px] leading-[1.55] text-black-400">
                                   {vehicle.address}
                                 </span>
                               </div>
                             </td>
-                            <td className="px-3 py-3.5 text-[11px] text-slate-400">{vehicle.poi}</td>
+                            <td className="px-3 py-3.5 text-[11px] text-black-400">{vehicle.poi}</td>
                             <td className="px-4 py-3.5">
-                              <p className="text-[10px] text-slate-300">{date}</p>
-                              <p className="mt-1 text-[9px] text-slate-500">{time}</p>
+                              <p className="text-[10px] text-black-300">{date}</p>
+                              <p className="mt-1 text-[9px] text-black-500">{time}</p>
                             </td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.parking)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.speedKmph)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.kmSinceAc)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.ac)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.btr)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.gsm)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.gps)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.lockStatus)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.iccid)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.driverName)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.socPercent)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.excPowerVolt)}</td>
-                            <td className="px-3 py-3.5 text-[10px] text-slate-300">{displayTelemetry(vehicle.panic)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.parking)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.speedKmph)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.kmSinceAc)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.ac)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.btr)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.gsm)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.gps)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.lockStatus)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.iccid)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.driverName)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.socPercent)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.excPowerVolt)}</td>
+                            <td className="px-3 py-3.5 text-[10px] text-black-300">{displayTelemetry(vehicle.panic)}</td>
                           </tr>
                         );
                       })}

@@ -1,13 +1,25 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddTechnicianList, type TechnicianFormValues } from "@/components/ManageTechnician/AddTechnicianList";
+import { AddTechnicianList } from "@/components/ManageTechnician/AddTechnicianList";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import { useGetClientMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetTechniciansQuery } from "@/store/services/api/Technician";
 
-type TechnicianRecord = TechnicianFormValues & {
-	id: number;
+type TechnicianRecord = {
+	id: string;
+	username: string;
+	contactPerson: string;
+	phone: string;
 	client: string;
+	email: string;
+	company: string;
+	timezone: string;
+	password: string;
+	active: boolean;
 };
 
 type ColumnKey = "username" | "contactPerson" | "phone" | "client" | "email" | "company" | "timezone" | "status" | "showPassword" | "resetPassword";
@@ -31,33 +43,43 @@ export default function TechnicianList() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<TechnicianRecord[]>([]);
+	const { data: technicians = [], isLoading, isFetching, isError, refetch } = useGetTechniciansQuery();
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: timezones = [] } = useGetTimezonesQuery();
+	const rows = useMemo<TechnicianRecord[]>(() => {
+		const clientNames = new Map(clients.map((client) => [client.id, client.name]));
+		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
+		return technicians.map((technician) => ({
+			id: technician.externalId,
+			username: technician.userName ?? "",
+			contactPerson: technician.name ?? "",
+			phone: technician.phone != null ? String(technician.phone) : "",
+			client: clientNames.get(technician.client) ?? technician.client ?? "",
+			email: technician.email ?? "",
+			company: technician.companyName ?? "",
+			timezone: timezoneNames.get(technician.timezone) || (technician.timezone ?? ""),
+			password: technician.password ?? "",
+			active: technician.status !== Status.INACTIVE,
+		}));
+	}, [technicians, clients, timezones]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
-	const [visiblePasswords, setVisiblePasswords] = useState<number[]>([]);
+	const [visiblePasswords, setVisiblePasswords] = useState<string[]>([]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.username, row.name, row.phone, row.client, row.email, row.company, row.timezone].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) => [row.username, row.contactPerson, row.phone, row.client, row.email, row.company, row.timezone].join(" ").toLowerCase().includes(query));
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveTechnician = (values: TechnicianFormValues) => {
-		setRows((current) => [
-			...current,
-			{
-				...values,
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				client: "",
-			},
-		]);
+	const saveTechnician = () => {
 		setSearch("");
 		setPage(0);
 		setShowAddDialog(false);
@@ -65,7 +87,6 @@ export default function TechnicianList() {
 
 	const cell = (key: ColumnKey, row: TechnicianRecord) => {
 		if (key === "username") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.username}</span>;
-		if (key === "contactPerson") return textValue(row.name);
 		if (key === "status") {
 			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${row.active ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-white/[0.06] text-slate-400" : "bg-slate-100 text-slate-600")}`}>{row.active ? "Active" : "Inactive"}</span>;
 		}
@@ -79,7 +100,7 @@ export default function TechnicianList() {
 		}
 		if (key === "resetPassword") {
 			return (
-				<button type="button" onClick={() => { setRows((current) => current.map((item) => (item.id === row.id ? { ...item, password: "", confirmPassword: "" } : item))); setVisiblePasswords((current) => current.filter((id) => id !== row.id)); }} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+				<button type="button" onClick={() => toast.info("Reset password is not available yet.")} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 					Reset
 				</button>
 			);
@@ -104,8 +125,8 @@ export default function TechnicianList() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Technician List</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} technicians</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh technicians" title="Refresh technicians" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh technicians" title="Refresh technicians" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -164,8 +185,8 @@ export default function TechnicianList() {
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No technicians available</p>
-											<p className="mt-1 text-xs text-slate-500">Add a technician to see them here.</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>{isLoading ? "Loading technicians…" : isError ? "Could not load technicians" : "No technicians available"}</p>
+											<p className="mt-1 text-xs text-slate-500">{isError ? "Use refresh to try again." : "Add a technician to see them here."}</p>
 										</td>
 									</tr>
 								)}
@@ -190,7 +211,7 @@ export default function TechnicianList() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddTechnicianList onClose={() => setShowAddDialog(false)} onSubmit={saveTechnician} />}
+			{showAddDialog && <AddTechnicianList onClose={() => setShowAddDialog(false)} onSaved={saveTechnician} />}
 		</div>
 	);
 }
