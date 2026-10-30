@@ -1,36 +1,11 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "../store";
+import type { MenuItem, MenuPermissions } from "@/interfaces/Menu";
 
-export interface MenuPermissions {
-  view: boolean;
-  add: boolean;
-  edit: boolean;
-  delete: boolean;
-  filter: boolean;
-  print: boolean;
-  excel: boolean;
-}
-
-export interface MenuItem {
-  id: string;
-  key: string;
-  label: string;
-  icon: string;
-  url: string | null;
-  isTitle: boolean;
-  priority: number;
-  parent: {
-    id: string;
-    key: string;
-    label: string;
-    icon: string;
-  } | null;
-  permissions: MenuPermissions;
-  children: MenuItem[];
-}
+export type { MenuItem, MenuPermissions };
 
 export interface User {
-  id: number;
+  id: string;
   authUserId?: string;
   staffId?: string;
   username: string;
@@ -49,6 +24,7 @@ export interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   menus: MenuItem[];
+  pendingSessionRevoke: string | null;
 }
 
 const loadAuthFromStorage = (): AuthState => {
@@ -66,6 +42,7 @@ const loadAuthFromStorage = (): AuthState => {
       refreshToken,
       isAuthenticated: !!token,
       menus,
+      pendingSessionRevoke: null,
     };
   } catch (error) {
     console.error("Error loading auth from storage:", error);
@@ -75,6 +52,7 @@ const loadAuthFromStorage = (): AuthState => {
       refreshToken: null,
       isAuthenticated: false,
       menus: [],
+      pendingSessionRevoke: null,
     };
   }
 };
@@ -100,6 +78,7 @@ export const authSlice = createSlice({
       state.refreshToken = refreshToken || null;
       state.isAuthenticated = true;
       state.menus = menus || [];
+      state.pendingSessionRevoke = null;
 
       localStorage.setItem("token", token);
       localStorage.setItem("user", JSON.stringify(user));
@@ -117,6 +96,10 @@ export const authSlice = createSlice({
     setMenus: (state, action: PayloadAction<MenuItem[]>) => {
       state.menus = action.payload;
       localStorage.setItem("menus", JSON.stringify(action.payload));
+    },
+
+    setPendingSessionRevoke: (state, action: PayloadAction<string | null>) => {
+      state.pendingSessionRevoke = action.payload;
     },
 
     updateTokens: (
@@ -145,13 +128,21 @@ export const authSlice = createSlice({
   },
 });
 
-export const { setCredentials, updateUser, setMenus, logout, updateTokens } =
-  authSlice.actions;
+export const {
+  setCredentials,
+  updateUser,
+  setMenus,
+  setPendingSessionRevoke,
+  logout,
+  updateTokens,
+} = authSlice.actions;
 
 export const selectCurrentUser = (state: RootState) => state.auth.user;
 export const selectCurrentToken = (state: RootState) => state.auth.token;
 export const selectIsAuthenticated = (state: RootState) => state.auth.isAuthenticated;
 export const selectMenus = (state: RootState) => state.auth.menus;
 export const selectRefreshToken = (state: RootState) => state.auth.refreshToken;
+export const selectPendingSessionRevoke = (state: RootState) =>
+  state.auth.pendingSessionRevoke;
 
 export default authSlice.reducer;

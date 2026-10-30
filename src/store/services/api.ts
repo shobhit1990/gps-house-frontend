@@ -1,11 +1,11 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithInterceptor } from "./utils/baseQuery";
 
-/** Shared tag shell — domain APIs live in their own createApi modules. */
+/** Shared API shell — domain endpoints are added with `api.injectEndpoints` in ./api/*. */
 export const api = createApi({
   reducerPath: "api",
   baseQuery: baseQueryWithInterceptor,
-  tagTypes: ["Auth"],
+  tagTypes: ["Auth", "Master", "Owners", "Clients", "Transporters", "Vehicles", "PaymentDetails", "BillingDetails", "Technicians", "JobSheets", "Groups", "Users", "Trips", "TripDetails", "TripEvents", "TripEventDetails"],
   endpoints: () => ({}),
 });
 

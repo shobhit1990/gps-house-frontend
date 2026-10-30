@@ -5,7 +5,7 @@ import path from "path";
 export default defineConfig({
   server: {
     host: "::",
-    port: Number(process.env.VITE_NODE_PORT) || 8000,
+    port: Number(process.env.VITE_NODE_PORT) || 3000,
     cors: true,
     allowedHosts:
       (process.env.VITE_ALLOWED_HOSTS &&

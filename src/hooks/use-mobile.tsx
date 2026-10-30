@@ -41,3 +41,8 @@ export function useMobile(): MobileInfo {
 
   return mobileInfo;
 }
+
+/** Boolean shorthand used by the shadcn `ui/sidebar` component. */
+export function useIsMobile(): boolean {
+  return useMobile().isMobile;
+}
