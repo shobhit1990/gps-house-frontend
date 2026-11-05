@@ -21,10 +21,18 @@ import {
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import {
+	useCreateParkedScheduleMutation,
+	useDeleteParkedScheduleMutation,
+	useGetParkedSchedulesQuery,
+} from "@/store/services/api/ParkedSchedule";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import type { ParkedScheduleFrequency } from "@/interfaces/ParkedSchedule";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type ParkedRow = {
-	id: number;
+	id: string;
 	transporter: string;
 	vehicles: string;
 	scheduled: string;
@@ -46,28 +54,50 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "endTime", label: "End Time" },
 ];
 
-const schedules = ["Daily", "Weekly", "Monthly"];
+const schedules: ParkedScheduleFrequency[] = ["Daily", "Weekly", "Monthly"];
 
 const emptyForm = {
 	client: "",
 	transporter: "",
 	vehicle: "",
-	scheduled: "Daily",
+	scheduled: "Daily" as ParkedScheduleFrequency,
+	startDate: "",
+	endDate: "",
 	from: "00:00",
 	till: "00:00",
 };
 
+const dateLabel = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+};
+
 export default function ParkScheduler() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
-	const vehicleOptions = vehicles.map((vehicle) => vehicle.name);
+	const { data: schedulesData = [], isFetching, refetch } = useGetParkedSchedulesQuery();
+	const [createParkedSchedule, { isLoading: isSaving }] = useCreateParkedScheduleMutation();
+	const [deleteParkedSchedule] = useDeleteParkedScheduleMutation();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<ParkedRow[]>([]);
+	const rows = useMemo<ParkedRow[]>(() => {
+		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
+		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
+		return schedulesData.map((schedule) => ({
+			id: schedule.externalId,
+			transporter: transporterNames.get(schedule.transporter) ?? schedule.transporter ?? "",
+			vehicles: vehicleNames.get(schedule.vehicle) ?? schedule.vehicle ?? "",
+			scheduled: schedule.scheduled ?? "",
+			parkedStartDate: dateLabel(schedule.startDate),
+			parkedEndDate: dateLabel(schedule.endDate),
+			startTime: schedule.scheduledFrom ?? "",
+			endTime: schedule.scheduledTill ?? "",
+		}));
+	}, [schedulesData, transporters, vehicles]);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(0);
 	const [sortKey, setSortKey] = useState<ColumnKey>("transporter");
@@ -95,28 +125,45 @@ export default function ParkScheduler() {
 		}
 	};
 
-	const saveSchedule = () => {
-		if (!form.client || !form.transporter || !form.vehicle || !form.scheduled || !form.from || !form.till) {
+	const saveSchedule = async () => {
+		if (isSaving) return;
+		if (!form.client || !form.transporter || !form.vehicle || !form.scheduled || !form.startDate || !form.endDate || !form.from || !form.till) {
 			toast.error("Please fill all required fields.");
 			return;
 		}
-		setRows((current) => [
-			{
-				id: Date.now(),
+		if (form.endDate < form.startDate) {
+			toast.error("Parked End Date cannot be before Parked Start Date.");
+			return;
+		}
+		try {
+			await createParkedSchedule({
+				client: form.client,
 				transporter: form.transporter,
-				vehicles: form.vehicle,
+				vehicle: form.vehicle,
 				scheduled: form.scheduled,
-				parkedStartDate: "—",
-				parkedEndDate: "—",
-				startTime: form.from,
-				endTime: form.till,
-			},
-			...current,
-		]);
-		setForm(emptyForm);
-		setFormOpen(false);
-		setPage(0);
-		toast.success("Parked schedule saved.");
+				startDate: form.startDate,
+				endDate: form.endDate,
+				scheduledFrom: form.from,
+				scheduledTill: form.till,
+				status: Status.ACTIVE,
+				reason: "New parked schedule created",
+			}).unwrap();
+			setForm(emptyForm);
+			setFormOpen(false);
+			setPage(0);
+			toast.success("Parked schedule saved.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not save the parked schedule."));
+		}
+	};
+
+	const removeSchedule = async (externalId: string) => {
+		try {
+			await deleteParkedSchedule(externalId).unwrap();
+			toast.success("Parked schedule deleted.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not delete the parked schedule."));
+		}
 	};
 
 	const field = (id: string, label: string, control: ReactNode) => (
@@ -145,8 +192,8 @@ export default function ParkScheduler() {
 							<span className={`rounded-full border px-2.5 py-1 text-[10px] ${isDark ? "border-white/[0.08] bg-white/[0.04] text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>{rows.length} records</span>
 						</div>
 					</div>
-					<button type="button" onClick={() => window.location.reload()} aria-label="Refresh parked schedules" className={refreshButtonClass(isDark)}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} aria-label="Refresh parked schedules" className={refreshButtonClass(isDark)}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -198,7 +245,7 @@ export default function ParkScheduler() {
 												<td key={column.key} className="whitespace-nowrap px-4 py-3">{row[column.key] || "—"}</td>
 											))}
 											<td className="px-4 py-2.5 text-center">
-												<button type="button" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={rowActionClass(isDark, "rose")}>
+												<button type="button" onClick={() => removeSchedule(row.id)} className={rowActionClass(isDark, "rose")}>
 													Delete
 												</button>
 											</td>
@@ -222,7 +269,7 @@ export default function ParkScheduler() {
 					footer={
 						<>
 							<button type="button" onClick={() => setForm(emptyForm)} className={secondaryButtonClass(isDark)}>Reset</button>
-							<button type="submit" className={primaryButtonClass(isDark)}>Save</button>
+							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>{isSaving ? "Saving..." : "Save"}</button>
 						</>
 					}
 				>
@@ -230,25 +277,31 @@ export default function ParkScheduler() {
 						{field("park-client", "Client", (
 							<select id="park-client" value={form.client} onChange={(event) => setForm({ ...form, client: event.target.value })} className={inputClass(isDark)}>
 								<option value="">Select Client</option>
-								{clients.map((name) => <option key={name} value={name}>{name}</option>)}
+								{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
 							</select>
 						))}
 						{field("park-transporter", "Transporter", (
 							<select id="park-transporter" value={form.transporter} onChange={(event) => setForm({ ...form, transporter: event.target.value })} className={inputClass(isDark)}>
 								<option value="">Select Transporter</option>
-								{transporters.map((name) => <option key={name} value={name}>{name}</option>)}
+								{transporters.map((transporter) => <option key={transporter.id} value={transporter.id}>{transporter.name}</option>)}
 							</select>
 						))}
 						{field("park-vehicle", "Vehicle", (
 							<select id="park-vehicle" value={form.vehicle} onChange={(event) => setForm({ ...form, vehicle: event.target.value })} className={inputClass(isDark)}>
 								<option value="">Select Vehicle</option>
-								{vehicleOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+								{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}
 							</select>
 						))}
 						{field("park-scheduled", "Scheduled", (
-							<select id="park-scheduled" value={form.scheduled} onChange={(event) => setForm({ ...form, scheduled: event.target.value })} className={inputClass(isDark)}>
+							<select id="park-scheduled" value={form.scheduled} onChange={(event) => setForm({ ...form, scheduled: event.target.value as ParkedScheduleFrequency })} className={inputClass(isDark)}>
 								{schedules.map((name) => <option key={name} value={name}>{name}</option>)}
 							</select>
+						))}
+						{field("park-start-date", "Parked Start Date", (
+							<input id="park-start-date" type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} className={inputClass(isDark)} />
+						))}
+						{field("park-end-date", "Parked End Date", (
+							<input id="park-end-date" type="date" min={form.startDate || undefined} value={form.endDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} className={inputClass(isDark)} />
 						))}
 						{field("park-from", "Scheduled From", (
 							<input id="park-from" type="time" value={form.from} onChange={(event) => setForm({ ...form, from: event.target.value })} className={inputClass(isDark)} />

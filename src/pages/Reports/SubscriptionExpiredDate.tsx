@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type ExpiredRow = {
 	id: string;
@@ -28,8 +29,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "subscriptionDue", label: "Subscription Due" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const knownVehicles = new Set(vehicles.map((vehicle) => vehicle.vehicle));
 
@@ -116,6 +115,10 @@ function ExpiredRings({ rows }: { rows: ExpiredRow[] }) {
 }
 
 export default function SubscriptionExpiredDate() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

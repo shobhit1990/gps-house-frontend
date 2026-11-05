@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type SpeedRow = {
 	id: string;
@@ -43,8 +44,6 @@ const bands = [
 	{ key: "km80" as const, legend: "Speed: 80+ kmph", color: "#e23b3b" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -118,6 +117,10 @@ function SpeedChart({ row }: { row: SpeedRow }) {
 }
 
 export default function SpeedVsDistance() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

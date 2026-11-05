@@ -28,7 +28,7 @@ export const vehicleApi = api.injectEndpoints({
 
     createVehicle: builder.mutation<Vehicle, CreateVehicleRequest>({
       query: (body) => ({
-        url: "/vehicle/",
+        url: "/vehicle",
         method: "POST",
         body,
       }),

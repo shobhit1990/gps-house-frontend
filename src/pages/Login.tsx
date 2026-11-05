@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useTheme } from "next-themes";
 import { useToast } from "@/hooks/use-toast";
 import { useDispatch } from "@/store/hooks";
-import { useLoginMutation } from "@/store/services/api/auth";
+import { useLoginMutation } from "@/store/services/api/login";
 import { setCredentials } from "@/store/slices/authSlice";
 import {
   ArrowRight,
@@ -51,7 +51,7 @@ const Login = () => {
 
     try {
       const response = await login({
-        username: formData.email.trim(),
+        userName: formData.email.trim(),
         password: formData.password,
       }).unwrap();
 

@@ -65,14 +65,14 @@ export default function Transporter() {
 		const clientNames = new Map(clientMaster.map((client) => [client.id, client.name]));
 		return transporterList.map((transporter, index) => ({
 			id: index + 1,
-			username: transporter.username ?? "",
+			username: transporter.userName ?? "",
 			client: clientNames.get(transporter.client) ?? transporter.client ?? "",
 			vehicleCount: 0,
 			payment: "",
 			contactPerson: transporter.name ?? "",
 			phone: transporter.phone ?? "",
 			email: transporter.email ?? "",
-			company: transporter.company ?? "",
+			company: transporter.companyName ?? "",
 			inactiveTime: transporter.inactiveTime == null ? "" : String(transporter.inactiveTime),
 			timezone: transporter.timezone ?? "",
 		}));

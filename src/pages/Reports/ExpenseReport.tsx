@@ -6,6 +6,7 @@ import { vehicles } from "@/components/data/vehicles";
 import { AddExpense, type ExpenseFormValues } from "@/components/Reports/AddExpense";
 import { nowDateTimeInput } from "@/components/Reports/expenseDate";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery } from "@/store/services/api/Master";
 
 type ExpenseRecord = ExpenseFormValues & {
 	id: number;
@@ -73,7 +74,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "documents", label: "Documents" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -96,6 +96,8 @@ const textValue = (value: string) => (value.trim() ? value : "—");
 const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 export default function ExpenseReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

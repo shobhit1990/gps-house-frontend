@@ -8,6 +8,11 @@ export const SOCKET_CONFIG = {
   URL: import.meta.env.VITE_SOCKET_URL || "http://localhost:3000",
 } as const;
 
+/** Set VITE_AUTH_ENABLED=false to skip the login screen and 401 logout until the login API is ready. */
+export const AUTH_CONFIG = {
+  ENABLED: import.meta.env.VITE_AUTH_ENABLED !== "false",
+} as const;
+
 export const ENV = {
   NODE_ENV: import.meta.env.VITE_NODE_ENV || "development",
   IS_DEVELOPMENT: import.meta.env.DEV || true,
@@ -26,6 +31,7 @@ export const TOAST_CONFIG = {
 
 export default {
   API: API_CONFIG,
+  AUTH: AUTH_CONFIG,
   SOCKET: SOCKET_CONFIG,
   ENV,
   LOG: LOG_CONFIG,

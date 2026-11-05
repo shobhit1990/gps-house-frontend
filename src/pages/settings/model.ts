@@ -14,12 +14,6 @@ export type ThemeSettings = {
   themeColor: string;
 };
 
-export type VehicleConfigSettings = {
-  transporter: string;
-  distanceVariation: string;
-  lockButton: boolean;
-};
-
 export type ProfileSettings = {
   name: string;
   mobile: string;
@@ -104,7 +98,6 @@ export type CustomFieldRecord = {
 export type SettingsDraft = {
   general: GeneralSettings;
   theme: ThemeSettings;
-  vehicleConfig: VehicleConfigSettings;
   profile: ProfileSettings;
   preferences: PreferenceSettings;
   certificates: CertificateRecord[];
@@ -199,11 +192,6 @@ export const createDraft = (): SettingsDraft => ({
     domain: "",
     viewChartInReports: true,
     themeColor: "cyan",
-  },
-  vehicleConfig: {
-    transporter: "",
-    distanceVariation: "0",
-    lockButton: true,
   },
   profile: {
     name: "",

@@ -25,7 +25,7 @@ type NavMenu = { label: string; icon: LucideIcon; to?: string; children: NavChil
 
 const navMenus: NavMenu[] = [
   { label: "Home", icon: Home, children: ["Dashboard", "Advance Dashboard", "Analytics Dashboard"] },
-  { label: "Master", icon: Database, children: ["Owners"] },
+  { label: "Master", icon: Database, children: ["Owners", "Roles", "Device Type"] },
   { label: "Vehicles", icon: Car, children: ["Vehicles", "Devices", "Transporter", { label: "Manage Technician", children: ["Technician List", "JobSheet"] }, "Client", { label: "User Groups", children: ["User", "Group"] }, "Vehicle Detail", "Driver Detail", "Geofence", "Payment Detail", "Enquiry", "Device Inventory"] },
   { label: "Reports", icon: BarChart3, children: ["Coin Banking", "Distance Report", "Driver Assignment Report", "Expense Report", "Geofence Report", "Google Map Api Record", "Idle Summary Report", "POI Report", "Register Mobile Report", "Ride Report", "Send Command Logs", "Sensor Report", "Sim Tracking Report", "Speed vs Distance", "Status Report", "Stoppage Summary Report", "Subscription Changed Report", "Subscription Expired Report", "Travel Summary Report", "Vehicle Log Report"] },
   { label: "Alerts", icon: Bell, children: ["Add Alerts", "Notification List", "Service & Maintenance", "Parked Scheduler", "Announcement"] },
@@ -38,6 +38,8 @@ const navMenus: NavMenu[] = [
 const menuRoutes: Record<string, string> = {
   "Home/Dashboard": "/dashboard",
   "Master/Owners": "/owners",
+  "Master/Roles": "/roles",
+  "Master/Device Type": "/device-types",
   "Vehicles/Vehicles": "/vehicles",
   "Vehicles/Devices": "/devices",
   "Vehicles/Transporter": "/transporters",

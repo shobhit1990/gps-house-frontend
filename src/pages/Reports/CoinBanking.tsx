@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type CoinRecord = {
 	id: number;
@@ -28,8 +29,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 const assignTypes = ["Transporter", "Client"] as const;
 type AssignType = (typeof assignTypes)[number];
 
-const clients = ["arun.singh", "tushar.shukla", "gpshouse"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const houseAccount = "gpshouse";
 
 const todayLabel = () => {
@@ -38,6 +37,10 @@ const todayLabel = () => {
 };
 
 export default function CoinBanking() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

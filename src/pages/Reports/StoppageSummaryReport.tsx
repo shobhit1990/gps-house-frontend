@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Play, Refre
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type StoppageRow = {
 	id: string;
@@ -41,8 +42,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "playback", label: "Playback" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const durations = ["0 minute", "5 minute", "10 minute", "30 minute", "60 minute", "120 minute"];
 
@@ -85,6 +84,10 @@ const formatMinutes = (minutes: number) => {
 const formatDistance = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
 
 export default function StoppageSummaryReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

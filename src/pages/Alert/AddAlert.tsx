@@ -24,21 +24,32 @@ import {
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import type { Alert, AlertAssignee } from "@/interfaces/Alert";
+import type { MasterOption } from "@/interfaces/EntityMaster";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useCreateAlertMutation, useDeleteAlertMutation, useGetAlertsQuery } from "@/store/services/api/AddAlert";
+import { useGetGroupsQuery } from "@/store/services/api/Group";
+import { useGetAlertTypeMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useGetUsersQuery } from "@/store/services/api/User";
 
 type AlertDetail = {
-  id: number;
+  id: string;
   type: string;
   vehicle: string;
   mobile: string;
 };
 
+/** Alert records sharing an assignee and alert name, shown as one entry with its records as details. */
 type AlertRow = {
-  id: number;
+  id: string;
   party: string;
   name: string;
   vehicle: string;
   details: AlertDetail[];
 };
+
+type DraftType = { alertType: string; mobile: boolean };
 
 const messageTokens = [
   "Vehicle Number",
@@ -54,80 +65,35 @@ const messageTokens = [
   "Vehicle Type",
 ];
 
-const alertTypes = [
-  "Vehicle Start",
-  "Vehicle Stop",
-  "Overspeed",
-  "Ignition On",
-  "Ignition Off",
-  "Geofence Entry",
-  "Geofence Exit",
-  "Power Disconnect",
-  "Low Battery",
+const assignees: { value: AlertAssignee; label: string }[] = [
+  { value: "user", label: "User" },
+  { value: "group", label: "Group" },
+  { value: "transporter", label: "Transporter" },
 ];
 
-const usersByAssignment: Record<string, string[]> = {
-  User: ["sadik", "amit6533", "9839759599", "9415026470"],
-  Group: ["Operations Team", "Admin Group", "Transport Team"],
-  Transporter: ["Transporter 1", "Transporter 2", "sadik", "amit6533"],
-};
-
-const vehicles = ["UP32BN4896", "UP32JJ9278", "UP32GN8345", "UP32AB1234", "UP32CD5678"];
-
-const initialRows: AlertRow[] = [
-  {
-    id: 1,
-    party: "9839759599",
-    name: "UP32BN4896_ALERT",
-    vehicle: "1",
-    details: [
-      { id: 11, type: "Overspeed", vehicle: "UP32BN4896", mobile: "Yes" },
-      { id: 12, type: "Ignition On", vehicle: "UP32BN4896", mobile: "Yes" },
-    ],
-  },
-  {
-    id: 2,
-    party: "sadik",
-    name: "UP32JJ9278",
-    vehicle: "ALL",
-    details: [
-      { id: 21, type: "Vehicle Stop", vehicle: "UP32JJ9278", mobile: "Yes" },
-      { id: 22, type: "Low Battery", vehicle: "UP32JJ9278", mobile: "No" },
-    ],
-  },
-  {
-    id: 3,
-    party: "amit6533",
-    name: "Vehicle Start",
-    vehicle: "ALL",
-    details: [
-      { id: 31, type: "Vehicle Start", vehicle: "ALL", mobile: "Yes" },
-      { id: 32, type: "Geofence Entry", vehicle: "UP32AB1234", mobile: "Yes" },
-    ],
-  },
-  {
-    id: 4,
-    party: "9415026470",
-    name: "UP32GN8345",
-    vehicle: "ALL",
-    details: [
-      { id: 41, type: "Power Disconnect", vehicle: "UP32GN8345", mobile: "Yes" },
-    ],
-  },
-];
+const assigneeId = (alert: Alert) => alert[alert.alertAssignedTo] ?? "";
+const sensors = ["Ignition", "Fuel", "Temperature", "Battery", "Speed", "Door"];
 
 export default function AddAlert() {
   const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme !== "light";
+  const { data: alerts = [] } = useGetAlertsQuery();
+  const { data: alertTypes = [] } = useGetAlertTypeMasterQuery();
+  const { data: vehicles = [] } = useGetVehicleMasterQuery();
+  const { data: transporters = [] } = useGetTransporterMasterQuery();
+  const { data: users = [] } = useGetUsersQuery();
+  const { data: groups = [] } = useGetGroupsQuery();
+  const [createAlert, { isLoading: isSaving }] = useCreateAlertMutation();
+  const [deleteAlert, { isLoading: isDeleting }] = useDeleteAlertMutation();
 
   const [alertName, setAlertName] = useState("");
-  const [assignedTo, setAssignedTo] = useState("");
+  const [assignedTo, setAssignedTo] = useState<AlertAssignee | "">("");
   const [selectedParty, setSelectedParty] = useState("");
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+  const [draftTypes, setDraftTypes] = useState<DraftType[]>([]);
   const [searchText, setSearchText] = useState("");
-  const [rows, setRows] = useState<AlertRow[]>(initialRows);
-  const [activeRowId, setActiveRowId] = useState<number | null>(null);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [tableVisible, setTableVisible] = useState(true);
 
   const [typeModalOpen, setTypeModalOpen] = useState(false);
@@ -146,7 +112,44 @@ export default function AddAlert() {
   const [customMobile, setCustomMobile] = useState(true);
 
   const assigneeLabel =
-    assignedTo === "Group" ? "Select Group" : assignedTo === "Transporter" ? "Select Transporter" : "Select User";
+    assignedTo === "group" ? "Select Group" : assignedTo === "transporter" ? "Select Transporter" : "Select User";
+
+  const partyOptions = useMemo<Record<AlertAssignee, MasterOption[]>>(
+    () => ({
+      user: users.map((user) => ({ id: user.externalId, name: user.userName })),
+      group: groups.map((group) => ({ id: group.externalId, name: group.groupName })),
+      transporter: transporters,
+    }),
+    [users, groups, transporters],
+  );
+
+  const vehicleNames = useMemo(() => new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name])), [vehicles]);
+  const alertTypeNames = useMemo(() => new Map(alertTypes.map((type) => [type.id, type.name])), [alertTypes]);
+
+  const rows = useMemo<AlertRow[]>(() => {
+    const groupsByKey = new Map<string, Alert[]>();
+    alerts.forEach((alert) => {
+      const key = `${alert.alertAssignedTo}|${assigneeId(alert)}|${alert.alertName}`;
+      groupsByKey.set(key, [...(groupsByKey.get(key) ?? []), alert]);
+    });
+    return [...groupsByKey.entries()].map(([key, records]) => {
+      const first = records[0];
+      const partyId = assigneeId(first);
+      const vehicleList = [...new Set(records.map((record) => vehicleNames.get(record.vehicle) ?? record.vehicle))];
+      return {
+        id: key,
+        party: (partyOptions[first.alertAssignedTo] ?? []).find((party) => party.id === partyId)?.name ?? partyId,
+        name: first.alertName ?? "",
+        vehicle: vehicleList.join(", "),
+        details: records.map((record) => ({
+          id: record.externalId,
+          type: alertTypeNames.get(record.alertType) ?? record.alertType,
+          vehicle: vehicleNames.get(record.vehicle) ?? record.vehicle,
+          mobile: record.mobile ? "Yes" : "No",
+        })),
+      };
+    });
+  }, [alerts, partyOptions, vehicleNames, alertTypeNames]);
 
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -166,7 +169,7 @@ export default function AddAlert() {
     setAssignedTo("");
     setSelectedParty("");
     setSelectedVehicles([]);
-    setSearchText("");
+    setDraftTypes([]);
     setAlertType("");
   };
 
@@ -182,40 +185,14 @@ export default function AddAlert() {
     setCustomMobile(true);
   };
 
-  const handleAssignmentChange = (value: string) => {
+  const handleAssignmentChange = (value: AlertAssignee | "") => {
     setAssignedTo(value);
     setSelectedParty("");
-    setSelectedVehicles([]);
   };
 
   const handleVehicleChange = (value: string) => {
     if (!value) return;
     setSelectedVehicles((current) => (current.includes(value) ? current : [...current, value]));
-    setTypeModalOpen(false);
-    setCustomModalOpen(true);
-  };
-
-  const appendDetail = (partyName: string, detail: Omit<AlertDetail, "id">, fallbackName: string) => {
-    const match = rows.find((row) => partyName && row.party === partyName) ?? rows.find((row) => row.id === activeRowId);
-    if (match) {
-      setActiveRowId(match.id);
-      setRows((current) =>
-        current.map((row) => (row.id === match.id ? { ...row, details: [...row.details, { ...detail, id: Date.now() }] } : row)),
-      );
-      return;
-    }
-    const id = Date.now();
-    setActiveRowId(id);
-    setRows((current) => [
-      ...current,
-      {
-        id,
-        party: partyName || "User",
-        name: fallbackName,
-        vehicle: selectedVehicles.length ? selectedVehicles.join(", ") : "ALL",
-        details: [{ ...detail, id: id + 1 }],
-      },
-    ]);
   };
 
   const handleTypeAdd = () => {
@@ -223,40 +200,22 @@ export default function AddAlert() {
       toast.error("Please select Alert Type.");
       return;
     }
-    appendDetail(
-      selectedParty || activeRow?.party || "",
-      {
-        type: alertType,
-        vehicle: selectedVehicles[0] || activeRow?.vehicle || "ALL",
-        mobile: mobileEnabled ? "Yes" : "No",
-      },
-      alertName.trim() || alertType,
-    );
+    if (draftTypes.some((entry) => entry.alertType === alertType)) {
+      toast.error("This alert type is already added.");
+      return;
+    }
+    setDraftTypes((current) => [...current, { alertType, mobile: mobileEnabled }]);
     setTypeModalOpen(false);
     setAlertType("");
-    toast.success("Alert type added.");
+    toast.success("Alert type added. Click Save to store the alert.");
   };
 
   const handleCustomAdd = () => {
-    if (!customAlertName.trim() || !sensor || !operation || !conditionValue.trim() || !subject.trim() || !messageBody.trim()) {
-      toast.error("Please fill all required custom alert fields.");
-      return;
-    }
-    appendDetail(
-      selectedParty || activeRow?.party || assignedTo,
-      {
-        type: `${sensor} ${operation} ${conditionValue.trim()}`,
-        vehicle: selectedVehicles.join(", ") || "ALL",
-        mobile: customMobile ? "Yes" : "No",
-      },
-      customAlertName.trim(),
-    );
-    setCustomModalOpen(false);
-    resetCustomForm();
-    toast.success("Custom alert added.");
+    toast.error("Custom alerts cannot be saved yet: the alert API has no custom alert fields.");
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
     if (!alertName.trim()) {
       toast.error("Please enter Alert Name.");
       return;
@@ -266,52 +225,66 @@ export default function AddAlert() {
       return;
     }
     if (!selectedParty) {
-      toast.error(`Please select ${assignedTo}.`);
+      toast.error(`Please ${assigneeLabel.toLowerCase()}.`);
       return;
     }
     if (!selectedVehicles.length) {
       toast.error("Please select at least one vehicle.");
       return;
     }
-    const id = Date.now();
-    setRows((current) => [
-      ...current,
-      {
-        id,
-        party: selectedParty,
-        name: alertName.trim(),
-        vehicle: selectedVehicles.join(", "),
-        details: [
-          {
-            id: id + 1,
-            type: alertType || "Vehicle Start",
-            vehicle: selectedVehicles.join(", "),
-            mobile: mobileEnabled ? "Yes" : "No",
-          },
-        ],
-      },
-    ]);
-    setActiveRowId(id);
+    if (!draftTypes.length) {
+      toast.error("Please add at least one alert type.");
+      return;
+    }
+    // The API stores one vehicle and one alert type per record, so each combination is its own request.
+    const requests = selectedVehicles.flatMap((vehicle) =>
+      draftTypes.map((entry) =>
+        createAlert({
+          alertName: alertName.trim(),
+          alertAssignedTo: assignedTo,
+          [assignedTo]: selectedParty,
+          vehicle,
+          alertType: entry.alertType,
+          mobile: entry.mobile,
+          status: Status.ACTIVE,
+          reason: "New alert created",
+        }).unwrap(),
+      ),
+    );
+    const results = await Promise.allSettled(requests);
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length === results.length) {
+      toast.error(apiErrorMessage(failed[0].reason, "Could not save the alert."));
+      return;
+    }
+    setActiveRowId(`${assignedTo}|${selectedParty}|${alertName.trim()}`);
     resetMainForm();
-    toast.success("Alert saved.");
+    if (failed.length) toast.error(`${failed.length} of ${results.length} alert records could not be saved.`);
+    else toast.success("Alert saved.");
   };
 
-  const handleDeleteRow = () => {
-    if (!activeRowId) {
+  const handleDeleteRow = async () => {
+    if (!activeRow) {
       toast.error("Select a transporter, user, or group first.");
       return;
     }
-    setRows((current) => current.filter((row) => row.id !== activeRowId));
+    const results = await Promise.allSettled(activeRow.details.map((detail) => deleteAlert(detail.id).unwrap()));
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) {
+      toast.error(apiErrorMessage(failed[0].reason, "Could not delete the alert."));
+      return;
+    }
     setActiveRowId(null);
+    toast.success("Alert deleted.");
   };
 
-  const handleDeleteDetail = (detailId: number) => {
-    if (!activeRow) return;
-    setRows((current) =>
-      current.map((row) =>
-        row.id === activeRow.id ? { ...row, details: row.details.filter((detail) => detail.id !== detailId) } : row,
-      ),
-    );
+  const handleDeleteDetail = async (detail: AlertDetail) => {
+    try {
+      await deleteAlert(detail.id).unwrap();
+      toast.success("Alert type removed.");
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "Could not remove the alert type."));
+    }
   };
 
   const insertToken = (token: string) => {
@@ -354,11 +327,11 @@ export default function AddAlert() {
 
               <div>
                 <label className={labelClass(isDark)} htmlFor="alert-assigned-to">Alert Assigned To {required}</label>
-                <select id="alert-assigned-to" className={inputClass(isDark)} value={assignedTo} onChange={(event) => handleAssignmentChange(event.target.value)}>
+                <select id="alert-assigned-to" className={inputClass(isDark)} value={assignedTo} onChange={(event) => handleAssignmentChange(event.target.value as AlertAssignee | "")}>
                   <option value="">Select</option>
-                  <option value="User">User</option>
-                  <option value="Group">Group</option>
-                  <option value="Transporter">Transporter</option>
+                  {assignees.map((assignee) => (
+                    <option key={assignee.value} value={assignee.value}>{assignee.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -367,8 +340,8 @@ export default function AddAlert() {
                   <label className={labelClass(isDark)} htmlFor="alert-party">{assigneeLabel} {required}</label>
                   <select id="alert-party" className={inputClass(isDark)} value={selectedParty} onChange={(event) => setSelectedParty(event.target.value)}>
                     <option value="">{assigneeLabel}</option>
-                    {(usersByAssignment[assignedTo] || []).map((name) => (
-                      <option key={name} value={name}>{name}</option>
+                    {partyOptions[assignedTo].map((party) => (
+                      <option key={party.id} value={party.id}>{party.name}</option>
                     ))}
                   </select>
                 </div>
@@ -380,17 +353,17 @@ export default function AddAlert() {
                   <select id="alert-vehicles" className={inputClass(isDark)} value="" onChange={(event) => handleVehicleChange(event.target.value)}>
                     <option value="">Select Vehicle</option>
                     {vehicles.map((vehicle) => (
-                      <option key={vehicle} value={vehicle}>{vehicle}</option>
+                      <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>
                     ))}
                   </select>
                   {selectedVehicles.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {selectedVehicles.map((vehicle) => (
-                        <span key={vehicle} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100" : "border-cyan-200 bg-cyan-50 text-cyan-800"}`}>
-                          {vehicle}
+                        <span key={vehicle} title={vehicleNames.get(vehicle) ?? vehicle} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100" : "border-cyan-200 bg-cyan-50 text-cyan-800"}`}>
+                          {vehicleNames.get(vehicle) ?? vehicle}
                           <button
                             type="button"
-                            aria-label={`Remove ${vehicle}`}
+                            aria-label={`Remove ${vehicleNames.get(vehicle) ?? vehicle}`}
                             onClick={() => setSelectedVehicles((current) => current.filter((item) => item !== vehicle))}
                             className="opacity-70 hover:opacity-100"
                           >
@@ -403,6 +376,18 @@ export default function AddAlert() {
                 </div>
               )}
             </div>
+            {draftTypes.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5" aria-label="Alert types to save">
+                {draftTypes.map((entry, index) => (
+                  <span key={`type-${index}`} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100" : "border-violet-200 bg-violet-50 text-violet-800"}`}>
+                    {alertTypeNames.get(entry.alertType) ?? entry.alertType} · Mobile {entry.mobile ? "Yes" : "No"}
+                    <button type="button" aria-label={`Remove ${alertTypeNames.get(entry.alertType) ?? entry.alertType}`} onClick={() => setDraftTypes((current) => current.filter((_item, itemIndex) => itemIndex !== index))} className="opacity-70 hover:opacity-100">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className={`flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3 sm:px-5 ${isDark ? "border-white/[0.07] bg-[#08142e]/50" : "border-slate-200 bg-slate-50/60"}`}>
@@ -417,7 +402,7 @@ export default function AddAlert() {
               </>
             )}
             <button type="button" className={secondaryButtonClass(isDark)} onClick={resetMainForm}>Clear</button>
-            <button type="button" className={primaryButtonClass(isDark)} onClick={handleSave}>Save</button>
+            <button type="button" className={primaryButtonClass(isDark)} onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</button>
           </div>
         </section>
 
@@ -435,7 +420,7 @@ export default function AddAlert() {
               />
             </label>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={dangerButtonClass(isDark)} onClick={handleDeleteRow} disabled={!activeRowId}>
+              <button type="button" className={dangerButtonClass(isDark)} onClick={handleDeleteRow} disabled={!activeRowId || isDeleting}>
                 <Trash2 className="h-3.5 w-3.5" /> Delete Selected
               </button>
               <button
@@ -511,7 +496,7 @@ export default function AddAlert() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            <button type="button" onClick={() => handleDeleteDetail(detail.id)} className={rowActionClass(isDark, "rose")}>
+                            <button type="button" onClick={() => handleDeleteDetail(detail)} className={rowActionClass(isDark, "rose")}>
                               Delete
                             </button>
                           </td>
@@ -551,7 +536,7 @@ export default function AddAlert() {
           <select id="alert-type" className={inputClass(isDark)} value={alertType} onChange={(event) => setAlertType(event.target.value)}>
             <option value="">Select Type</option>
             {alertTypes.map((type) => (
-              <option key={type} value={type}>{type}</option>
+              <option key={type.id} value={type.id}>{type.name}</option>
             ))}
           </select>
           <label className={`mt-5 ${checkboxLabelClass(isDark)}`}>
@@ -588,7 +573,7 @@ export default function AddAlert() {
                   <label className={labelClass(isDark)} htmlFor="custom-sensor">Sensor {required}</label>
                   <select id="custom-sensor" className={inputClass(isDark)} value={sensor} onChange={(event) => setSensor(event.target.value)}>
                     <option value="">Select</option>
-                    {["Ignition", "Fuel", "Temperature", "Battery", "Speed", "Door"].map((item) => (
+                    {sensors.map((item) => (
                       <option key={item} value={item}>{item}</option>
                     ))}
                   </select>

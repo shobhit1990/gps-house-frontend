@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type DistanceRow = {
 	id: string;
@@ -26,8 +27,6 @@ type MenuKind = "client" | "transporter" | "vehicle" | "type" | "sort";
 type ReportType = "Vehicle Wise" | "Day Wise";
 type SortOrder = "" | "Ascending" | "Descending";
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const reportTypes: ReportType[] = ["Vehicle Wise", "Day Wise"];
 const sortOptions: Exclude<SortOrder, "">[] = ["Ascending", "Descending"];
@@ -141,6 +140,10 @@ function DistanceChart({ title, items }: { title: string; items: { id: string; l
 }
 
 export default function DistanceReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

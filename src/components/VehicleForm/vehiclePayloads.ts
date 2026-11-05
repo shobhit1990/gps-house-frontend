@@ -1,6 +1,7 @@
 import type { CreatePaymentDetailsRequest, PaymentTerm } from "@/interfaces/PaymentDetails";
 import type { CreateTransporterRequest } from "@/interfaces/Transporter";
 import type { CreateVehicleRequest } from "@/interfaces/Vehicle";
+import type { CreateDeviceRequest } from "@/interfaces/AddDevice";
 import { Status } from "@/enums/Status";
 
 type FormValues = Record<string, string>;
@@ -10,11 +11,22 @@ const text = (value?: string) => value?.trim() || undefined;
 const number = (value?: string) => (value?.trim() ? Number(value) : undefined);
 const flag = (value?: string) => value === "true";
 
-export function buildTransporterPayload(values: FormValues, roles: string[]): CreateTransporterRequest {
+export function buildTransporterPayload(
+	values: FormValues,
+	roles: string[],
+	includeRoles = true,
+): CreateTransporterRequest {
+	const userName = (values.userName ?? values.username)?.trim();
+	const companyName = (values.companyName ?? values.company)?.trim();
+	if (!userName || !companyName) {
+		throw new Error("Username and company name are required to save a transporter.");
+	}
+
 	return {
-		username: values.username.trim(),
+		userName,
 		password: values.password,
-		company: values.company.trim(),
+		confirmPassword: values.confirmPassword,
+		companyName,
 		client: values.client,
 		timezone: values.timezone,
 		inactiveTime: Number(values.inactiveTime),
@@ -23,17 +35,17 @@ export function buildTransporterPayload(values: FormValues, roles: string[]): Cr
 		email: text(values.email),
 		phone: text(values.phone),
 		address: text(values.address),
-		subscriptionStart: values.subscriptionStart,
-		subscriptionDue: values.subscriptionDue,
+		subscriptionStartDate: values.subscriptionStartDate ?? values.subscriptionStart,
+		subscriptionDueDate: values.subscriptionDueDate ?? values.subscriptionDue,
 		subscriptionExtend: text(values.subscriptionExtend),
 		subscriptionExpiryCount: number(values.subscriptionExpiryCount),
-		maxPoiRadius: number(values.maxPoiRadius),
-		minAddressDistance: number(values.minAddressDistance),
-		dataRestriction: number(values.dataRestriction),
+		maximumRadiusForNearestPOI: values.maxPoiRadius,
+		minimumDistanceForAddress: values.minAddressDistance,
+		dataRestriction: values.dataRestriction || "disabled",
 		active: flag(values.active),
 		overwriteSubscription: flag(values.overwriteSubscription),
 		inactiveAfterExpiry: flag(values.inactiveAfterExpiry),
-		roles,
+		...(includeRoles ? { roles } : {}),
 	};
 }
 
@@ -67,6 +79,24 @@ export function buildVehiclePayload(values: FormValues): CreateVehicleRequest {
 		purchaseDate: text(values.purchaseDate),
 		status: Status.ACTIVE,
 		reason: "New vehicle added",
+	};
+}
+
+export function buildDevicePayload(values: FormValues): CreateDeviceRequest {
+	return {
+		imei: values.imei.trim(),
+		simNumber: values.sim.trim(),
+		simOperator: values.simOperator,
+		secondarySimNumber: values.secondarySim?.trim() ?? "",
+		secondarySimOperator: values.secondarySimOperator ?? "",
+		deviceType: values.deviceType,
+		client: values.deviceClient,
+		password: values.devicePassword ?? "",
+		ignitionWireConnected: flag(values.ignitionPositive),
+		ignitionWireNotConnected: flag(values.ignitionDisconnected),
+		airConditionWireConnected: flag(values.airConditionPositive),
+		attendance: flag(values.attendance),
+		timezoneSetting: flag(values.timezoneSetting),
 	};
 }
 

@@ -66,6 +66,7 @@ export const transporterApi = api.injectEndpoints({
 export const {
   useGetTransportersQuery,
   useGetTransporterByIdQuery,
+  useLazyGetTransporterByIdQuery,
   useCreateTransporterMutation,
   useUpdateTransporterMutation,
   useDeleteTransporterMutation,

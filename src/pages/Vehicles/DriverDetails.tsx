@@ -191,7 +191,6 @@ export default function DriverDetails() {
 		]);
 		setSearch("");
 		setPage(0);
-		setShowAddDialog(false);
 	};
 
 	const uploadDrivers = (values: UploadDriverValues) => {

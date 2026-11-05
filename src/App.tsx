@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { AUTH_CONFIG } from "@/config/env";
 import Login from "./pages/Login";
 import { SessionRevokedDialog } from "@/components/auth/SessionRevokedDialog";
 import { ApiProgressBar } from "@/components/common/ApiProgressBar";
@@ -49,6 +50,8 @@ import ServiceAndMaintenance from "@/pages/Alert/ServiceAndMaintenance";
 import ParkScheduler from "@/pages/Alert/ParkScheduler";
 import Announcement from "@/pages/Alert/Announcement";
 import Owners from "@/pages/Master/Owners";
+import DeviceType from "@/pages/Master/DeviceType";
+import Roles from "@/pages/Master/Roles";
 import RaisedTicket from "@/pages/Support/RaisedTicket";
 import AnsweredTickets from "@/pages/Support/AnsweredTickets";
 
@@ -57,7 +60,7 @@ const queryClient = new QueryClient();
 const AppContent = () => {
   const { isAuthenticated } = useAuth();
 
-  if (!isAuthenticated) {
+  if (AUTH_CONFIG.ENABLED && !isAuthenticated) {
     return (
       <>
         <SessionRevokedDialog />
@@ -73,6 +76,8 @@ const AppContent = () => {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/owners" element={<Owners />} />
+        <Route path="/roles" element={<Roles />} />
+        <Route path="/device-types" element={<DeviceType />} />
         <Route path="/vehicles" element={<Vehicle />} />
         <Route path="/devices" element={<Devices />} />
         <Route path="/transporters" element={<Transporter />} />

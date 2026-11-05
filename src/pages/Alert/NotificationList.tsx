@@ -16,7 +16,7 @@ import {
 	toolbarClass,
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useGetAlertTypeMasterQuery, useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { useAuth } from "@/contexts/AuthContext";
 
 type NotificationRow = {
@@ -43,7 +43,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "added", label: "Added" },
 ];
 
-const notificationTypes = ["Overspeed", "Ignition On", "Ignition Off", "Vehicle Start", "Geofence Entry", "Power Disconnect", "Low Battery"];
 
 export default function NotificationList() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
@@ -52,6 +51,8 @@ export default function NotificationList() {
 	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const vehicleOptions = vehicles.map((vehicle) => vehicle.name);
+	const { data: alertTypeMaster = [] } = useGetAlertTypeMasterQuery();
+	const notificationTypes = alertTypeMaster.map((alertType) => alertType.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

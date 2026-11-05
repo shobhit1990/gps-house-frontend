@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type AssignmentRecord = {
 	id: number;
@@ -43,8 +44,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "distanceKm", label: "Distance(km)" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -60,6 +59,10 @@ const selectionLabel = (selected: string[]) => (selected.length === 0 ? "Nothing
 const textValue = (value: string) => (value.trim() ? value : "—");
 
 export default function DriverAssignmentReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

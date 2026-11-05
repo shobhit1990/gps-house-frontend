@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type FormEvent, type ReactNode } from "reac
 import { useTheme } from "next-themes";
 import { ChevronDown, X } from "lucide-react";
 import { nowDateTimeInput } from "@/components/Reports/expenseDate";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 export type ExpenseFormValues = {
 	client: string;
@@ -25,8 +25,6 @@ type AddExpenseProps = {
 	onSubmit: (values: ExpenseFormValues) => void;
 };
 
-const expenseTypes = ["Fuel", "Toll", "Maintenance", "Parking", "Other"];
-
 const emptyValues = (): ExpenseFormValues => ({
 	client: "",
 	transporter: "",
@@ -47,6 +45,8 @@ export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
 	const clients = clientMaster.map((client) => client.name);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
+	const expenseTypes = expenseTypeMaster.map((expenseType) => expenseType.name);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();

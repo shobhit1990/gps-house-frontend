@@ -1,11 +1,15 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleDetailForm, type VehicleDetailFormValues } from "@/components/VehicleForm/AddVehicleDetailForm";
 import type { ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
 import { ServiceMaintenanceDialog, type ServiceRecord } from "@/components/VehicleForm/ServiceMaintenanceDialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useCreateServiceMaintenanceMutation, useGetServiceMaintenancesQuery } from "@/store/services/api/ServiceMaintenance";
 
 type VehicleDetailRecord = {
 	id: number;
@@ -141,7 +145,40 @@ export default function VehicleDetail() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [serviceRow, setServiceRow] = useState<VehicleDetailRecord | null>(null);
-	const [services, setServices] = useState<ServiceRecord[]>([]);
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: serviceData = [] } = useGetServiceMaintenancesQuery();
+	const [createService] = useCreateServiceMaintenanceMutation();
+	const services = useMemo<ServiceRecord[]>(() => {
+		const vehicleNames = new Map(vehicleMaster.map((vehicle) => [vehicle.id, vehicle.name]));
+		const text = (value?: string | number) => (value === undefined || value === null ? "" : String(value));
+		const day = (value?: string) => (value ? value.slice(0, 10) : "");
+		return serviceData.map((service) => {
+			const nextServiceDueOn = day(service.nextServiceDueOn) || addDays(day(service.lastServiceDate), text(service.daysInterval));
+			const nextOdometer = text(service.nextServiceDueOdometer) || addNumbers(text(service.lastServiceOdometer), text(service.odometerInterval));
+			return {
+				id: service.externalId,
+				vehicleNo: vehicleNames.get(service.vehicle) ?? service.vehicle ?? "",
+				serviceName: service.serviceName ?? "",
+				odometerInterval: text(service.odometerInterval),
+				lastServiceOdometer: text(service.lastServiceOdometer),
+				nextServiceDueOdometer: nextOdometer,
+				currentOdometer: text(service.currentOdometer),
+				kmLeftForNextService: subtractNumbers(nextOdometer, text(service.currentOdometer ?? service.lastServiceOdometer)),
+				odometerLeft: text(service.odometerLeft),
+				engineHoursInterval: text(service.engineInterval),
+				lastServiceEngineHour: text(service.lastServiceEngine),
+				nextServiceDueEngineHour: text(service.nextServiceDueEngineHour) || addNumbers(text(service.lastServiceEngine), text(service.engineInterval)),
+				engineHourLeft: text(service.engineLeft),
+				daysInterval: text(service.daysInterval),
+				lastServiceOn: day(service.lastServiceDate),
+				nextServiceDueOn,
+				daysLeftForNextService: daysUntil(nextServiceDueOn),
+				daysLeft: text(service.daysLeft) || daysUntil(nextServiceDueOn),
+				remark: service.remark ?? "",
+				documentName: service.serviceDocument ? "Uploaded" : "",
+			};
+		});
+	}, [serviceData, vehicleMaster]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -186,43 +223,38 @@ export default function VehicleDetail() {
 		setShowAddDialog(false);
 	};
 
-	const saveService = (values: ServiceMaintenanceValues) => {
-		const odometerInterval = values.mode === "template" ? values.thresholdKm : values.odometerEnabled ? values.odometerInterval : "";
-		const lastServiceOdometer = values.mode === "custom" && values.odometerEnabled ? values.lastServiceOdometer : "";
-		const engineInterval = values.mode === "custom" && values.engineEnabled ? values.engineInterval : "";
-		const lastEngine = values.mode === "custom" && values.engineEnabled ? values.lastServiceEngine : "";
-		const daysInterval = values.mode === "template" ? values.thresholdDays : values.daysEnabled ? values.daysInterval : "";
-		const lastServiceOn = values.mode === "template" ? values.purchaseDate : values.daysEnabled ? values.lastServiceDate : "";
-		const nextOdometer = addNumbers(lastServiceOdometer, odometerInterval);
-		const nextEngineHour = addNumbers(lastEngine, engineInterval);
-		const nextServiceDate = addDays(lastServiceOn, daysInterval);
-		const daysRemaining = values.mode === "custom" && values.daysLeftEnabled ? values.daysLeft : daysUntil(nextServiceDate);
-		setServices((current) => [
-			...current,
-			{
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				vehicleNo: values.vehicleNo,
-				serviceName: values.mode === "template" ? values.templateName : values.serviceName,
-				odometerInterval,
-				lastServiceOdometer,
-				nextServiceDueOdometer: nextOdometer,
-				currentOdometer: "",
-				kmLeftForNextService: subtractNumbers(nextOdometer, lastServiceOdometer),
-				odometerLeft: values.odometerLeftEnabled ? values.odometerLeft : "",
-				engineHoursInterval: engineInterval,
-				lastServiceEngineHour: lastEngine,
-				nextServiceDueEngineHour: nextEngineHour,
-				engineHourLeft: values.engineLeftEnabled ? values.engineLeft : "",
-				daysInterval,
-				lastServiceOn,
-				nextServiceDueOn: nextServiceDate,
-				daysLeftForNextService: daysRemaining,
-				daysLeft: daysRemaining,
-				remark: values.remark,
-				documentName: values.documentName,
-			},
-		]);
-		setShowAddDialog(false);
+	const saveService = async (values: ServiceMaintenanceValues) => {
+		const optionalNumber = (value: string) => (value.trim() && Number.isFinite(Number(value)) ? Number(value) : undefined);
+		const isTemplate = values.mode === "template";
+		try {
+			await createService({
+				serviceName: isTemplate ? values.templateName : values.serviceName,
+				vehicle: values.vehicleNo,
+				remark: values.remark.trim() || undefined,
+				odometerIntervalEnabled: isTemplate || values.odometerEnabled,
+				odometerInterval: optionalNumber(isTemplate ? values.thresholdKm : values.odometerEnabled ? values.odometerInterval : ""),
+				lastServiceOdometer: optionalNumber(!isTemplate && values.odometerEnabled ? values.lastServiceOdometer : ""),
+				engineIntervalEnabled: !isTemplate && values.engineEnabled,
+				engineInterval: optionalNumber(!isTemplate && values.engineEnabled ? values.engineInterval : ""),
+				lastServiceEngine: optionalNumber(!isTemplate && values.engineEnabled ? values.lastServiceEngine : ""),
+				daysIntervalEnabled: isTemplate || values.daysEnabled,
+				daysInterval: optionalNumber(isTemplate ? values.thresholdDays : values.daysEnabled ? values.daysInterval : ""),
+				lastServiceDate: (isTemplate ? values.purchaseDate : values.daysEnabled ? values.lastServiceDate : "") || undefined,
+				odometerLeftEnabled: values.odometerLeftEnabled,
+				odometerLeft: optionalNumber(values.odometerLeftEnabled ? values.odometerLeft : ""),
+				engineLeftEnabled: values.engineLeftEnabled,
+				engineLeft: optionalNumber(values.engineLeftEnabled ? values.engineLeft : ""),
+				daysLeftEnabled: values.daysLeftEnabled,
+				daysLeft: optionalNumber(values.daysLeftEnabled ? values.daysLeft : ""),
+				updateRecord: values.updateRecord,
+				mobile: values.notifyMobile,
+				allowVisibilityToDriver: values.visibleToDriver,
+			}).unwrap();
+			toast.success("Service saved.");
+			setShowAddDialog(false);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not save the service."));
+		}
 	};
 
 	return (

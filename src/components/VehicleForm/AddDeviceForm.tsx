@@ -1,16 +1,14 @@
 import { useState, type ChangeEvent } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Eye, EyeOff } from "lucide-react";
-import { addDeviceFields } from "@/interfaces/AddDeviceFields";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { addDeviceFields, DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
-import { useGetClientMasterQuery } from "@/store/services/api/Master";
-
-const inventoryImeis = [
-	"358657100887871",
-	"356857100874929",
-	"354778340022949",
-	"867230520231296",
-];
+import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
+import {
+	useLazyGetAvailableDeviceInventoryQuery,
+	useLazyGetDeviceInventoryByImeiQuery,
+} from "@/store/services/api/AddDevice";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 const confirmOnEnable = new Set(["ignitionPositive", "ignitionDisconnected"]);
 
@@ -24,9 +22,23 @@ type AddDeviceProps = {
 export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProps) {
 	const [inventoryOpen, setInventoryOpen] = useState(false);
 	const { data: clients = [] } = useGetClientMasterQuery();
-	const [selectedImei, setSelectedImei] = useState("");
+	const {
+		data: deviceTypeMaster = [],
+		isLoading: deviceTypesLoading,
+		isError: deviceTypesError,
+	} = useGetDeviceTypeMasterQuery();
+	const deviceTypeOptions = deviceTypeMaster
+		.map((deviceType) => ({
+			value: String(deviceType.externalId ?? deviceType.id ?? ""),
+			label: deviceType.deviceName ?? deviceType.deviceTypeName ?? "",
+		}))
+		.filter((deviceType) => deviceType.value && deviceType.label);
+	const [selectedInventoryId, setSelectedInventoryId] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
 	const [passwordVisible, setPasswordVisible] = useState(false);
+	const [getAvailableInventory, { data: availableInventory = [], isFetching: isLoadingInventory }] =
+		useLazyGetAvailableDeviceInventoryQuery();
+	const [getInventoryByImei, { isFetching: isImporting }] = useLazyGetDeviceInventoryByImeiQuery();
 
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
@@ -35,18 +47,51 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 	}`;
 
 	const openInventory = () => {
-		setSelectedImei("");
+		setSelectedInventoryId("");
 		setInventoryError("");
 		setInventoryOpen(true);
+		void getAvailableInventory()
+			.unwrap()
+			.catch((error: unknown) => setInventoryError(apiErrorMessage(error, "Could not load available inventory.")));
 	};
 
-	const importImei = () => {
-		if (!selectedImei) {
-			setInventoryError("Select an IMEI to import.");
+	const selectInventoryItem = async (inventoryId: string) => {
+		if (!inventoryId) {
 			return;
 		}
-		onChange("imei", selectedImei);
-		setInventoryOpen(false);
+		setSelectedInventoryId(inventoryId);
+		setInventoryError("");
+		try {
+			const inventory = await getInventoryByImei(inventoryId).unwrap();
+			const deviceType =
+				typeof inventory.deviceType === "string"
+					? inventory.deviceType
+					: inventory.deviceType?.externalId ?? inventory.deviceType?.id;
+			const client =
+				typeof inventory.client === "string"
+					? inventory.client
+					: inventory.client?.externalId ?? inventory.client?.id;
+			const importedValues: Record<string, string> = {
+				externalId: inventory.externalId ?? "",
+				imei: inventory.imei ?? availableInventory.find((item) => String(item.id ?? item.externalId ?? "") === inventoryId)?.imei ?? "",
+				sim: inventory.simNumber ?? "",
+				simOperator: inventory.simOperator ?? "",
+				secondarySim: inventory.secondarySimNumber ?? "",
+				secondarySimOperator: inventory.secondarySimOperator ?? "",
+				deviceType: String(deviceType ?? DEVICE_TYPE_ID),
+				deviceClient: String(client ?? ""),
+				devicePassword: inventory.password ?? "",
+				ignitionPositive: String(inventory.ignitionWireConnected ?? false),
+				ignitionDisconnected: String(inventory.ignitionWireNotConnected ?? false),
+				airConditionPositive: String(inventory.airConditionWireConnected ?? false),
+				attendance: String(inventory.attendance ?? false),
+				timezoneSetting: String(inventory.timezoneSetting ?? false),
+			};
+			Object.entries(importedValues).forEach(([name, value]) => onChange(name, value));
+			setInventoryOpen(false);
+		} catch (error) {
+			setInventoryError(apiErrorMessage(error, "Could not import this IMEI from inventory."));
+		}
 	};
 
 	const renderField = (field: VehicleFieldConfig) => {
@@ -107,11 +152,26 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 							onChange={(event) => onChange(field.name, event.target.value)}
 							className={`${inputClass} appearance-none pr-9`}
 						>
-							{[...(field.options ?? []), ...(field.name === "deviceClient" ? clients.map((client) => client.name) : [])].map((option, index) => (
-								<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
-									{field.optionLabels?.[option] ?? option}
+							{field.name === "deviceType" && <option value="">Select Device Type</option>}
+							{(field.name === "deviceClient"
+								? ["Select Client", ...clients.map((client) => client.id)]
+								: field.name === "deviceType"
+									? deviceTypeOptions.map((deviceType) => deviceType.value)
+								: field.options ?? []
+							).map((option) => (
+								<option key={option} value={option.startsWith("Select ") ? "" : option}>
+									{field.name === "deviceClient"
+										? clients.find((client) => client.id === option)?.name ?? option
+										: field.name === "deviceType"
+											? deviceTypeOptions.find((deviceType) => deviceType.value === option)?.label ?? option
+										: field.optionLabels?.[option] ?? option}
 								</option>
 							))}
+							{field.name === "deviceType" && deviceTypeOptions.length === 0 && (
+								<option value="">
+									{deviceTypesLoading ? "Loading device types..." : "No device types available"}
+								</option>
+							)}
 						</select>
 						<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>⌄</span>
 					</span>
@@ -145,6 +205,11 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 								{passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 							</button>
 						)}
+					</span>
+				)}
+				{field.name === "deviceType" && deviceTypesError && (
+					<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+						Could not load device types.
 					</span>
 				)}
 				{field.helper && (
@@ -205,38 +270,38 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 								</span>
 								<span className="relative block">
 									<select
-										value={selectedImei}
-										onChange={(event) => {
-											setSelectedImei(event.target.value);
-											setInventoryError("");
-										}}
-										className={`${inputClass} appearance-none pr-9`}
-										aria-invalid={inventoryError ? true : undefined}
+									value={selectedInventoryId}
+									onChange={(event) => void selectInventoryItem(event.target.value)}
+									disabled={isLoadingInventory || isImporting}
+									className={`${inputClass} appearance-none pr-9`}
+									aria-invalid={inventoryError ? true : undefined}
 									>
-										<option value="">Select imei</option>
-										{inventoryImeis.map((imei) => (
-											<option key={imei} value={imei}>{imei}</option>
+										<option value="">
+											{isLoadingInventory ? "Loading available inventory..." : "Select IMEI"}
+										</option>
+										{availableInventory.map((item) => item.imei && (
+											<option
+												key={item.externalId ?? item.id ?? item.imei}
+												value={String(item.id ?? item.externalId ?? "")}
+											>
+												{item.imei}
+											</option>
 										))}
 									</select>
 									<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>⌄</span>
 								</span>
 							</label>
+							{isImporting && (
+								<p className={`mt-2 inline-flex items-center gap-2 text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+									<Loader2 className="h-3 w-3 animate-spin" /> Loading device details...
+								</p>
+							)}
+							{!isLoadingInventory && availableInventory.length === 0 && !inventoryError && (
+								<p className="mt-2 text-[11px] text-slate-500">No available inventory found.</p>
+							)}
 							{inventoryError && (
 								<p role="alert" className="mt-2 text-[11px] text-rose-400">{inventoryError}</p>
 							)}
-							<div className="mt-10 flex justify-center">
-								<button
-									type="button"
-									onClick={importImei}
-									className={`h-10 min-w-[132px] rounded-lg border px-6 text-[13px] font-semibold transition ${
-										isDark
-											? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
-											: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-									}`}
-								>
-									Import
-								</button>
-							</div>
 						</div>
 					</DialogPrimitive.Content>
 				</DialogPrimitive.Portal>

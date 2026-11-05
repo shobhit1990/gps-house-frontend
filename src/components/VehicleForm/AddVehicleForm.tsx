@@ -8,11 +8,14 @@ import { AddVehicle, vehicleDetailDefaults } from "@/components/VehicleForm/AddV
 import { Payment } from "@/components/VehicleForm/Payment";
 import { addVehicleFields, type VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
-import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import type { Transporter } from "@/interfaces/Transporter";
+import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 import { useCreatePaymentDetailsMutation, useUpdatePaymentDetailsMutation } from "@/store/services/api/PaymentDetails";
-import { useCreateTransporterMutation, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
+import { useCreateTransporterMutation, useLazyGetTransporterByIdQuery, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
 import { useCreateVehicleMutation, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
-import { buildPaymentDetailsPayload, buildTransporterPayload, buildVehiclePayload } from "@/components/VehicleForm/vehiclePayloads";
+import { buildDevicePayload, buildPaymentDetailsPayload, buildTransporterPayload, buildVehiclePayload } from "@/components/VehicleForm/vehiclePayloads";
+import { useCreateDeviceMutation, useUpdateDeviceMutation } from "@/store/services/api/AddDevice";
+import { SimOperator } from "@/enums/SimOperator";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
@@ -27,22 +30,23 @@ type AddVehicleFormProps = {
 type FieldConfig = VehicleFieldConfig;
 
 /** Which backend record each tab's Save creates. Tabs without an API are not listed. */
-type SaveTarget = "transporter" | "vehicle" | "paymentDetails";
+type SaveTarget = "transporter" | "device" | "vehicle" | "paymentDetails";
 
 const saveLabels: Record<SaveTarget, string> = {
 	transporter: "Transporter",
+	device: "Device",
 	vehicle: "Vehicle",
 	paymentDetails: "Payment details",
 };
 
 const tabs = [
-	"Add Transporter",
-	"Transporter Access Manage",
-	"Add Device",
-	"Add Sensor Details",
 	"Add Vehicle",
+	"Transporter Access Manage",
+	"Transporter",
+	"Add Device",
+	// "Add Sensor Details",
 	"Payment Details (Optional)",
-	"Custom Fields (Optional)",
+	// "Custom Fields (Optional)",
 ];
 
 const transporterRoles = [
@@ -69,7 +73,8 @@ const transporterRoles = [
 ];
 
 const saveTargetByTab: Partial<Record<string, SaveTarget>> = {
-	"Add Transporter": "transporter",
+	Transporter: "transporter",
+	"Add Device": "device",
 	"Transporter Access Manage": "transporter",
 	"Add Vehicle": "vehicle",
 	"Payment Details (Optional)": "paymentDetails",
@@ -100,6 +105,33 @@ const apiErrorMessage = (error: unknown, fallback: string) => {
 	return fallback;
 };
 
+const toDateInputValue = (value?: string) => value?.slice(0, 10) ?? "";
+
+const transporterToFormValues = (transporter: Transporter): VehicleFormValues => ({
+	username: transporter.userName ?? "",
+	password: "",
+	confirmPassword: "",
+	company: transporter.companyName ?? "",
+	client: String(transporter.client ?? ""),
+	timezone: transporter.timezone ?? "",
+	inactiveTime: String(transporter.inactiveTime ?? ""),
+	language: transporter.language ?? "",
+	name: transporter.name ?? "",
+	email: transporter.email ?? "",
+	phone: transporter.phone ?? "",
+	address: transporter.address ?? "",
+	subscriptionStart: toDateInputValue(transporter.subscriptionStartDate),
+	subscriptionDue: toDateInputValue(transporter.subscriptionDueDate),
+	subscriptionExtend: toDateInputValue(transporter.subscriptionExtend),
+	subscriptionExpiryCount: String(transporter.subscriptionExpiryCount ?? ""),
+	maxPoiRadius: transporter.maximumRadiusForNearestPOI ?? "",
+	minAddressDistance: transporter.minimumDistanceForAddress ?? "",
+	dataRestriction: transporter.dataRestriction === "disabled" ? "" : String(transporter.dataRestriction ?? ""),
+	active: String(transporter.active ?? true),
+	overwriteSubscription: String(transporter.overwriteSubscription ?? false),
+	inactiveAfterExpiry: String(transporter.inactiveAfterExpiry ?? false),
+});
+
 const defaultRolePermissions: Record<string, boolean> = {
 	"Basic reports": true,
 	"Tickets": true,
@@ -110,7 +142,7 @@ const defaultRolePermissions: Record<string, boolean> = {
 };
 
 const fieldsByTab: Record<string, FieldConfig[]> = {
-	"Add Transporter": [
+	Transporter: [
 		{ name: "username", label: "Username", placeholder: "Username", required: true, helper: "Only contains [ A-z, 0-9, _, -, *, @ ]" },
 		{ name: "password", label: "Password", placeholder: "Password", type: "password", required: true },
 		{ name: "confirmPassword", label: "Confirm Password", placeholder: "Confirm Password", type: "password", required: true },
@@ -150,9 +182,6 @@ const fieldsByTab: Record<string, FieldConfig[]> = {
 	],
 	"Custom Fields (Optional)": [
 		{ name: "customField1", label: "Custom Field 1", placeholder: "Enter value", optional: true },
-		{ name: "customField2", label: "Custom Field 2", placeholder: "Enter value", optional: true },
-		{ name: "customField3", label: "Custom Field 3", placeholder: "Enter value", optional: true },
-		{ name: "customField4", label: "Custom Field 4", placeholder: "Enter value", optional: true },
 	],
 };
 
@@ -265,6 +294,11 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 	const { data: clients = [] } = useGetClientMasterQuery();
+	const {
+		data: transporterOptions = [],
+		isLoading: transporterOptionsLoading,
+		isError: transporterOptionsError,
+	} = useGetTransporterMasterQuery();
 	const languageOptions = useMemo(
 		() =>
 			languages.length > 0
@@ -280,7 +314,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		[timezones],
 	);
 	const fieldsByTabWithMaster = useMemo(() => {
-		const transporterFields = fieldsByTab["Add Transporter"].map((field) => {
+		const transporterFields = fieldsByTab.Transporter.map((field) => {
 			if (field.name === "language") return { ...field, options: languageOptions };
 			if (field.name === "timezone") return { ...field, options: timezoneOptions };
 			if (field.name === "client") {
@@ -292,10 +326,12 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 			}
 			return field;
 		});
-		return { ...fieldsByTab, "Add Transporter": transporterFields };
+		return { ...fieldsByTab, Transporter: transporterFields };
 	}, [languageOptions, timezoneOptions, clients]);
 	const [activeTab, setActiveTab] = useState(tabs[0]);
 	const [formError, setFormError] = useState("");
+	const [showTransporterForm, setShowTransporterForm] = useState(false);
+	const [selectedTransporterId, setSelectedTransporterId] = useState("");
 	const [showAddSensorDialog, setShowAddSensorDialog] = useState(false);
 	const [pendingConfirmation, setPendingConfirmation] = useState<FieldConfig | null>(null);
 	const [roleSearch, setRoleSearch] = useState("");
@@ -305,12 +341,15 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	const [savedIds, setSavedIds] = useState<Partial<Record<SaveTarget, string>>>({});
 	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
 	const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
+	const [loadTransporter, { isFetching: loadingTransporter }] = useLazyGetTransporterByIdQuery();
+	const [createDevice, { isLoading: creatingDevice }] = useCreateDeviceMutation();
+	const [updateDevice, { isLoading: updatingDevice }] = useUpdateDeviceMutation();
 	const [createVehicle, { isLoading: creatingVehicle }] = useCreateVehicleMutation();
 	const [updateVehicle, { isLoading: updatingVehicle }] = useUpdateVehicleMutation();
 	const [createPaymentDetails, { isLoading: creatingPayment }] = useCreatePaymentDetailsMutation();
 	const [updatePaymentDetails, { isLoading: updatingPayment }] = useUpdatePaymentDetailsMutation();
 	const isSaving =
-		creatingTransporter || updatingTransporter || creatingVehicle || updatingVehicle || creatingPayment || updatingPayment;
+		creatingTransporter || updatingTransporter || creatingDevice || updatingDevice || creatingVehicle || updatingVehicle || creatingPayment || updatingPayment;
 	const [values, setValues] = useState<VehicleFormValues>({
 		timezone: "(GMT+5:30) Asia/Calcutta",
 		inactiveTime: "12",
@@ -325,10 +364,9 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		subscriptionExtend: "2027-05-10",
 		subscriptionExpiryCount: "10",
 		active: "true",
-		simOperator: "Airtel Gprs (airtelgprs.com)",
-		secondarySimOperator: "Airtel Gprs (airtelgprs.com)",
-		deviceType: "Concox (8505)",
-		deviceActive: "true",
+		simOperator: SimOperator.AIRTEL_GPRS,
+		secondarySimOperator: SimOperator.AIRTEL_GPRS,
+		deviceType: "",
 		sellingPrice: "0",
 		installationDate: "2026-05-10",
 		rentalDueDate: "2026-05-10",
@@ -347,7 +385,12 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		}));
 	}, [languageOptions, timezoneOptions]);
 
-	const visibleFields = fieldsByTabWithMaster[activeTab];
+	const transporterFields = fieldsByTabWithMaster.Transporter.map((field) =>
+		field.name === "password" || field.name === "confirmPassword"
+			? { ...field, required: !savedIds.transporter, optional: Boolean(savedIds.transporter) }
+			: field,
+	);
+	const visibleFields = activeTab === "Transporter" ? transporterFields : fieldsByTabWithMaster[activeTab];
 	const regularFields = visibleFields.filter((field) => field.type !== "checkbox");
 	const checkboxFields = visibleFields.filter((field) => field.type === "checkbox");
 	const activeTabIndex = tabs.indexOf(activeTab);
@@ -370,6 +413,11 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	})();
 
 	const resetCurrentTab = () => {
+		if (activeTab === "Transporter") {
+			setSelectedTransporterId("");
+			setSavedIds((current) => ({ ...current, transporter: undefined }));
+			setShowTransporterForm(true);
+		}
 		if (activeTab === "Transporter Access Manage") {
 			setRoleSearch("");
 			setRolePermissions(
@@ -393,7 +441,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 			}
 			fieldsToReset.forEach((field) => {
 				nextValues[field.name] =
-					field.name === "active" || field.name === "deviceActive"
+					field.name === "active"
 						? "true"
 						: field.name === "sellingPrice"
 							? "0"
@@ -410,24 +458,88 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		setFormError("");
 	};
 
+	const handleTransporterSelection = async (externalId: string) => {
+		setSelectedTransporterId(externalId);
+		setFormError("");
+		if (!externalId) {
+			setSavedIds((current) => ({ ...current, transporter: undefined }));
+			setShowTransporterForm(false);
+			return;
+		}
+
+		setSavedIds((current) => ({ ...current, transporter: undefined }));
+		setShowTransporterForm(false);
+		try {
+			const transporter = await loadTransporter(externalId).unwrap();
+			setValues((current) => ({ ...current, ...transporterToFormValues(transporter) }));
+			setSavedIds((current) => ({ ...current, transporter: transporter.externalId || externalId }));
+			setRolePermissions(
+				Object.fromEntries(transporterRoles.map((role) => [role, transporter.roles?.includes(role) ?? false])),
+			);
+			setShowTransporterForm(true);
+		} catch (loadError) {
+			console.error("Failed to load transporter details.", loadError);
+			setFormError(apiErrorMessage(loadError, "Could not load transporter details. Please try again."));
+		}
+	};
+
+	const startNewTransporter = () => {
+		setSelectedTransporterId("");
+		setSavedIds((current) => ({ ...current, transporter: undefined }));
+		setRolePermissions(
+			Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
+		);
+		setValues((current) => ({
+			...current,
+			username: "",
+			password: "",
+			confirmPassword: "",
+			company: "",
+			client: "",
+			timezone: timezoneOptions[0] ?? "",
+			inactiveTime: "12",
+			language: languageOptions[0] ?? "",
+			name: "",
+			email: "",
+			phone: "",
+			address: "",
+			subscriptionStart: "2026-10-05",
+			subscriptionDue: "2027-10-05",
+			subscriptionExtend: "",
+			subscriptionExpiryCount: "10",
+			maxPoiRadius: "",
+			minAddressDistance: "",
+			dataRestriction: "",
+			active: "true",
+			overwriteSubscription: "false",
+			inactiveAfterExpiry: "false",
+		}));
+		setShowTransporterForm(true);
+		setFormError("");
+	};
+
 	const missingRequired = (fields: FieldConfig[]) =>
 		fields.find((field) => field.required && !values[field.name]?.trim());
 
 	/** Returns an error message for the tab's data, or null when it can be saved. */
 	const validate = (target: SaveTarget): { tab: string; message: string } | null => {
 		if (target === "transporter") {
-			const missing = missingRequired(fieldsByTab["Add Transporter"]);
-			if (missing) return { tab: "Add Transporter", message: `${missing.label} is required.` };
+			const missing = missingRequired(transporterFields);
+			if (missing) return { tab: "Transporter", message: `${missing.label} is required.` };
 			if (!usernamePattern.test(values.username.trim())) {
-				return { tab: "Add Transporter", message: "Username can only contain A-z, 0-9, _, -, *, @." };
+				return { tab: "Transporter", message: "Username can only contain A-z, 0-9, _, -, *, @." };
 			}
-			if (values.password !== values.confirmPassword) {
-				return { tab: "Add Transporter", message: "Password and Confirm Password must match." };
+			if ((values.password || values.confirmPassword) && values.password !== values.confirmPassword) {
+				return { tab: "Transporter", message: "Password and Confirm Password must match." };
 			}
 		}
 		if (target === "vehicle") {
 			const missing = missingRequired(addVehicleFields);
 			if (missing) return { tab: "Add Vehicle", message: `${missing.label} is required.` };
+		}
+		if (target === "device") {
+			const missing = missingRequired(addDeviceFields);
+			if (missing) return { tab: "Add Device", message: `${missing.label} is required.` };
 		}
 		if (target === "paymentDetails") {
 			const missing = missingRequired(fieldsByTab["Payment Details (Optional)"]);
@@ -436,11 +548,34 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		return null;
 	};
 
+	const saveTransporterRoles = async (externalId: string) => {
+		const roles = transporterRoles.filter((role) => rolePermissions[role]);
+		return updateTransporter({ externalId, body: { roles } }).unwrap();
+	};
+
 	const saveRecord = async (target: SaveTarget) => {
 		const externalId = savedIds[target];
 		if (target === "transporter") {
-			const body = buildTransporterPayload(values, transporterRoles.filter((role) => rolePermissions[role]));
-			return externalId ? updateTransporter({ externalId, body }).unwrap() : createTransporter(body).unwrap();
+			if (activeTab === "Transporter Access Manage") {
+				if (!externalId) {
+					throw new Error("Save or select a transporter before saving its access roles.");
+				}
+				return saveTransporterRoles(externalId);
+			}
+			const body = buildTransporterPayload(
+				values,
+				transporterRoles.filter((role) => rolePermissions[role]),
+				false,
+			);
+			if (externalId) {
+				const { password, confirmPassword, ...updateBody } = body;
+				return updateTransporter({ externalId, body: password ? body : updateBody }).unwrap();
+			}
+			return createTransporter(body).unwrap();
+		}
+		if (target === "device") {
+			const body = buildDevicePayload(values);
+			return externalId ? updateDevice({ externalId, body }).unwrap() : createDevice(body).unwrap();
 		}
 		if (target === "vehicle") {
 			const body = buildVehiclePayload(values);
@@ -455,6 +590,10 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		const target = saveTargetByTab[activeTab];
 		if (!target) {
 			toast.info(`Saving "${activeTab}" is not available yet.`);
+			return;
+		}
+		if (activeTab === "Transporter Access Manage" && !savedIds.transporter) {
+			setFormError("Save or select a transporter before saving its access roles.");
 			return;
 		}
 		const error = validate(target);
@@ -550,7 +689,50 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 							{formError}
 						</p>
 					)}
-					{activeTab === "Transporter Access Manage" ? (
+					{activeTab === "Transporter" && (
+						<section aria-label="Select transporter" className="mb-6 w-52">
+							<div className="mb-1 flex justify-end">
+								<button
+									type="button"
+									onClick={startNewTransporter}
+									className={`inline-flex items-center gap-1 text-[12px] font-medium underline-offset-2 transition ${
+										isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
+									}`}
+								>
+									<Plus className="h-3.5 w-3.5" />
+									Add New
+								</button>
+							</div>
+							<label className={`block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								<span className="mb-1.5 block">Transporter</span>
+								<select
+									value={selectedTransporterId}
+									disabled={transporterOptionsLoading || loadingTransporter}
+									onChange={(event) => void handleTransporterSelection(event.target.value)}
+									className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
+										isDark
+											? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
+											: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
+									}`}
+								>
+									<option value="">
+										{transporterOptionsLoading ? "Loading transporters..." : "Select Transporter"}
+									</option>
+									{transporterOptions.map((transporter) => (
+										<option key={transporter.id} value={transporter.externalId ?? transporter.id}>
+											{transporter.name}
+										</option>
+									))}
+								</select>
+								{transporterOptionsError && (
+									<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+										Could not load transporter options.
+									</span>
+								)}
+							</label>
+						</section>
+					)}
+					{activeTab === "Transporter" && !showTransporterForm ? null : activeTab === "Transporter Access Manage" ? (
 						<section aria-label="Transporter role access">
 							<label className="relative mb-3 block max-w-sm">
 								<Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
@@ -731,7 +913,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 					isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
 				}`}>
 					<div className="flex gap-2">
-						<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
+						<button type="submit" disabled={isSaving || loadingTransporter || (activeTab === "Transporter" && !showTransporterForm)} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
 							isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
 						}`}>
 							{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

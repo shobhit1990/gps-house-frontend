@@ -1,6 +1,6 @@
 import { Status } from "@/enums/Status";
 
-/** Common fields shared by the /master/{client,transporter,technician,vehicle} records. */
+/** Common fields shared by the /master/{client,transporter,technician,vehicle,state,alert,expenseType} records. */
 interface MasterRecordBase {
   id?: string | number;
   externalId?: string;
@@ -33,6 +33,21 @@ export interface VehicleMaster extends MasterRecordBase {
   vehicle?: string;
   vehicleNo?: string;
   vehicleName?: string;
+}
+
+export interface StateMaster extends MasterRecordBase {
+  stateName?: string;
+  stateCode?: string;
+}
+
+export interface AlertTypeMaster extends MasterRecordBase {
+  alertType?: string;
+  alertName?: string;
+}
+
+export interface ExpenseTypeMaster extends MasterRecordBase {
+  expenseType?: string;
+  expenseName?: string;
 }
 
 export interface MasterOption {
