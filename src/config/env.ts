@@ -11,12 +11,15 @@ export const SOCKET_CONFIG = {
 /** Set VITE_AUTH_ENABLED=false to skip the login screen and 401 logout until the login API is ready. */
 export const AUTH_CONFIG = {
   ENABLED: import.meta.env.VITE_AUTH_ENABLED !== "false",
+  /** Demo login is only for local development; never enable in QA/production builds. */
+  DEMO_LOGIN_ENABLED:
+    import.meta.env.DEV && import.meta.env.VITE_DEMO_LOGIN_ENABLED !== "false",
 } as const;
 
 export const ENV = {
   NODE_ENV: import.meta.env.VITE_NODE_ENV || "development",
-  IS_DEVELOPMENT: import.meta.env.DEV || true,
-  IS_PRODUCTION: import.meta.env.PROD || false,
+  IS_DEVELOPMENT: import.meta.env.DEV,
+  IS_PRODUCTION: import.meta.env.PROD,
   APP_NAME: import.meta.env.VITE_APP_NAME || "GPS House",
 } as const;
 

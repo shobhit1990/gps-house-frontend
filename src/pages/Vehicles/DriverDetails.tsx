@@ -1,13 +1,26 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddDriverDetailForm, type DriverDetailFormValues } from "@/components/VehicleForm/AddDriverDetailForm";
 import { UploadDriverForm, type UploadDriverValues } from "@/components/VehicleForm/UploadDriverForm";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import type { DriverDetail } from "@/interfaces/DriverDetail";
+import type { CreateDriverDetailRequest } from "@/interfaces/DriverDetail";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useCreateDriverDetailMutation,
+	useDeleteDriverDetailMutation,
+	useGetDriverDetailsQuery,
+	useLazyGetDriverDetailByIdQuery,
+	useUpdateDriverDetailMutation,
+} from "@/store/services/api/DriverDetails";
 
 type DriverRecord = {
-	id: number;
+	id: string;
 	name: string;
 	transporter: string;
 	vehicle: string;
@@ -63,54 +76,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 
 const dateColumns = new Set<ColumnKey>(["joiningDate", "leavingDate", "insuranceExpiry", "licenseIssue", "licenseExpiry", "mediclaimExpiry"]);
 
-const driver = (
-	id: number,
-	name: string,
-	transporter: string,
-	vehicle: string,
-	date: string,
-	phone: string,
-	address: string,
-	age: number,
-): DriverRecord => ({
-	id,
-	name,
-	transporter,
-	vehicle,
-	active: false,
-	assigned: false,
-	joiningDate: date,
-	leavingDate: date,
-	insuranceNo: "",
-	insuranceExpiry: date,
-	licenseAvailable: false,
-	licenseNumber: "",
-	licenseType: "",
-	licenseIssue: date,
-	licenseExpiry: date,
-	mediclaimNo: "",
-	mediclaimExpiry: date,
-	experience: 0,
-	age,
-	phone,
-	address,
-	bloodGroup: "",
-	supervisorName: "",
-	supervisorPhone: "",
-});
-
-const seedRows: DriverRecord[] = [
-	driver(1, "k.k.gupta k.k.gupta", "", "UP30AU1820", "2021-03-11", "9452258552", "Sikrhana,po.sikrohre", 5),
-	driver(2, "veer pal", "vicky.9", "", "2021-04-01", "7838887219", "", 5),
-	driver(3, "kkgupta k.k.gupta", "", "UP30AU1820", "2021-05-15", "9452258552", "SikrahnA,po.SikrUhre", 5),
-	driver(4, "k.k.gupta k.k.gupta", "", "UP30AU1820", "2021-06-01", "9452258552", "Sikrahna,po.Sikrohre", 5),
-	driver(5, "himanshu mishra", "", "UP30T8134", "2022-03-01", "9936825309", "", 4),
-	driver(6, "manoj mishra", "vga", "", "2022-04-01", "9721106671", "", 4),
-	driver(7, "niraj tiwari", "rahul.sharma", "", "2022-07-25", "9795263889", "", 4),
-	driver(8, "sany kumar", "rahul.sharma", "", "2022-09-19", "9140570691", "", 3),
-	driver(9, "akku plambar", "", "UP78GT0838", "2023-02-15", "9795587430", "", 3),
-];
-
 const formatDate = (value: string) => {
 	if (!value) return "—";
 	const [year, month, day] = value.split("-");
@@ -131,17 +96,59 @@ const ageFromDob = (value: string) => {
 	return Math.max(0, age);
 };
 
+const toDriverRecord = (driver: DriverDetail, transporterName: string): DriverRecord => ({
+	id: driver.externalId,
+	name: `${driver.firstName} ${driver.lastName}`.trim(),
+	transporter: transporterName || driver.transporter,
+	vehicle: driver.deviceId ?? "",
+	active: driver.status === Status.ACTIVE,
+	assigned: false,
+	joiningDate: driver.dateOfJoining ?? "",
+	leavingDate: driver.dateOfLeaving ?? "",
+	insuranceNo: driver.lifeInsuranceNumber ?? "",
+	insuranceExpiry: driver.lifeInsuranceExpiryDate ?? "",
+	licenseAvailable: driver.licenseAvailable ?? false,
+	licenseNumber: driver.licenseNumber ?? "",
+	licenseType: driver.licenseToDrive?.join(", ") ?? "",
+	licenseIssue: driver.licenseIssueDate ?? "",
+	licenseExpiry: driver.licenseExpiryDate ?? "",
+	mediclaimNo: driver.mediclaimNumber ?? "",
+	mediclaimExpiry: driver.mediclaimExpiryDate ?? "",
+	experience: driver.experience ?? 0,
+	age: ageFromDob(driver.dateOfBirth),
+	phone: driver.phoneNumber ?? "",
+	address: driver.address ?? "",
+	bloodGroup: driver.bloodGroup ?? "",
+	supervisorName: driver.supervisorName ?? "",
+	supervisorPhone: driver.supervisorPhoneNumber ?? "",
+});
+
 export default function DriverDetails() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<DriverRecord[]>(seedRows);
+	const { data: driverDetails = [], isLoading, isError, refetch } = useGetDriverDetailsQuery();
+	const { data: transporterOptions = [] } = useGetTransporterMasterQuery();
+	const [createDriverDetail] = useCreateDriverDetailMutation();
+	const [updateDriverDetail] = useUpdateDriverDetailMutation();
+	const [deleteDriverDetail] = useDeleteDriverDetailMutation();
+	const [getDriverDetailById] = useLazyGetDriverDetailByIdQuery();
+	const [uploadedRows, setUploadedRows] = useState<DriverRecord[]>([]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [showUploadDialog, setShowUploadDialog] = useState(false);
+	const [editingDriver, setEditingDriver] = useState<DriverDetail | undefined>();
+	const transporterNames = useMemo(
+		() => new Map(transporterOptions.map((transporter) => [transporter.id, transporter.name])),
+		[transporterOptions],
+	);
+	const rows = useMemo(
+		() => [...driverDetails.map((detail) => toDriverRecord(detail, transporterNames.get(detail.transporter) ?? "")), ...uploadedRows],
+		[driverDetails, transporterNames, uploadedRows],
+	);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -158,55 +165,88 @@ export default function DriverDetails() {
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveDriver = (values: DriverDetailFormValues) => {
+	const saveDriver = async (values: DriverDetailFormValues, externalId?: string) => {
 		const experience = Number(values.experience);
-		setRows((current) => [
-			...current,
-			{
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				name: `${values.firstName} ${values.lastName}`.trim(),
-				transporter: values.transporter,
-				vehicle: "",
-				active: values.active,
-				assigned: false,
-				joiningDate: values.joiningDate,
-				leavingDate: values.leavingDate,
-				insuranceNo: values.insuranceNo,
-				insuranceExpiry: values.insuranceExpiry,
-				licenseAvailable: values.licenseAvailable,
-				licenseNumber: values.licenseNumber,
-				licenseType: values.licenseType,
-				licenseIssue: values.licenseIssue,
-				licenseExpiry: values.licenseExpiry,
-				mediclaimNo: values.mediclaimNo,
-				mediclaimExpiry: values.mediclaimExpiry,
-				experience: Number.isFinite(experience) ? experience : 0,
-				age: ageFromDob(values.dateOfBirth),
-				phone: values.phone,
-				address: values.address,
-				bloodGroup: values.bloodGroup,
-				supervisorName: values.supervisorName,
-				supervisorPhone: values.supervisorPhone,
-			},
-		]);
+		const salary = Number(values.salary);
+		if (!Number.isFinite(experience) || !Number.isFinite(salary)) {
+			throw new Error("Experience and salary must be valid numbers.");
+		}
+		const body: CreateDriverDetailRequest = {
+			client: values.client,
+			transporter: values.transporter,
+			firstName: values.firstName,
+			lastName: values.lastName,
+			deviceId: values.deviceId,
+			dateOfJoining: values.joiningDate,
+			dateOfBirth: values.dateOfBirth,
+			experience,
+			salary,
+			phoneNumber: values.phone,
+			licenseNumber: values.licenseNumber,
+			licenseToDrive: values.licenseToDrive.split(",").map((id) => id.trim()).filter(Boolean),
+			licenseIssueDate: values.licenseIssue,
+			licenseExpiryDate: values.licenseExpiry,
+			lifeInsuranceNumber: values.insuranceNo,
+			lifeInsuranceExpiryDate: values.insuranceExpiry,
+			mediclaimNumber: values.mediclaimNo,
+			mediclaimExpiryDate: values.mediclaimExpiry,
+			bloodGroup: values.bloodGroup,
+			supervisorName: values.supervisorName,
+			supervisorPhoneNumber: values.supervisorPhone,
+			address: values.address,
+			licenseAvailable: values.licenseAvailable,
+			licenseVerified: values.licenseVerified,
+			enableGeoVerifiedAttendance: values.geoAttendance,
+			geofences: values.geofences.split(",").map((id) => id.trim()).filter(Boolean),
+			status: values.active ? Status.ACTIVE : Status.INACTIVE,
+			reason: values.reason,
+		};
+		if (externalId) {
+			await updateDriverDetail({ externalId, body }).unwrap();
+			toast.success("Driver details updated.");
+		} else {
+			await createDriverDetail(body).unwrap();
+			toast.success("Driver details saved.");
+		}
 		setSearch("");
 		setPage(0);
 	};
 
 	const uploadDrivers = (values: UploadDriverValues) => {
-		setRows((current) => {
-			let nextId = current.reduce((max, row) => Math.max(max, row.id), 0);
-			return [
-				...current,
-				...values.drivers.map((driver) => {
-					nextId += 1;
-					return { ...driver, id: nextId, transporter: values.transporter };
-				}),
-			];
-		});
+		setUploadedRows((current) => [
+			...current,
+			...values.drivers.map((driver, index) => ({
+				...driver,
+				id: `upload-${Date.now()}-${index}`,
+				transporter: values.transporter,
+			})),
+		]);
 		setSearch("");
 		setPage(0);
 		setShowUploadDialog(false);
+	};
+
+	const editDriver = async (externalId: string) => {
+		try {
+			const driver = await getDriverDetailById(externalId).unwrap();
+			setEditingDriver(driver);
+			setShowAddDialog(true);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Unable to load driver details."));
+		}
+	};
+
+	const removeDriver = async (id: string) => {
+		if (id.startsWith("upload-")) {
+			setUploadedRows((current) => current.filter((row) => row.id !== id));
+			return;
+		}
+		try {
+			await deleteDriverDetail(id).unwrap();
+			toast.success("Driver details deleted.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Unable to delete driver details."));
+		}
 	};
 
 	const toggleColumn = (key: ColumnKey) => {
@@ -248,8 +288,8 @@ export default function DriverDetails() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Driver Detail</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} drivers</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh driver details" title="Refresh driver details" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => void refetch()} aria-label="Refresh driver details" title="Refresh driver details" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -302,7 +342,7 @@ export default function DriverDetails() {
 									{visibleColumns.map((column) => (
 										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>
 									))}
-									<th scope="col" className="w-14 px-3 py-3"><span className="sr-only">Delete</span></th>
+									<th scope="col" className="w-24 px-3 py-3"><span className="sr-only">Actions</span></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -312,13 +352,34 @@ export default function DriverDetails() {
 											<td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row)}</td>
 										))}
 										<td className="px-3 py-3">
-											<button type="button" aria-label={`Delete ${row.name}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+											<div className="flex items-center gap-1">
+											{!row.id.startsWith("upload-") && (
+												<button type="button" aria-label={`Edit ${row.name}`} onClick={() => void editDriver(row.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+													<Pencil className="h-3.5 w-3.5" />
+												</button>
+											)}
+											<button type="button" aria-label={`Delete ${row.name}`} onClick={() => void removeDriver(row.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 												<Trash2 className="h-3.5 w-3.5" />
 											</button>
+											</div>
 										</td>
 									</tr>
 								))}
-								{pageRows.length === 0 && (
+								{isError && (
+									<tr>
+										<td colSpan={visibleColumns.length + 1} role="alert" className="px-6 py-16 text-center text-sm text-rose-500">
+											Could not load driver details. Refresh to try again.
+										</td>
+									</tr>
+								)}
+								{isLoading && pageRows.length === 0 && (
+									<tr>
+										<td colSpan={visibleColumns.length + 1} role="status" className="px-6 py-16 text-center">
+											<LoaderCircle className="mx-auto h-5 w-5 animate-spin text-cyan-500" />
+										</td>
+									</tr>
+								)}
+								{!isLoading && !isError && pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No drivers match this search</p>
@@ -347,7 +408,16 @@ export default function DriverDetails() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddDriverDetailForm onClose={() => setShowAddDialog(false)} onSubmit={saveDriver} />}
+			{showAddDialog && (
+				<AddDriverDetailForm
+					driver={editingDriver}
+					onClose={() => {
+						setShowAddDialog(false);
+						setEditingDriver(undefined);
+					}}
+					onSubmit={saveDriver}
+				/>
+			)}
 			{showUploadDialog && <UploadDriverForm onClose={() => setShowUploadDialog(false)} onSubmit={uploadDrivers} />}
 		</div>
 	);

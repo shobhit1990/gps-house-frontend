@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { ChevronDown, X } from "lucide-react";
 import { nowDateTimeInput } from "@/components/Reports/expenseDate";
 import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import type { MasterOption } from "@/interfaces/EntityMaster";
 
 export type ExpenseFormValues = {
 	client: string;
@@ -21,8 +22,9 @@ export type ExpenseFormValues = {
 
 type AddExpenseProps = {
 	initial?: ExpenseFormValues | null;
+	isSaving?: boolean;
 	onClose: () => void;
-	onSubmit: (values: ExpenseFormValues) => void;
+	onSubmit: (values: ExpenseFormValues) => Promise<void>;
 };
 
 const emptyValues = (): ExpenseFormValues => ({
@@ -40,13 +42,10 @@ const emptyValues = (): ExpenseFormValues => ({
 	buyer: "",
 });
 
-export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
+export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: AddExpenseProps) {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
-	const expenseTypes = expenseTypeMaster.map((expenseType) => expenseType.name);
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -84,11 +83,11 @@ export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
 		</label>
 	);
 
-	const select = (key: "client" | "transporter" | "expenseType", placeholder: string, options: string[]) => (
+	const select = (key: "client" | "transporter" | "expenseType", placeholder: string, options: MasterOption[]) => (
 		<span className="relative block">
 			<select required value={values[key]} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 				<option value="">{placeholder}</option>
-				{options.map((option) => <option key={option} value={option}>{option}</option>)}
+				{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
 			</select>
 			<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 		</span>
@@ -105,7 +104,7 @@ export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
 			setFormError("Amount must be a number that is 0 or more.");
 			return;
 		}
-		onSubmit({ ...values, amount: String(amount) });
+		void onSubmit({ ...values, amount: String(amount) });
 	};
 
 	return (
@@ -135,10 +134,10 @@ export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
 						</p>
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-						{field("Client", select("client", "Client", clients), true)}
-						{field("Transporter", select("transporter", "Transporter", transporters), true)}
+						{field("Client", select("client", "Client", clientMaster), true)}
+						{field("Transporter", select("transporter", "Transporter", transporterMaster), true)}
 						{field("Expense Name", <input value={values.expenseName} placeholder="Expense Name" onChange={(event) => update("expenseName", event.target.value)} className={inputClass} />, false, true)}
-						{field("Expense Type", select("expenseType", "Select Expense Type", expenseTypes), true)}
+						{field("Expense Type", select("expenseType", "Select Expense Type", expenseTypeMaster), true)}
 						{field("Amount", <input required inputMode="decimal" value={values.amount} placeholder="Amount" onChange={(event) => update("amount", event.target.value.replace(/[^\d.]/g, ""))} className={inputClass} />, true)}
 						{field("Expense Date", <input required type="datetime-local" value={values.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} className={inputClass} />, true)}
 						{field("Odometer", <input inputMode="decimal" value={values.odometer} placeholder="Odometer" onChange={(event) => update("odometer", event.target.value.replace(/[^\d.]/g, ""))} className={inputClass} />, false, true)}
@@ -154,8 +153,8 @@ export function AddExpense({ initial, onClose, onSubmit }: AddExpenseProps) {
 					<button type="button" onClick={() => { setValues(initial ?? emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						Save
+					<button type="submit" disabled={isSaving} className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving ? "Saving..." : "Save"}
 					</button>
 				</footer>
 			</form>

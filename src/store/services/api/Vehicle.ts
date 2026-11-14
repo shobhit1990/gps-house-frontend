@@ -11,8 +11,11 @@ const normalizeVehicle = (record: VehicleApiRecord): Vehicle => ({
 
 export const vehicleApi = api.injectEndpoints({
   endpoints: (builder) => ({
-    getVehicles: builder.query<Vehicle[], void>({
-      query: () => "/vehicle/getAll",
+    getVehicles: builder.query<Vehicle[], { year?: string } | void>({
+      query: (params) =>
+        params?.year
+          ? { url: "/vehicle/getAll", params: { year: params.year } }
+          : "/vehicle/getAll",
       transformResponse: (response: ApiEnvelope<VehicleApiRecord[]>) => unwrapList(response).map(normalizeVehicle),
       providesTags: (result) => [
         { type: "Vehicles", id: "LIST" },

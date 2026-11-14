@@ -1,11 +1,13 @@
-import { useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, Plus } from "lucide-react";
 import { addDeviceFields, DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
-import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
+import type { Device } from "@/interfaces/AddDevice";
+import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
 import {
 	useLazyGetAvailableDeviceInventoryQuery,
+	useLazyGetDeviceByIdQuery,
 	useLazyGetDeviceInventoryByImeiQuery,
 } from "@/store/services/api/AddDevice";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -16,12 +18,39 @@ type AddDeviceProps = {
 	isDark: boolean;
 	values: Record<string, string>;
 	onChange: (name: string, value: string) => void;
+	selectedDeviceId: string;
+	onSelectDevice: (device: Device) => void;
+	onAddNew: () => void;
 	onConfirm?: (field: VehicleFieldConfig) => void;
 };
 
-export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProps) {
+const referenceValue = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const reference = value as { externalId?: string; id?: string | number };
+		return String(reference.externalId ?? reference.id ?? "");
+	}
+	return "";
+};
+
+export function AddDevice({
+	isDark,
+	values,
+	onChange,
+	selectedDeviceId,
+	onSelectDevice,
+	onAddNew,
+	onConfirm,
+}: AddDeviceProps) {
 	const [inventoryOpen, setInventoryOpen] = useState(false);
+	const [selectedDeviceValue, setSelectedDeviceValue] = useState(selectedDeviceId);
+	const [formOpen, setFormOpen] = useState(Boolean(selectedDeviceId));
 	const { data: clients = [] } = useGetClientMasterQuery();
+	const {
+		data: deviceMaster = [],
+		isLoading: devicesLoading,
+		isError: devicesError,
+	} = useGetDeviceMasterQuery();
 	const {
 		data: deviceTypeMaster = [],
 		isLoading: deviceTypesLoading,
@@ -35,16 +64,63 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 		.filter((deviceType) => deviceType.value && deviceType.label);
 	const [selectedInventoryId, setSelectedInventoryId] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
+	const [deviceError, setDeviceError] = useState("");
 	const [passwordVisible, setPasswordVisible] = useState(false);
+	const [getDevice, { isFetching: isLoadingDevice }] = useLazyGetDeviceByIdQuery();
 	const [getAvailableInventory, { data: availableInventory = [], isFetching: isLoadingInventory }] =
 		useLazyGetAvailableDeviceInventoryQuery();
 	const [getInventoryByImei, { isFetching: isImporting }] = useLazyGetDeviceInventoryByImeiQuery();
+
+	useEffect(() => {
+		setSelectedDeviceValue(selectedDeviceId);
+	}, [selectedDeviceId]);
 
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
 			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10 [color-scheme:dark]"
 			: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
 	}`;
+
+	const selectDevice = async (deviceId: string) => {
+		setDeviceError("");
+		if (!deviceId) return;
+		setSelectedDeviceValue(deviceId);
+
+		try {
+			const device = await getDevice(deviceId).unwrap();
+			const importedValues: Record<string, string> = {
+				externalId: device.externalId,
+				imei: device.imei ?? "",
+				sim: device.simNumber ?? "",
+				simOperator: device.simOperator ?? "",
+				secondarySim: device.secondarySimNumber ?? "",
+				secondarySimOperator: device.secondarySimOperator ?? "",
+				deviceType: referenceValue(device.deviceType) || DEVICE_TYPE_ID,
+				deviceClient: referenceValue(device.client),
+				devicePassword: device.password ?? "",
+				ignitionPositive: String(device.ignitionWireConnected ?? false),
+				ignitionDisconnected: String(device.ignitionWireNotConnected ?? false),
+				airConditionPositive: String(device.airConditionWireConnected ?? false),
+				attendance: String(device.attendance ?? false),
+				timezoneSetting: String(device.timezoneSetting ?? false),
+			};
+			Object.entries(importedValues).forEach(([name, value]) => onChange(name, value));
+			onSelectDevice(device);
+			setFormOpen(true);
+		} catch (error) {
+			setSelectedDeviceValue(selectedDeviceId);
+			console.error("Failed to load device details from master.", error);
+			setDeviceError(apiErrorMessage(error, "Could not load this device. Please try again."));
+		}
+	};
+
+	const startNewDevice = () => {
+		setDeviceError("");
+		setSelectedDeviceValue("");
+		setSelectedInventoryId("");
+		setFormOpen(true);
+		onAddNew();
+	};
 
 	const openInventory = () => {
 		setSelectedInventoryId("");
@@ -136,7 +212,7 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 						<button
 							type="button"
 							onClick={openInventory}
-							className={`shrink-0 text-[11px] font-medium underline underline-offset-2 ${
+							className={`shrink-0 text-[11px] font-medium  ${
 								isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
 							}`}
 						>
@@ -226,12 +302,71 @@ export function AddDevice({ isDark, values, onChange, onConfirm }: AddDeviceProp
 
 	return (
 		<section aria-label="Add device">
-			<div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-				{textFields.map(renderField)}
+			<div className="mb-2 max-w-[250px]">
+				<label htmlFor="device-master-select" className={`text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+					Device
+				</label>
+				<div className="flex justify-end">
+					<button
+						type="button"
+						onClick={startNewDevice}
+						className={`inline-flex items-end gap-0 text-[12px] font-medium transition ${
+							isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
+						}`}
+					>
+						Add New
+					</button>
+				</div>
+				<select
+					id="device-master-select"
+					value={selectedDeviceValue}
+					disabled={devicesLoading || isLoadingDevice}
+					onChange={(event) => void selectDevice(event.target.value)}
+					className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
+						isDark
+							? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
+							: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
+					}`}
+				>
+					<option value="">
+						{devicesLoading ? "Loading devices..." : "Select Device"}
+					</option>
+					{deviceMaster.map((device) => (
+						<option
+							key={device.externalId ?? device.id}
+							value={device.externalId ?? device.id}
+						>
+							{device.name}
+						</option>
+					))}
+				</select>
+				{devicesError && (
+					<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+						Could not load devices from master.
+					</span>
+				)}
+				{deviceError && (
+					<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+						{deviceError}
+					</span>
+				)}
 			</div>
-			<div className="mt-5 flex flex-col items-start gap-3">
-				{checkboxFields.map(renderField)}
-			</div>
+
+			{isLoadingDevice && (
+				<p className={`mb-4 inline-flex items-center gap-2 text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+					<Loader2 className="h-3 w-3 animate-spin" /> Loading device details...
+				</p>
+			)}
+			{formOpen && (
+				<>
+					<div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+						{textFields.map(renderField)}
+					</div>
+					<div className="mt-5 flex flex-col items-start gap-3">
+						{checkboxFields.map(renderField)}
+					</div>
+				</>
+			)}
 
 			<DialogPrimitive.Root open={inventoryOpen} onOpenChange={setInventoryOpen}>
 				<DialogPrimitive.Portal>

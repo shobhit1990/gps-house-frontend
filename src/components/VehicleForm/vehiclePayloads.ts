@@ -53,10 +53,11 @@ export function buildVehiclePayload(values: FormValues): CreateVehicleRequest {
 	return {
 		vehicle: values.vehicleNo.trim().toUpperCase(),
 		mileage: Number(values.mileage),
-		vehicleType: values.vehicleType,
+		vehicleType: values.vehicleType.trim().toLowerCase(),
 		overspeed: Number(values.overspeed),
 		hours: text(values.idleTimeHour),
-		minutes: text(values.idleTimeMinute),
+		// Backend accepts "1".."60", so drop any leading zero (e.g. "05" -> "5").
+		minutes: values.idleTimeMinute?.trim() ? String(Number(values.idleTimeMinute)) : undefined,
 		client: values.vehicleClient,
 		device: values.vehicleDevice,
 		transporter: values.vehicleTransporter,

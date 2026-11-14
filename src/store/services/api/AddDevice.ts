@@ -87,6 +87,7 @@ export const deviceApi = api.injectEndpoints({
 export const {
 	useGetDevicesQuery,
 	useGetDeviceByIdQuery,
+	useLazyGetDeviceByIdQuery,
 	useCreateDeviceMutation,
 	useUpdateDeviceMutation,
 	useDeleteDeviceMutation,

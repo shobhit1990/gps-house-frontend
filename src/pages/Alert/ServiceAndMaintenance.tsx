@@ -30,7 +30,7 @@ import {
 	useGetServiceMaintenancesQuery,
 } from "@/store/services/api/ServiceMaintenance";
 import { useAuth } from "@/contexts/AuthContext";
-import type { CreateServiceMaintenanceRequest, ServiceMaintenance } from "@/interfaces/ServiceMaintenance";
+import type { CreateServiceMaintenanceRequest, ServiceMaintenance, ServiceMaintenanceVehicle } from "@/interfaces/ServiceMaintenance";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type ServiceRow = {
@@ -117,6 +117,12 @@ type FormState = typeof emptyForm;
 
 const text = (value?: string | number | null) => (value === undefined || value === null ? "" : String(value));
 
+const vehicleId = (vehicle: ServiceMaintenanceVehicle) =>
+	typeof vehicle === "string" ? vehicle : String(vehicle.id ?? vehicle.vehicle ?? vehicle.vehicleNo ?? vehicle.name ?? "");
+
+const vehicleLabel = (vehicle: ServiceMaintenanceVehicle) =>
+	typeof vehicle === "string" ? vehicle : vehicle.vehicle ?? vehicle.vehicleNo ?? vehicle.name ?? "";
+
 const dateLabel = (value?: string) => {
 	if (!value) return "";
 	const date = new Date(value);
@@ -144,7 +150,7 @@ const optionalNumber = (value: string): number | undefined | null => {
 /** Strips server-managed fields so a record can be posted again as a clone; the stored document is not re-sent. */
 const toCreateRequest = (record: ServiceMaintenance): CreateServiceMaintenanceRequest => ({
 	serviceName: record.serviceName,
-	vehicle: record.vehicle,
+	vehicle: vehicleId(record.vehicle),
 	remark: record.remark,
 	odometerIntervalEnabled: Boolean(record.odometerIntervalEnabled),
 	odometerInterval: record.odometerInterval,
@@ -180,33 +186,36 @@ export default function ServiceAndMaintenance() {
 	const fileRef = useRef<HTMLInputElement>(null);
 	const rows = useMemo<ServiceRow[]>(() => {
 		const vehicleNames = new Map(vehicles.map((item) => [item.id, item.name]));
-		return services.map((service) => ({
-			id: service.externalId,
-			vehicleNo: vehicleNames.get(service.vehicle) ?? service.vehicle ?? "",
-			serviceName: service.serviceName ?? "",
-			odometerInterval: text(service.odometerInterval),
-			lastServiceOdometer: text(service.lastServiceOdometer),
-			nextServiceDueOdometer: text(service.nextServiceDueOdometer),
-			currentOdometer: text(service.currentOdometer),
-			kmLeft: difference(service.nextServiceDueOdometer, service.currentOdometer),
-			odometerLeft: text(service.odometerLeft),
-			engineHoursInterval: text(service.engineInterval),
-			lastServiceEngineHour: text(service.lastServiceEngine),
-			nextServiceDueEngineHour: text(service.nextServiceDueEngineHour),
-			engineHourLeft: text(service.engineLeft),
-			daysInterval: text(service.daysInterval),
-			lastServiceOn: dateLabel(service.lastServiceDate),
-			nextServiceDueOn: dateLabel(service.nextServiceDueOn),
-			daysLeftForNext: daysUntil(service.nextServiceDueOn),
-			daysLeft: text(service.daysLeft),
-			updateRecord: service.updateRecord ? "Yes" : "No",
-			remark: service.remark ?? "",
-			uploadDoc: service.serviceDocument ? "Uploaded" : "",
-			clone: "Clone",
-			client: service.client ?? "",
-			transporter: service.transporter ?? "",
-			vehicleId: service.vehicle ?? "",
-		}));
+		return services.map((service) => {
+			const serviceVehicleId = vehicleId(service.vehicle);
+			return {
+				id: service.externalId,
+				vehicleNo: vehicleNames.get(serviceVehicleId) ?? vehicleLabel(service.vehicle),
+				serviceName: service.serviceName ?? "",
+				odometerInterval: text(service.odometerInterval),
+				lastServiceOdometer: text(service.lastServiceOdometer),
+				nextServiceDueOdometer: text(service.nextServiceDueOdometer),
+				currentOdometer: text(service.currentOdometer),
+				kmLeft: difference(service.nextServiceDueOdometer, service.currentOdometer),
+				odometerLeft: text(service.odometerLeft),
+				engineHoursInterval: text(service.engineInterval),
+				lastServiceEngineHour: text(service.lastServiceEngine),
+				nextServiceDueEngineHour: text(service.nextServiceDueEngineHour),
+				engineHourLeft: text(service.engineLeft),
+				daysInterval: text(service.daysInterval),
+				lastServiceOn: dateLabel(service.lastServiceDate),
+				nextServiceDueOn: dateLabel(service.nextServiceDueOn),
+				daysLeftForNext: daysUntil(service.nextServiceDueOn),
+				daysLeft: text(service.daysLeft),
+				updateRecord: service.updateRecord ? "Yes" : "No",
+				remark: service.remark ?? "",
+				uploadDoc: service.serviceDocument ? "Uploaded" : "",
+				clone: "Clone",
+				client: service.client ?? "",
+				transporter: service.transporter ?? "",
+				vehicleId: serviceVehicleId,
+			};
+		});
 	}, [services, vehicles]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
@@ -236,7 +245,7 @@ export default function ServiceAndMaintenance() {
 			return matchesFilters && matchesSearch;
 		});
 		return [...matched].sort((left, right) => {
-			const result = left[sortKey].localeCompare(right[sortKey], undefined, { numeric: true });
+			const result = String(left[sortKey] ?? "").localeCompare(String(right[sortKey] ?? ""), undefined, { numeric: true });
 			return sortDir === "asc" ? result : -result;
 		});
 	}, [rows, applied, search, sortKey, sortDir]);

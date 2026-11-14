@@ -23,3 +23,4 @@ export * from "./AddDevice";
 export * from "./Inventory";
 export * from "./Devicetype";
 export * from "./DeviceTypeMaster";
+export * from "./Settings";

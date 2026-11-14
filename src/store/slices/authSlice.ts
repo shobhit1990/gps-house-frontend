@@ -14,7 +14,9 @@ export interface User {
   lastName?: string;
   role?: string;
   roleName?: string;
+  roleCode?: string;
   roleId?: number;
+  userType?: string;
   name?: string;
 }
 

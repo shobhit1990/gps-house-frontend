@@ -5,7 +5,7 @@ import { baseQueryWithInterceptor } from "./utils/baseQuery";
 export const api = createApi({
   reducerPath: "api",
   baseQuery: baseQueryWithInterceptor,
-  tagTypes: ["Auth", "Master", "Owners", "Roles", "Clients", "Transporters", "Vehicles", "Devices", "DeviceTypes", "Inventory", "PaymentDetails", "BillingDetails", "Technicians", "JobSheets", "Groups", "Users", "Trips", "TripDetails", "TripEvents", "TripEventDetails", "Alerts", "ServiceMaintenance", "ParkedSchedules", "Announcements", "RaiseTickets", "VehicleConfigs"],
+  tagTypes: ["Auth", "Master", "Owners", "Roles", "Clients", "Transporters", "Vehicles", "Devices", "DeviceTypes", "Inventory", "PaymentDetails", "BillingDetails", "Technicians", "DriverDetails", "JobSheets", "Groups", "Users", "Trips", "TripDetails", "TripEvents", "TripEventDetails", "Alerts", "ServiceMaintenance", "ParkedSchedules", "Announcements", "RaiseTickets", "VehicleConfigs", "Expenses", "Menus"],
   endpoints: () => ({}),
 });
 

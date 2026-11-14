@@ -37,7 +37,32 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "resetPassword", label: "Reset Password" },
 ];
 
-const textValue = (value: string) => (value.trim() ? value : "—");
+const stringValue = (value: unknown): string => {
+	if (value == null) return "";
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+		return String(value);
+	}
+	if (Array.isArray(value)) return value.map(stringValue).filter(Boolean).join(", ");
+	if (typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return stringValue(record.name ?? record.timezone ?? record.userName ?? record.externalId ?? record.id);
+	}
+	return "";
+};
+
+const referenceValue = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const reference = value as Record<string, unknown>;
+		return stringValue(reference.externalId ?? reference.id);
+	}
+	return "";
+};
+
+const textValue = (value: unknown) => {
+	const text = stringValue(value);
+	return text.trim() ? text : "—";
+};
 
 export default function TechnicianList() {
 	const { logout } = useAuth();
@@ -47,18 +72,21 @@ export default function TechnicianList() {
 	const { data: clients = [] } = useGetClientMasterQuery();
 	const { data: timezones = [] } = useGetTimezonesQuery();
 	const rows = useMemo<TechnicianRecord[]>(() => {
-		const clientNames = new Map(clients.map((client) => [client.id, client.name]));
+		const clientNames = new Map(clients.flatMap((client) => [
+			[String(client.id), client.name],
+			[client.externalId, client.name],
+		]));
 		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
 		return technicians.map((technician) => ({
-			id: technician.externalId,
-			username: technician.userName ?? "",
-			contactPerson: technician.name ?? "",
-			phone: technician.phone != null ? String(technician.phone) : "",
-			client: clientNames.get(technician.client) ?? technician.client ?? "",
-			email: technician.email ?? "",
-			company: technician.companyName ?? "",
-			timezone: timezoneNames.get(technician.timezone) || (technician.timezone ?? ""),
-			password: technician.password ?? "",
+			id: stringValue(technician.externalId || technician.id),
+			username: stringValue(technician.userName),
+			contactPerson: stringValue(technician.name),
+			phone: stringValue(technician.phone),
+			client: clientNames.get(referenceValue(technician.client)) ?? stringValue(technician.client),
+			email: stringValue(technician.email),
+			company: stringValue(technician.companyName),
+			timezone: timezoneNames.get(referenceValue(technician.timezone)) || stringValue(technician.timezone),
+			password: stringValue(technician.password),
 			active: technician.status !== Status.INACTIVE,
 		}));
 	}, [technicians, clients, timezones]);

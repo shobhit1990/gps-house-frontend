@@ -8,6 +8,7 @@ import { AddVehicle, vehicleDetailDefaults } from "@/components/VehicleForm/AddV
 import { Payment } from "@/components/VehicleForm/Payment";
 import { addVehicleFields, type VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
+import type { Device } from "@/interfaces/AddDevice";
 import type { Transporter } from "@/interfaces/Transporter";
 import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 import { useCreatePaymentDetailsMutation, useUpdatePaymentDetailsMutation } from "@/store/services/api/PaymentDetails";
@@ -41,8 +42,8 @@ const saveLabels: Record<SaveTarget, string> = {
 
 const tabs = [
 	"Add Vehicle",
+	"Add Transporter",
 	"Transporter Access Manage",
-	"Transporter",
 	"Add Device",
 	// "Add Sensor Details",
 	"Payment Details (Optional)",
@@ -198,7 +199,7 @@ function FormField({
 	onChange: (value: string) => void;
 	onAction?: () => void;
 	isDark: boolean;
-	disabled?: boolean;
+	disabled?: boolean; 
 }) {
 	const [passwordVisible, setPasswordVisible] = useState(false);
 	const inputType = field.type === "password" && passwordVisible ? "text" : field.type ?? "text";
@@ -335,6 +336,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 	const [showAddSensorDialog, setShowAddSensorDialog] = useState(false);
 	const [pendingConfirmation, setPendingConfirmation] = useState<FieldConfig | null>(null);
 	const [roleSearch, setRoleSearch] = useState("");
+	const [selectedDeviceId, setSelectedDeviceId] = useState("");
 	const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(
 		() => Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
 	);
@@ -431,6 +433,10 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 			: activeTab === "Add Device"
 				? addDeviceFields
 				: visibleFields;
+		if (activeTab === "Add Device") {
+			setSelectedDeviceId("");
+			setSavedIds((current) => ({ ...current, device: undefined }));
+		}
 		setValues((current) => {
 			const nextValues = { ...current };
 			if (activeTab === "Add Vehicle") {
@@ -458,6 +464,31 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		setFormError("");
 	};
 
+	const handleAddNewDevice = () => {
+		setSelectedDeviceId("");
+		setSavedIds((current) => ({ ...current, device: undefined }));
+		setValues((current) => ({
+			...current,
+			...Object.fromEntries(
+				addDeviceFields.map((field) => [
+					field.name,
+					field.name === "simOperator" || field.name === "secondarySimOperator"
+						? SimOperator.AIRTEL_GPRS
+						: field.type === "checkbox"
+							? "false"
+							: "",
+				]),
+			),
+		}));
+		setFormError("");
+	};
+
+	const handleDeviceSelection = (device: Device) => {
+		setSelectedDeviceId(device.externalId);
+		setSavedIds((current) => ({ ...current, device: device.externalId }));
+		setFormError("");
+	};
+
 	const handleTransporterSelection = async (externalId: string) => {
 		setSelectedTransporterId(externalId);
 		setFormError("");
@@ -468,7 +499,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		}
 
 		setSavedIds((current) => ({ ...current, transporter: undefined }));
-		setShowTransporterForm(false);
+		setShowTransporterForm(true);
 		try {
 			const transporter = await loadTransporter(externalId).unwrap();
 			setValues((current) => ({ ...current, ...transporterToFormValues(transporter) }));
@@ -478,6 +509,7 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 			);
 			setShowTransporterForm(true);
 		} catch (loadError) {
+			setShowTransporterForm(false);
 			console.error("Failed to load transporter details.", loadError);
 			setFormError(apiErrorMessage(loadError, "Could not load transporter details. Please try again."));
 		}
@@ -607,6 +639,9 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 		try {
 			const saved = await saveRecord(target);
 			setSavedIds((current) => ({ ...current, [target]: saved.externalId || current[target] }));
+			if (target === "device" && saved.externalId) {
+				setSelectedDeviceId(saved.externalId);
+			}
 			if (target === "transporter" && saved.externalId) {
 				setValues((current) => ({
 					...current,
@@ -691,7 +726,10 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 					)}
 					{activeTab === "Transporter" && (
 						<section aria-label="Select transporter" className="mb-6 w-52">
-							<div className="mb-1 flex justify-end">
+							<div className="mb-1.5 flex items-center justify-between gap-2">
+								<label htmlFor="transporter-master-select" className={`text-[12px] font-medium underline-offset-2 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Transporter
+								</label>
 								<button
 									type="button"
 									onClick={startNewTransporter}
@@ -703,36 +741,39 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 									Add New
 								</button>
 							</div>
-							<label className={`block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								<span className="mb-1.5 block">Transporter</span>
-								<select
-									value={selectedTransporterId}
-									disabled={transporterOptionsLoading || loadingTransporter}
-									onChange={(event) => void handleTransporterSelection(event.target.value)}
-									className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
-										isDark
-											? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
-											: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
-									}`}
-								>
-									<option value="">
-										{transporterOptionsLoading ? "Loading transporters..." : "Select Transporter"}
+							<select
+								id="transporter-master-select"
+								value={selectedTransporterId}
+								disabled={transporterOptionsLoading || loadingTransporter}
+								onChange={(event) => void handleTransporterSelection(event.target.value)}
+								className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
+									isDark
+										? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
+										: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
+								}`}
+							>
+								<option value="">
+									{transporterOptionsLoading ? "Loading transporters..." : "Select Transporter"}
+								</option>
+								{transporterOptions.map((transporter) => (
+									<option key={transporter.id} value={transporter.externalId ?? transporter.id}>
+										{transporter.name}
 									</option>
-									{transporterOptions.map((transporter) => (
-										<option key={transporter.id} value={transporter.externalId ?? transporter.id}>
-											{transporter.name}
-										</option>
-									))}
-								</select>
-								{transporterOptionsError && (
-									<span role="alert" className="mt-1 block text-[11px] text-rose-500">
-										Could not load transporter options.
-									</span>
-								)}
-							</label>
+								))}
+							</select>
+							{transporterOptionsError && (
+								<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+									Could not load transporter options.
+								</span>
+							)}
 						</section>
 					)}
-					{activeTab === "Transporter" && !showTransporterForm ? null : activeTab === "Transporter Access Manage" ? (
+					{activeTab === "Transporter" && loadingTransporter ? (
+						<div role="status" className={`flex min-h-32 items-center justify-center gap-2 text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+							<Loader2 className="h-4 w-4 animate-spin" />
+							Loading transporter details...
+						</div>
+					) : activeTab === "Transporter" && !showTransporterForm ? null : activeTab === "Transporter Access Manage" ? (
 						<section aria-label="Transporter role access">
 							<label className="relative mb-3 block max-w-sm">
 								<Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
@@ -819,6 +860,9 @@ export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
 						<AddDevice
 							isDark={isDark}
 							values={values}
+							selectedDeviceId={selectedDeviceId}
+							onSelectDevice={handleDeviceSelection}
+							onAddNew={handleAddNewDevice}
 							onChange={(name, value) => {
 								setValues((current) => ({ ...current, [name]: value }));
 								setFormError("");

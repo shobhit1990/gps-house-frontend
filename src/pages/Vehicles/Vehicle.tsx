@@ -1,9 +1,17 @@
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
 import { autoTable } from "jspdf-autotable";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import { toast } from "sonner";
 import {
   Activity,
@@ -18,13 +26,19 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Settings2,
   X,
+  Loader2,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleForm } from "@/components/VehicleForm/AddVehicleForm";
+import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
 import { useAuth } from "@/contexts/AuthContext";
-import { vehicles } from "@/components/data/vehicles";
+import type { Vehicle } from "@/interfaces/Vehicle";
+import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useUpdateDeviceMutation } from "@/store/services/api/AddDevice";
+import { useGetVehiclesQuery, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
+import type { UpdateVehicleRequest } from "@/interfaces/Vehicle";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type VehicleState =
   | "Running"
@@ -37,8 +51,25 @@ type VehicleState =
   | "Unreported";
 
 type VehicleRecord = Record<string, string> & {
+  vehicleId: string;
+  deviceId: string;
+  clientId: string;
+  transporterId: string;
   filterStatus: VehicleState;
   month: string;
+};
+
+type EditableVehicleField = "vehicleNo" | "client" | "transporter" | "imei" | "address" | "vehicleLog" | "certificate" | "command";
+
+const editableFields: Record<EditableVehicleField, { label: string; placeholder: string }> = {
+  vehicleNo: { label: "Vehicle No.", placeholder: "Enter vehicle number" },
+  client: { label: "Client", placeholder: "Select client" },
+  transporter: { label: "Transporter", placeholder: "Select transporter" },
+  imei: { label: "IMEI", placeholder: "Enter IMEI" },
+  address: { label: "Address", placeholder: "Enter address" },
+  vehicleLog: { label: "Vehicle Log", placeholder: "Enter vehicle log" },
+  certificate: { label: "Certificate", placeholder: "Enter certificate" },
+  command: { label: "Command", placeholder: "Enter command" },
 };
 
 const columns: { key: string; label: string }[] = [
@@ -52,6 +83,7 @@ const columns: { key: string; label: string }[] = [
   { key: "deviceType", label: "D_Type" },
   { key: "state", label: "State" },
   { key: "vehicleType", label: "V_Type" },
+  { key: "fuelType", label: "Fuel Type" },
   { key: "operator", label: "Operator" },
   { key: "lastUpdated", label: "Last Updated" },
   { key: "vehicleStatus", label: "V_Status" },
@@ -88,6 +120,63 @@ const chartOptions = [
   "Vehicle Status",
 ];
 
+const chartYearOptions = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
+
+type VehicleChartDatum = { name: string; count: number };
+
+const chartDateFields: Record<string, string> = {
+  Added: "added",
+  "Subscription Start": "subscriptionStart",
+  "Subscription Due": "subscriptionDue",
+  "Inactive Date": "inactiveDate",
+  "Modified Date": "modifiedDate",
+};
+
+const chartMonths = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const chartColors = [
+  "#06b6d4",
+  "#8b5cf6",
+  "#3b82f6",
+  "#14b8a6",
+  "#22c55e",
+  "#f59e0b",
+  "#f43f5e",
+  "#94a3b8",
+];
+
+const getChartDateParts = (value: string): { year: string; month: number } | null => {
+  const isoDate = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoDate) {
+    const month = Number(isoDate[2]);
+    return month >= 1 && month <= 12 ? { year: isoDate[1], month } : null;
+  }
+
+  const dayFirstDate = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dayFirstDate) {
+    const month = Number(dayFirstDate[2]);
+    return month >= 1 && month <= 12 ? { year: dayFirstDate[3], month } : null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? null
+    : { year: String(date.getFullYear()), month: date.getMonth() + 1 };
+};
+
 const statusOptions: (VehicleState | "All")[] = [
   "All",
   "Running",
@@ -100,49 +189,131 @@ const statusOptions: (VehicleState | "All")[] = [
   "Unreported",
 ];
 
-const initialRows: VehicleRecord[] = vehicles.map((vehicle, index) => {
-  const [date = "", time = ""] = vehicle.updatedAt.split(" ");
-  const [, month = "", year = ""] = date.split("/");
+const displayValue = (value: unknown, fallback = "—"): string => {
+  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const relation = value as Record<string, unknown>;
+    return displayValue(
+      relation.name ??
+        relation.companyName ??
+        relation.vehicleTypeName ??
+        relation.deviceTypeName ??
+        relation.imei ??
+        relation.externalId ??
+        relation.id,
+      fallback,
+    );
+  }
+  return fallback;
+};
+
+const referenceId = (value: unknown): string => {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const reference = value as Record<string, unknown>;
+    const id = reference.externalId ?? reference.id;
+    return typeof id === "string" || typeof id === "number" ? String(id) : "";
+  }
+  return "";
+};
+
+const formatVehicleDate = (value: unknown, includeTime = false): string => {
+  if (typeof value !== "string" || !value.trim()) return "—";
+
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    ...(includeTime && {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }),
+  }).format(date);
+};
+
+const getVehicleMonth = (value: string): string => {
+  const isoDate = value.match(/^(\d{4})-(\d{2})/);
+  if (isoDate) return `${isoDate[1]}-${isoDate[2]}`;
+
+  const dayFirstDate = value.match(/^\d{1,2}\/(\d{1,2})\/(\d{4})/);
+  return dayFirstDate
+    ? `${dayFirstDate[2]}-${dayFirstDate[1].padStart(2, "0")}`
+    : "";
+};
+
+const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
+  const record = vehicle as Vehicle & Record<string, unknown>;
+  const device = record.device && typeof record.device === "object"
+    ? record.device as Record<string, unknown>
+    : undefined;
+  const lastUpdated = formatVehicleDate(
+    record.lastUpdated ?? vehicle.updatedAt,
+    true,
+  );
+  const status = displayValue(record.vehicleStatus ?? vehicle.status, "");
+  const knownStatuses = statusOptions.filter(
+    (option): option is VehicleState => option !== "All",
+  );
+  const filterStatus =
+    knownStatuses.find(
+      (option) => option.toLowerCase() === status.toLowerCase(),
+    ) ?? "Unreported";
 
   return {
+    vehicleId: vehicle.externalId,
+    deviceId: referenceId(record.device),
+    clientId: referenceId(vehicle.client),
+    transporterId: referenceId(vehicle.transporter),
     sn: String(index + 1),
-    vehicleNo: vehicle.vehicle,
-    imei: "—",
-    sim: vehicle.iccid ?? "—",
-    client: "Unassigned",
-    transporter: vehicle.branch || "Unassigned",
-    company: vehicle.branch || "—",
-    deviceType: "—",
-    state: "—",
-    vehicleType: vehicle.kind === "car" ? "Personal Car" : "Bike",
-    operator: "—",
-    lastUpdated: `${date} ${time}`.trim(),
-    vehicleStatus: "—",
-    deviceStatus: "—",
-    sensors: vehicle.gps || vehicle.gsm ? "GPS / GSM" : "—",
-    added: "—",
-    subscriptionStart: "—",
-    subscriptionDue: "—",
-    odometer: "—",
-    inactiveDate: "—",
-    modifiedDate: "—",
-    overspeed: "—",
-    mileage: "—",
-    port: "—",
-    nickname: "—",
-    remark: "—",
-    driverAssigned: "—",
-    ignitionWire: "—",
-    loadingStatus: "—",
-    address: vehicle.address,
-    vehicleLog: "—",
-    certificate: "—",
-    command: "—",
-    technician: "—",
-    filterStatus: "Unreported",
-    month: year && month ? `${year}-${month}` : "",
+    vehicleNo: displayValue(vehicle.vehicle),
+    imei: displayValue(record.imei ?? device?.imei),
+    sim: displayValue(record.simNumber ?? record.sim),
+    client: displayValue(vehicle.client, "Unassigned"),
+    transporter: displayValue(vehicle.transporter, "Unassigned"),
+    company: displayValue(record.company ?? record.companyName),
+    deviceType: displayValue(record.deviceType ?? vehicle.device),
+    state: displayValue(record.state),
+    vehicleType: displayValue(vehicle.vehicleType),
+    fuelType: displayValue(vehicle.fuelType),
+    operator: displayValue(record.operator ?? record.simOperator),
+    lastUpdated,
+    vehicleStatus: displayValue(record.vehicleStatus ?? vehicle.status),
+    deviceStatus: displayValue(record.deviceStatus),
+    sensors: displayValue(record.sensors),
+    added: formatVehicleDate(vehicle.createdAt),
+    subscriptionStart: formatVehicleDate(vehicle.subscriptionStartDate),
+    subscriptionDue: formatVehicleDate(vehicle.subscriptionDueDate),
+    odometer: displayValue(vehicle.currentOdometerReading),
+    inactiveDate: displayValue(record.inactiveDate),
+    modifiedDate: formatVehicleDate(record.modifiedDate ?? vehicle.updatedAt, true),
+    overspeed: displayValue(vehicle.overspeed),
+    mileage: displayValue(vehicle.mileage),
+    port: displayValue(record.port),
+    nickname: displayValue(record.vehicleNickname ?? vehicle.vehicleNickname),
+    remark: displayValue(vehicle.remark),
+    driverAssigned: displayValue(record.driverAssigned),
+    ignitionWire: displayValue(record.ignitionWire),
+    loadingStatus: displayValue(record.loadingStatus),
+    address: displayValue(record.address),
+    vehicleLog: displayValue(record.vehicleLog),
+    certificate: displayValue(record.certificate),
+    command: displayValue(record.command),
+    technician: displayValue(record.technician),
+    filterStatus,
+    month: getVehicleMonth(lastUpdated || vehicle.createdAt || ""),
   };
-});
+};
 
 const statusTone: Record<VehicleState | "All", string> = {
   All: "cyan",
@@ -161,7 +332,36 @@ export default function Vehicle() {
   const { theme } = useTheme();
   const isDark = theme !== "light";
 
-  const [rows, setRows] = useState(initialRows);
+  // Chart view states
+  const [chartOption, setChartOption] = useState("Added");
+  const [showYearSelector, setShowYearSelector] = useState(false);
+  const [showChart, setShowChart] = useState(false);
+  const [isYearMenuOpen, setIsYearMenuOpen] = useState(false);
+  const [selectedYear, setSelectedYear] = useState("");
+  const vehiclesQuery = chartDateFields[chartOption] && selectedYear
+    ? { year: selectedYear }
+    : undefined;
+
+  const {
+    currentData: vehicleData = [],
+    isLoading: isVehiclesLoading,
+    isError: isVehiclesError,
+    refetch: refetchVehicles,
+  } = useGetVehiclesQuery(vehiclesQuery);
+  const [localEdits, setLocalEdits] = useState<Record<string, Partial<Record<EditableVehicleField, string>>>>({});
+  const rows = useMemo(
+    () => vehicleData.map(toVehicleRow).map((row) => ({ ...row, ...localEdits[row.vehicleId] })),
+    [vehicleData, localEdits],
+  );
+  const { data: clients = [] } = useGetClientMasterQuery();
+  const { data: transporters = [] } = useGetTransporterMasterQuery();
+  const { data: devices = [] } = useGetDeviceMasterQuery();
+  const [updateVehicle, { isLoading: isSavingVehicle }] = useUpdateVehicleMutation();
+  const [updateDevice, { isLoading: isSavingDevice }] = useUpdateDeviceMutation();
+  const [editTarget, setEditTarget] = useState<{ row: VehicleRecord; field: EditableVehicleField } | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editError, setEditError] = useState("");
+  const [assignVehicleId, setAssignVehicleId] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<VehicleState | "All">("All");
@@ -171,15 +371,67 @@ export default function Vehicle() {
     useState("All transporters");
   const [monthFilter, setMonthFilter] = useState("");
 
-  // Chart view states
-  const [chartOption, setChartOption] = useState("Added");
-  const [showYearSelector, setShowYearSelector] = useState(false);
-  const [selectedYear, setSelectedYear] = useState("");
-
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(0);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const isSavingEdit = isSavingVehicle || isSavingDevice;
+
+  const openFieldEditor = (row: VehicleRecord, field: EditableVehicleField) => {
+    setEditTarget({ row, field });
+    const optionValue =
+      field === "client"
+        ? clients.find((option) => option.id === row.clientId || option.name === row.client)?.id
+        : field === "transporter"
+          ? transporters.find((option) => option.id === row.transporterId || option.name === row.transporter)?.id
+          : undefined;
+    setEditValue(optionValue ?? (row[field] === "—" ? "" : row[field]));
+    setEditError("");
+  };
+
+  const saveFieldEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editTarget) return;
+    const { row, field } = editTarget;
+    const value = editValue.trim();
+
+    try {
+      if (field === "vehicleNo" || field === "client" || field === "transporter") {
+        const body: UpdateVehicleRequest =
+          field === "vehicleNo"
+            ? { vehicle: value }
+            : field === "client"
+              ? { client: value }
+              : { transporter: value };
+        await updateVehicle({ externalId: row.vehicleId, body }).unwrap();
+      } else if (field === "imei") {
+        const device = devices.find((item) =>
+          item.externalId === row.deviceId ||
+          item.id === row.deviceId ||
+          item.name === row.imei,
+        );
+        if (!device) {
+          setEditError("Could not find the device linked to this vehicle.");
+          return;
+        }
+        await updateDevice({ externalId: device.id, body: { imei: value } }).unwrap();
+      } else {
+        setLocalEdits((current) => ({
+          ...current,
+          [row.vehicleId]: { ...current[row.vehicleId], [field]: value || "—" },
+        }));
+        toast.info(`${editableFields[field].label} updated in this view only; backend save is not connected yet.`);
+      }
+
+      if (field === "vehicleNo" || field === "client" || field === "transporter" || field === "imei") {
+        toast.success(`${editableFields[field].label} updated.`);
+      }
+      setEditTarget(null);
+    } catch (error) {
+      console.error(`Failed to update vehicle ${field}.`, error);
+      setEditError(apiErrorMessage(error, `Could not update ${editableFields[field].label}. Please try again.`));
+    }
+  };
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -235,6 +487,45 @@ export default function Vehicle() {
     monthFilter,
   ]);
 
+  const chartSummaryData = useMemo<VehicleChartDatum[]>(() => {
+    if (chartOption === "Vehicle Status") {
+      return statusOptions
+        .filter((status): status is VehicleState => status !== "All")
+        .map((status) => ({
+          name: status,
+          count: filteredRows.filter((row) => row.filterStatus === status).length,
+        }))
+        .filter((item) => item.count > 0);
+    }
+
+    if (chartOption === "Device Type") {
+      const counts = new Map<string, number>();
+      filteredRows.forEach((row) => {
+        const name = row.deviceType === "—" ? "Unknown" : row.deviceType;
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+      });
+      return Array.from(counts, ([name, count]) => ({ name, count })).sort(
+        (left, right) => right.count - left.count || left.name.localeCompare(right.name),
+      );
+    }
+
+    const dateField = chartDateFields[chartOption];
+    if (!dateField || !selectedYear) return [];
+
+    const monthlyCounts = Array.from({ length: 12 }, () => 0);
+    filteredRows.forEach((row) => {
+      const date = getChartDateParts(row[dateField]);
+      if (!date || date.year !== selectedYear) return;
+      monthlyCounts[date.month - 1] += 1;
+    });
+
+    return chartMonths
+      .map((name, index) => ({ name, count: monthlyCounts[index] }))
+      .filter((item) => item.count > 0);
+  }, [chartOption, filteredRows, selectedYear]);
+
+  const chartTotal = chartSummaryData.reduce((total, item) => total + item.count, 0);
+
   const statusCounts = useMemo(() => {
     const counts = Object.fromEntries(
       statusOptions.map((status) => [status, 0]),
@@ -269,7 +560,7 @@ export default function Vehicle() {
       column.key === "sn"
         ? String(index + 1).padStart(2, "0")
         : column.key === "vehicleStatus"
-          ? row.filterStatus
+          ? row.vehicleStatus
           : row[column.key] || "—",
     ),
   }));
@@ -324,47 +615,7 @@ export default function Vehicle() {
     setPage(0);
   };
 
-  const handleAddVehicle = (values: Record<string, string>) => {
-    const vehicleNo = values.vehicleNo.trim().toUpperCase();
-
-    if (!vehicleNo) return;
-
-    setRows((currentRows) => [
-      ...currentRows,
-      {
-        ...initialRows[0],
-        sn: String(currentRows.length + 1),
-        vehicleNo,
-        imei: values.imei || "—",
-        sim: values.sim || "—",
-        client: values.vehicleClient || values.client || "Unassigned",
-        transporter:
-          values.vehicleTransporter || values.company || "Unassigned",
-        company: values.company || "—",
-        deviceType: values.vehicleDevice || values.deviceType || "—",
-        operator: values.operator || "—",
-        vehicleType: values.vehicleType || "Personal Car",
-        mileage: values.mileage || "—",
-        overspeed: values.overspeed || "—",
-        odometer: values.currentOdometer || "—",
-        subscriptionStart: values.subscriptionStart || "—",
-        subscriptionDue: values.subscriptionDue || "—",
-        nickname: values.nickname || "—",
-        remark: values.remark || "—",
-        idleTimeHour: values.idleTimeHour || "",
-        idleTimeMinute: values.idleTimeMinute || "",
-        fuelType: values.fuelType || "",
-        durationOdometer: values.durationOdometer || "",
-        remark2: values.remark2 || "",
-        parkingViolationAlarm: values.parkingViolationAlarm || "false",
-        address: values.vehicleAddress || values.address || "—",
-        filterStatus: "New",
-        lastUpdated: "—",
-        month: "",
-      },
-    ]);
-
-    // Keep the form open so the Payment Details tab can still be saved.
+  const handleAddVehicle = () => {
     setStatusFilter("All");
     setPage(0);
   };
@@ -612,10 +863,9 @@ export default function Vehicle() {
           </div>
         </section>
 
-        {/* Chart View Options */}
-        <section
+``        <section
           aria-label="Chart view options"
-          className={`mb-4 overflow-hidden rounded-xl border ${
+  className={`relative z-40 mb-4 overflow-visible rounded-xl border ${
             isDark
               ? "border-white/[0.08] bg-[#08142e]/55"
               : "border-slate-200 bg-white/90"
@@ -637,9 +887,15 @@ export default function Vehicle() {
                   type="button"
                   onClick={() => {
                     setChartOption(option);
-
-                    if (option === "Added") {
+                    if (chartDateFields[option]) {
                       setShowYearSelector(true);
+                      setIsYearMenuOpen(false);
+                      setSelectedYear("");
+                      setShowChart(false);
+                    } else {
+                      setShowYearSelector(false);
+                      setIsYearMenuOpen(false);
+                      setShowChart(true);
                     }
                   }}
                   aria-pressed={chartOption === option}
@@ -669,33 +925,80 @@ export default function Vehicle() {
                   Select Year:
                 </label>
 
-                <div className="relative">
-                  <select
-                    id="chart-year"
-                    value={selectedYear}
-                    onChange={(event) =>
-                      setSelectedYear(event.target.value)
+                <div
+                  className="relative z-50"
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget)) {
+                      setIsYearMenuOpen(false);
                     }
-                    className={`h-9 appearance-none rounded-lg border py-2 pl-3 pr-8 text-xs outline-none transition ${
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setIsYearMenuOpen(false);
+                  }}
+                >
+                  <button
+                    id="chart-year"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded={isYearMenuOpen}
+                    onClick={() => setIsYearMenuOpen((open) => !open)}
+                    className={`flex h-9 min-w-[120px] items-center justify-between gap-3 rounded-lg border px-3 text-xs outline-none transition ${
                       isDark
-                        ? "border-white/[0.08] bg-[#03091c]/70 text-slate-300 focus:border-cyan-300/35"
-                        : "border-slate-200 bg-white text-slate-700 focus:border-cyan-400"
+                        ? "border-white/[0.08] bg-[#03091c]/70 text-slate-300 hover:border-cyan-300/30 focus:border-cyan-300/35"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-cyan-300 focus:border-cyan-400"
                     }`}
                   >
-                    <option value="">Select Year</option>
-                    <option value="2026">2026</option>
-                    <option value="2025">2025</option>
-                    <option value="2024">2024</option>
-                    <option value="2023">2023</option>
-                  </select>
+                    {selectedYear || "Select Year"}
+                    <ChevronDown className={`h-3.5 w-3.5 text-slate-500 transition-transform ${isYearMenuOpen ? "rotate-180" : ""}`} />
+                  </button>
 
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                  {isYearMenuOpen && (
+                    <div
+                      role="listbox"
+                      aria-label="Available years"
+                      className={`absolute left-0 top-full z-[100] mt-2 max-h-60 w-full min-w-[120px] overflow-y-auto rounded-lg border p-1 shadow-xl ${
+                        isDark
+                          ? "border-white/[0.10] bg-[#0b1835] text-slate-200"
+                          : "border-slate-200 bg-white text-slate-700"
+                      }`}
+                    >
+                      {chartYearOptions.length > 0 ? (
+                        chartYearOptions.map((year) => (
+                          <button
+                            key={year}
+                            type="button"
+                            role="option"
+                            aria-selected={selectedYear === year}
+                            onClick={() => {
+                              setSelectedYear(year);
+                              setShowChart(true);
+                              setIsYearMenuOpen(false);
+                            }}
+                            className={`block w-full rounded-md px-3 py-2 text-left text-xs transition ${
+                              selectedYear === year
+                                ? "bg-cyan-500/10 text-cyan-700 dark:bg-cyan-300/[0.12] dark:text-cyan-100"
+                                : "hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-white/[0.06] dark:hover:text-cyan-100"
+                            }`}
+                          >
+                            {year}
+                          </button>
+                        ))
+                      ) : (
+                        <p className={`px-3 py-2 text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                          No years available
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Close Year Selector */}
                 <button
                   type="button"
-                  onClick={() => setShowYearSelector(false)}
+                  onClick={() => {
+                    setShowYearSelector(false);
+                    setIsYearMenuOpen(false);
+                  }}
                   aria-label="Close year selector"
                   title="Close"
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition ${
@@ -710,6 +1013,158 @@ export default function Vehicle() {
             )}
           </div>
         </section>
+
+        {showChart && (
+          <section
+            aria-label={`${chartOption} chart`}
+            className={`mb-4 overflow-hidden rounded-xl border ${
+              isDark
+                ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90"
+                : "border-slate-200 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.06)]"
+            }`}
+          >
+            <header
+              className={`flex items-center justify-between gap-3 border-b px-4 py-3 ${
+                isDark
+                  ? "border-white/[0.07] bg-gradient-to-r from-cyan-300/[0.035] via-transparent to-violet-400/[0.04]"
+                  : "border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-violet-50"
+              }`}
+            >
+              <div>
+                <h2 className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+                  {chartOption} distribution
+                </h2>
+                <p className={`mt-0.5 text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                  {chartDateFields[chartOption]
+                    ? `Vehicle records for ${selectedYear}`
+                    : `Based on ${filteredRows.length} matching vehicles`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowChart(false);
+                  setShowYearSelector(false);
+                }}
+                aria-label="Close chart"
+                className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                  isDark
+                    ? "border-white/[0.08] bg-white/[0.035] text-slate-400 hover:text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+
+            {chartSummaryData.length === 0 ? (
+              <div className={`px-4 py-16 text-center text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                No chart data available for the selected filters.
+              </div>
+            ) : (
+              <div className="h-[320px] px-2 py-4 sm:px-5">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={chartSummaryData}
+                      dataKey="count"
+                      nameKey="name"
+                      cx="50%"
+                      cy="45%"
+                      innerRadius="48%"
+                      outerRadius="70%"
+                      paddingAngle={3}
+                      stroke={isDark ? "#0b1835" : "#ffffff"}
+                      strokeWidth={3}
+                      isAnimationActive
+                    >
+                      {chartSummaryData.map((item, index) => (
+                        <Cell
+                          key={item.name}
+                          fill={chartColors[index % chartColors.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: isDark ? "#0b1835" : "#ffffff",
+                        borderColor: isDark ? "rgba(255,255,255,0.12)" : "#cbd5e1",
+                        borderRadius: 10,
+                        color: isDark ? "#e2e8f0" : "#334155",
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={28}
+                      iconType="circle"
+                      wrapperStyle={{
+                        color: isDark ? "#cbd5e1" : "#475569",
+                        fontSize: 12,
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className={`overflow-x-auto border-t ${isDark ? "border-white/[0.07]" : "border-slate-200"}`}>
+              <table className="w-full min-w-[420px] text-left text-xs">
+                <thead>
+                  <tr className={`border-b text-[10px] font-semibold uppercase tracking-[0.1em] ${
+                    isDark
+                      ? "border-white/[0.08] bg-white/[0.025] text-slate-400"
+                      : "border-slate-200 bg-slate-50 text-slate-600"
+                  }`}>
+                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3 text-right">Vehicles</th>
+                    <th className="px-4 py-3 text-right">Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chartSummaryData.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className={`px-4 py-5 text-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+                        No data available
+                      </td>
+                    </tr>
+                  ) : (
+                    chartSummaryData.map((item, index) => (
+                      <tr
+                        key={item.name}
+                        className={`border-b last:border-0 ${
+                          isDark
+                            ? "border-white/[0.055] text-slate-300"
+                            : "border-slate-200 text-slate-700"
+                        }`}
+                      >
+                        <td className="px-4 py-2.5">
+                          <span
+                            className="mr-2 inline-block h-2 w-2 rounded-full"
+                            style={{ backgroundColor: chartColors[index % chartColors.length] }}
+                          />
+                          {item.name}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{item.count}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {chartTotal ? `${((item.count / chartTotal) * 100).toFixed(1)}%` : "0%"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {chartSummaryData.length > 0 && (
+                  <tfoot>
+                    <tr className={`font-semibold ${isDark ? "text-slate-100" : "text-slate-900"}`}>
+                      <td className="px-4 py-3">Total</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{chartTotal}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">100%</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </section>
+        )}
 
         {/* Vehicle Table */}
         <section
@@ -902,7 +1357,45 @@ export default function Vehicle() {
               </thead>
 
               <tbody>
-                {pageRows.map((row, rowIndex) => (
+                {isVehiclesLoading && (
+                  <tr>
+                    <td
+                      colSpan={visibleColumns.length}
+                      className="px-6 py-16 text-center text-xs text-slate-500"
+                    >
+                      Loading vehicles...
+                    </td>
+                  </tr>
+                )}
+
+                {isVehiclesError && (
+                  <tr>
+                    <td
+                      colSpan={visibleColumns.length}
+                      className="px-6 py-16 text-center"
+                    >
+                      <p className="text-sm font-medium text-rose-600">
+                        Could not load vehicles.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void refetchVehicles()}
+                        className={`mt-3 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${
+                          isDark
+                            ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.05]"
+                            : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Retry
+                      </button>
+                    </td>
+                  </tr>
+                )}
+
+                {!isVehiclesLoading &&
+                  !isVehiclesError &&
+                  pageRows.map((row, rowIndex) => (
                   <tr
                     key={`${row.vehicleNo}-${row.sn}`}
                     className={`border-b text-[11px] transition last:border-0 ${
@@ -913,22 +1406,42 @@ export default function Vehicle() {
                   >
                     {visibleColumns.map((column) => {
                       const value = row[column.key] || "—";
-                      const isVehicleNumber = column.key === "vehicleNo";
                       const isStatus = column.key === "vehicleStatus";
+                      const editableField = column.key in editableFields
+                        ? column.key as EditableVehicleField
+                        : null;
 
                       return (
                         <td
                           key={column.key}
                           className="max-w-[280px] whitespace-nowrap px-3 py-3 first:px-4"
                         >
-                          {isVehicleNumber ? (
-                            <span
-                              className={`font-semibold ${
-                                isDark ? "text-cyan-200" : "text-cyan-700"
-                              }`}
+                          {editableField ? (
+                            <button
+                              type="button"
+                              onClick={() => openFieldEditor(row, editableField)}
+                              title={`Edit ${editableFields[editableField].label}`}
+                              className={`text-left transition hover:underline ${
+                                column.key === "vehicleNo"
+                                  ? `font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`
+                                  : isDark
+                                    ? "text-slate-300 hover:text-cyan-200"
+                                    : "text-slate-700 hover:text-cyan-700"
+                              } ${column.key === "address" ? "block max-w-[250px] truncate" : ""}`}
                             >
                               {value}
-                            </span>
+                            </button>
+                          ) : column.key === "technician" ? (
+                            <button
+                              type="button"
+                              onClick={() => setAssignVehicleId(row.vehicleId)}
+                              title={`Assign technician to ${row.vehicleNo}`}
+                              className={`font-medium transition hover:underline ${
+                                isDark ? "text-cyan-200 hover:text-cyan-100" : "text-cyan-700 hover:text-cyan-800"
+                              }`}
+                            >
+                              {value === "—" ? "Assign" : value}
+                            </button>
                           ) : isStatus ? (
                             <span
                               className={`rounded-md border px-2 py-1 text-[9px] ${
@@ -937,7 +1450,7 @@ export default function Vehicle() {
                                   : "border-violet-200 bg-violet-50 text-violet-700"
                               }`}
                             >
-                              {row.filterStatus}
+                              {row.vehicleStatus}
                             </span>
                           ) : column.key === "sn" ? (
                             <span className="text-slate-500">
@@ -959,9 +1472,11 @@ export default function Vehicle() {
                       );
                     })}
                   </tr>
-                ))}
+                  ))}
 
-                {pageRows.length === 0 && (
+                {!isVehiclesLoading &&
+                  !isVehiclesError &&
+                  pageRows.length === 0 && (
                   <tr>
                     <td
                       colSpan={visibleColumns.length}
@@ -990,12 +1505,11 @@ export default function Vehicle() {
                       </p>
                     </td>
                   </tr>
-                )}
+                  )}
               </tbody>
             </table>
           </div>
 
-          {/* Pagination */}
           <footer
             className={`flex flex-col gap-3 border-t px-4 py-3 text-[10px] sm:flex-row sm:items-center sm:justify-between ${
               isDark
@@ -1068,6 +1582,142 @@ export default function Vehicle() {
           </footer>
         </section>
       </main>
+
+      {editTarget && (
+        <div
+          className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
+            isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
+          }`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isSavingEdit) setEditTarget(null);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vehicle-field-edit-title"
+            onSubmit={saveFieldEdit}
+            className={`w-full max-w-xl overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
+              isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+            }`}
+          >
+            <header className={`flex items-center justify-between border-b px-5 py-4 ${
+              isDark ? "border-white/[0.08] bg-[#08142e]" : "border-slate-200 bg-slate-50"
+            }`}>
+              <h2 id="vehicle-field-edit-title" className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+                Edit {editableFields[editTarget.field].label}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setEditTarget(null)}
+                disabled={isSavingEdit}
+                aria-label="Close edit form"
+                className={`rounded-lg p-1.5 transition disabled:opacity-50 ${
+                  isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-200"
+                }`}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <div className="space-y-4 px-5 py-5">
+              <label className={`block text-xs font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                <span className="mb-1.5 block">{editableFields[editTarget.field].label}</span>
+                {editTarget.field === "client" || editTarget.field === "transporter" ? (
+                  <select
+                    autoFocus
+                    required
+                    value={editValue}
+                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
+                    className={`h-10 w-full rounded-lg border px-3 text-xs outline-none focus:ring-2 ${
+                      isDark
+                        ? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35 focus:ring-cyan-300/10"
+                        : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400 focus:ring-cyan-100"
+                    }`}
+                  >
+                    <option value="">{editableFields[editTarget.field].placeholder}</option>
+                    {(editTarget.field === "client" ? clients : transporters).map((option) => (
+                      <option key={option.id} value={option.id}>{option.name}</option>
+                    ))}
+                  </select>
+                ) : editTarget.field === "address" ||
+                  editTarget.field === "vehicleLog" ||
+                  editTarget.field === "certificate" ||
+                  editTarget.field === "command" ? (
+                  <textarea
+                    autoFocus
+                    rows={4}
+                    value={editValue}
+                    placeholder={editableFields[editTarget.field].placeholder}
+                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
+                    className={`w-full resize-y rounded-lg border px-3 py-2 text-xs outline-none focus:ring-2 ${
+                      isDark
+                        ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
+                        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
+                    }`}
+                  />
+                ) : (
+                  <input
+                    autoFocus
+                    required
+                    value={editValue}
+                    placeholder={editableFields[editTarget.field].placeholder}
+                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
+                    className={`h-10 w-full rounded-lg border px-3 text-xs outline-none focus:ring-2 ${
+                      isDark
+                        ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
+                        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
+                    }`}
+                  />
+                )}
+              </label>
+              {editTarget.field === "address" ||
+              editTarget.field === "vehicleLog" ||
+              editTarget.field === "certificate" ||
+              editTarget.field === "command" ? (
+                <p className={`text-[11px] ${isDark ? "text-amber-200/80" : "text-amber-700"}`}>
+                  This value updates in the current table view only; backend saving is not connected yet.
+                </p>
+              ) : null}
+              {editError && <p role="alert" className="text-xs text-rose-500">{editError}</p>}
+            </div>
+            <footer className={`flex justify-end gap-2 border-t px-5 py-3 ${
+              isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
+            }`}>
+              <button
+                type="button"
+                onClick={() => setEditTarget(null)}
+                disabled={isSavingEdit}
+                className={`h-9 rounded-lg border px-4 text-xs font-medium disabled:opacity-50 ${
+                  isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingEdit}
+                className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-xs font-semibold disabled:opacity-60 ${
+                  isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                }`}
+              >
+                {isSavingEdit && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Save
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
+
+      {assignVehicleId && (
+        <AddJobSheet
+          initialVehicleId={assignVehicleId}
+          onClose={() => setAssignVehicleId("")}
+          onSaved={() => {
+            setAssignVehicleId("");
+            void refetchVehicles();
+          }}
+        />
+      )}
 
       {/* Add Vehicle Dialog */}
       {showAddDialog && (

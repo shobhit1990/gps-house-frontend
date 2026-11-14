@@ -28,9 +28,19 @@ export interface CreateServiceMaintenanceRequest {
 
 export type UpdateServiceMaintenanceRequest = Partial<CreateServiceMaintenanceRequest>;
 
-export interface ServiceMaintenance extends Omit<CreateServiceMaintenanceRequest, "serviceDocument"> {
+export type ServiceMaintenanceVehicle =
+  | string
+  | {
+      id?: string | number;
+      vehicle?: string;
+      vehicleNo?: string;
+      name?: string;
+    };
+
+export interface ServiceMaintenance extends Omit<CreateServiceMaintenanceRequest, "serviceDocument" | "vehicle"> {
   id: string | number;
   externalId: string;
+  vehicle: ServiceMaintenanceVehicle;
   /** Stored document path. */
   serviceDocument?: string;
   /** Client / transporter externalIds, when the backend returns them for filtering. */

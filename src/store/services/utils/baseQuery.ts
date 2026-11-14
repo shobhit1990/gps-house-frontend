@@ -22,7 +22,7 @@ const baseQuery = fetchBaseQuery({
 /**
  * The refresh currently in flight, shared by every request that gets a 401 at the same time.
  * Without this, a screen that loads several APIs at once (e.g. the Add Vehicle form) sends one
- * /auth/refresh per request; the backend rotates the refresh token on the first one, the rest
+ * /user/refresh per request; the backend rotates the refresh token on the first one, the rest
  * fail with the old token, and the user is logged out.
  */
 let refreshInFlight: Promise<boolean> | null = null;
@@ -38,7 +38,7 @@ function refreshAccessToken(
       try {
         const refreshResult = await baseQuery(
           {
-            url: "/auth/refresh",
+            url: "/user/refresh",
             method: "POST",
             body: { refreshToken },
           },
@@ -46,10 +46,11 @@ function refreshAccessToken(
           extraOptions
         );
         const data = unwrapResponse(refreshResult.data as ApiEnvelope<RefreshTokenResponse>);
-        if (!data?.accessToken) return false;
+        const accessToken = data?.token ?? data?.accessToken;
+        if (!accessToken) return false;
         api.dispatch(
           updateTokens({
-            token: data.accessToken,
+            token: accessToken,
             refreshToken: data.refreshToken,
           })
         );
@@ -104,9 +105,9 @@ export const baseQueryWithInterceptor: BaseQueryFn<
             ? args.url
             : "";
       const isLoginEndpoint =
-        url.includes("/auth/login") || url.includes("/user/login");
+        url.includes("/user/login") || url.includes("/auth/login");
       const isAuthEndpoint =
-        isLoginEndpoint || url.includes("/auth/refresh");
+        isLoginEndpoint || url.includes("/user/refresh") || url.includes("/auth/refresh");
 
       if (isLoginEndpoint) {
         return result;

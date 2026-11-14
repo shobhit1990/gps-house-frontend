@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -19,6 +19,9 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
+import { useSelector } from "@/store/hooks";
+import { selectMenus } from "@/store/slices/authSlice";
+import { filterNavMenusByPermissions } from "@/lib/menuNav";
 
 type NavChild = string | { label: string; children: string[] };
 type NavMenu = { label: string; icon: LucideIcon; to?: string; children: NavChild[] };
@@ -37,6 +40,8 @@ const navMenus: NavMenu[] = [
 /** Route for each leaf menu entry, keyed by its path of labels ("Menu/Child" or "Menu/Child/SubChild"). */
 const menuRoutes: Record<string, string> = {
   "Home/Dashboard": "/dashboard",
+  "Home/Advance Dashboard": "/advance-dashboard",
+  "Home/Analytics Dashboard": "/analytics-dashboard",
   "Master/Owners": "/owners",
   "Master/Roles": "/roles",
   "Master/Device Type": "/device-types",
@@ -123,7 +128,12 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
   const isDark = theme === "dark";
   const navRef = useRef<HTMLElement>(null);
   const measureRef = useRef<HTMLUListElement>(null);
-  const [visibleCount, setVisibleCount] = useState(navMenus.length);
+  const authMenus = useSelector(selectMenus);
+  const allowedMenus = useMemo(
+    () => filterNavMenusByPermissions(navMenus, authMenus, routeFor),
+    [authMenus],
+  );
+  const [visibleCount, setVisibleCount] = useState(allowedMenus.length);
 
   // Show as many top-level menus as fit on one line; the rest go into the "More" menu.
   useLayoutEffect(() => {
@@ -156,10 +166,10 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
     observer.observe(nav);
     observer.observe(measure);
     return () => observer.disconnect();
-  }, []);
+  }, [allowedMenus]);
 
-  const visibleMenus = navMenus.slice(0, visibleCount);
-  const overflowMenus = navMenus.slice(visibleCount);
+  const visibleMenus = allowedMenus.slice(0, visibleCount);
+  const overflowMenus = allowedMenus.slice(visibleCount);
   const isMoreOpen = activeMenu === MORE_MENU;
   const isMoreActive = overflowMenus.some((menu) => menuContainsPath(menu, location.pathname));
 
@@ -185,7 +195,7 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
         <nav ref={navRef} aria-label="Main navigation" className="relative min-w-0 flex-1">
           {/* Off-screen copy of every menu button, used only to measure widths. */}
           <ul ref={measureRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 flex gap-1">
-            {navMenus.map((item) => (
+            {allowedMenus.map((item) => (
               <li key={item.label} className="shrink-0">
                 <span className={topButtonClass(false)}>
                   <TopButtonContent item={item} />

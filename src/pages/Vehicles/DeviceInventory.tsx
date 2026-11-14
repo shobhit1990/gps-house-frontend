@@ -81,7 +81,11 @@ const columns: { key: ColumnKey; label: string }[] = [
 const statusOptions = ["All", "In Stock", "Used"];
 const demoHeaders = ["Inventory Type", "Imei", "Sim", "Operator", "Secondary Sim Number", "Secondary Sim Operator", "Device Type", "Client", "Technician", "Inventory Status", "Password", "Status", "Wire+", "Assigned", "Added"] as const;
 
-const textValue = (value?: string | null) => (value?.trim() ? value : "—");
+const textValue = (value: unknown) => {
+	if (typeof value === "string") return value.trim() ? value : "—";
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return "—";
+};
 
 const currentMonth = () => {
 	const now = new Date();

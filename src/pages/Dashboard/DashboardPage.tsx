@@ -303,13 +303,7 @@ export default function DashboardPage() {
                           >
                             <td className={`border-l-2 px-4 py-3.5 sm:px-5 ${isSelected ? "border-cyan-300" : "border-transparent"}`}>
                               <div className="flex items-center gap-3">
-                                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition ${
-                                  isSelected
-                                    ? "border-cyan-200/20 bg-cyan-200/[0.08] shadow-[0_0_20px_rgba(34,211,238,0.08)]"
-                                    : "border-white/[0.07] bg-[#03091c]/65 group-hover:border-white/[0.12]"
-                                }`}>
-                                  <VehicleGlyph kind={vehicle.kind} color={vehicle.color} />
-                                </span>
+                                <VehicleGlyph kind={vehicle.kind} color={vehicle.color} size="md" />
                                 <div>
                                   <p className={`text-[11px] font-semibold ${isSelected ? "text-black-900" : "text-black-900"}`}>
                                     {vehicle.vehicle}
@@ -404,9 +398,7 @@ export default function DashboardPage() {
                   {selectedVehicle && (
                     <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-[500] rounded-xl border border-white/15 bg-[#07142f]/90 p-3 shadow-[0_12px_35px_rgba(0,0,0,0.35)] backdrop-blur-xl">
                       <div className="flex items-center gap-2.5">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-200/15 bg-gradient-to-br from-cyan-200/10 to-violet-300/10">
-                          <VehicleGlyph kind={selectedVehicle.kind} color={selectedVehicle.color} />
-                        </span>
+                        <VehicleGlyph kind={selectedVehicle.kind} color={selectedVehicle.color} size="sm" />
                         <div className="min-w-0">
                           <p className="text-[10px] font-semibold text-white">{selectedVehicle.vehicle}</p>
                           <p className="mt-1 truncate text-[9px] text-slate-400">{selectedVehicle.address}</p>

@@ -13,12 +13,14 @@ export type JobSheetFormValues = {
 	technician: string;
 	contactPerson: string;
 	phone: string;
+	orderNo: string;
 	instruction: string;
 };
 
 type AddJobSheetProps = {
 	onClose: () => void;
 	onSaved: () => void;
+	initialVehicleId?: string;
 };
 
 const emptyValues = (): JobSheetFormValues => ({
@@ -26,17 +28,21 @@ const emptyValues = (): JobSheetFormValues => ({
 	technician: "",
 	contactPerson: "",
 	phone: "",
+	orderNo: "",
 	instruction: "",
 });
 
-export function AddJobSheet({ onClose, onSaved }: AddJobSheetProps) {
+export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const { data: technicians = [] } = useGetTechnicianMasterQuery();
 	const [createJobSheet, { isLoading: isSaving }] = useCreateJobSheetMutation();
-	const [values, setValues] = useState<JobSheetFormValues>(emptyValues);
+	const [values, setValues] = useState<JobSheetFormValues>(() => ({
+		...emptyValues(),
+		vehicle: initialVehicleId ?? "",
+	}));
 	const [formError, setFormError] = useState("");
 
 	useEffect(() => {
@@ -96,6 +102,9 @@ export function AddJobSheet({ onClose, onSaved }: AddJobSheetProps) {
 				reason: "New jobsheet created",
 			}).unwrap();
 			toast.success("Job sheet added.");
+			if (values.orderNo.trim()) {
+				toast.info("Order No is shown in this form but is not saved by the backend yet.");
+			}
 			onSaved();
 		} catch (error) {
 			console.error("Failed to create job sheet.", error);
@@ -130,10 +139,11 @@ export function AddJobSheet({ onClose, onSaved }: AddJobSheetProps) {
 						</p>
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-						{field("Vehicle", select("vehicle", "Select Vehicle", vehicles, true), true)}
+						{!initialVehicleId && field("Vehicle", select("vehicle", "Select Vehicle", vehicles, true), true)}
 						{field("Technician Name", select("technician", "Select Technician", technicians, true), true)}
 						{field("Contact Person Name", <input required value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, true)}
 						{field("Phone No.", <input required value={values.phone} placeholder="Phone No." onChange={(event) => update("phone", event.target.value)} className={inputClass} />, true)}
+						{field("Order No.", <input value={values.orderNo} placeholder="Order No." onChange={(event) => update("orderNo", event.target.value)} className={inputClass} />)}
 						<label className="block min-w-0 sm:col-span-2 xl:col-span-4">
 							<span className={labelClass}>Instruction</span>
 							<textarea value={values.instruction} placeholder="Landmark / Timing / Remark" rows={4} onChange={(event) => update("instruction", event.target.value)} className={`w-full resize-y rounded-md border px-3 py-2 text-[12px] outline-none transition focus:ring-2 ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"}`} />

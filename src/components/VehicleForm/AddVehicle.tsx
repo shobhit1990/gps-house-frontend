@@ -82,7 +82,7 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 						>
 							{field.options?.map((option, index) => (
 								<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
-									{option}
+									{field.optionLabels?.[option] ?? option}
 								</option>
 							))}
 							{masterOptions[field.name]?.map((option) => (

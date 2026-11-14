@@ -1,15 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { AddExpense, type ExpenseFormValues } from "@/components/Reports/AddExpense";
-import { nowDateTimeInput } from "@/components/Reports/expenseDate";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery } from "@/store/services/api/Master";
+import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useCreateExpenseMutation,
+	useDeleteExpenseMutation,
+	useGetExpensesQuery,
+	useLazyGetExpenseByIdQuery,
+	useUpdateExpenseMutation,
+} from "@/store/services/api/ExpenseReport";
+import type { Expense } from "@/interfaces/Expense";
+import type { MasterOption } from "@/interfaces/EntityMaster";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
-type ExpenseRecord = ExpenseFormValues & {
-	id: number;
+type ExpenseRecord = ExpenseFormValues & Pick<Expense, "id" | "externalId"> & {
 	vehicleNo: string;
 	driverName: string;
 	tripName: string;
@@ -40,6 +49,7 @@ type ColumnKey =
 	| "role"
 	| "updated"
 	| "edit"
+	| "delete"
 	| "documents";
 
 type MenuKind = "client" | "vehicle";
@@ -71,6 +81,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "role", label: "Role" },
 	{ key: "updated", label: "Updated" },
 	{ key: "edit", label: "Edit" },
+	{ key: "delete", label: "Delete" },
 	{ key: "documents", label: "Documents" },
 ];
 
@@ -93,18 +104,38 @@ const formatDateTime = (value: string) => {
 
 const textValue = (value: string) => (value.trim() ? value : "—");
 
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
+const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
+	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
+
+const valueAsString = (value: string | number | undefined) => (value === undefined ? "" : String(value));
+
+const masterId = (value: string, options: MasterOption[]) =>
+	options.find((option) => option.id === value || option.name === value)?.id ?? value;
+
+const optionalNumber = (value: string) => (value.trim() ? Number(value) : undefined);
+
+const dateTimeInputValue = (value: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
 
 export default function ExpenseReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
+	const { data: expenseData = [], isFetching, refetch } = useGetExpensesQuery();
+	const [createExpense, { isLoading: isCreating }] = useCreateExpenseMutation();
+	const [updateExpense, { isLoading: isUpdating }] = useUpdateExpenseMutation();
+	const [deleteExpense] = useDeleteExpenseMutation();
+	const [getExpenseById] = useLazyGetExpenseByIdQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const initialRange = todayRange();
 	const clientRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
-	const [rows, setRows] = useState<ExpenseRecord[]>([]);
 	const [search, setSearch] = useState("");
 	const [pageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -120,6 +151,35 @@ export default function ExpenseReport() {
 	const [showForm, setShowForm] = useState(false);
 	const [editing, setEditing] = useState<ExpenseRecord | null>(null);
 
+	const rows = useMemo<ExpenseRecord[]>(
+		() =>
+			expenseData.map((expense) => ({
+				client: masterId(expense.client, clientMaster),
+				transporter: masterId(expense.transporter, transporterMaster),
+				expenseName: expense.expenseName ?? "",
+				expenseType: masterId(expense.expenseType, expenseTypeMaster),
+				amount: valueAsString(expense.amount),
+				expenseDate: dateTimeInputValue(expense.expenseDate),
+				odometer: valueAsString(expense.odometer),
+				engineHours: valueAsString(expense.engineHours),
+				description: expense.description ?? "",
+				quantity: valueAsString(expense.quantity),
+				supplier: expense.supplier ?? "",
+				buyer: expense.buyer ?? "",
+				id: expense.id,
+				externalId: expense.externalId,
+				vehicleNo: expense.vehicleNo ?? "",
+				driverName: expense.driverName ?? "",
+				tripName: expense.tripName ?? "",
+				added: expense.createdAt ?? "",
+				createdBy: expense.createdBy ?? "",
+				role: expense.role ?? "",
+				updated: expense.updatedAt ?? "",
+				documents: "",
+			})),
+		[clientMaster, expenseData, expenseTypeMaster, transporterMaster],
+	);
+	const clients = clientMaster;
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const fromTime = applied.from ? new Date(applied.from).getTime() : Number.NEGATIVE_INFINITY;
@@ -138,8 +198,10 @@ export default function ExpenseReport() {
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+	const visibleClients = clients.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const visibleVehicles = vehicleOptions
+		.map((name) => ({ id: name, name }))
+		.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 
 	useEffect(() => {
 		if (!openMenu) return;
@@ -169,31 +231,70 @@ export default function ExpenseReport() {
 		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
 	};
 
-	const saveExpense = (values: ExpenseFormValues) => {
-		if (editing) {
-			const updated = nowDateTimeInput();
-			setRows((current) => current.map((row) => (row.id === editing.id ? { ...row, ...values, updated } : row)));
-		} else {
-			setRows((current) => [
-				{
-					...values,
-					id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-					vehicleNo: "",
-					driverName: "",
-					tripName: "",
-					added: nowDateTimeInput(),
-					createdBy: "",
-					role: "",
-					updated: "",
-					documents: "",
-				},
-				...current,
-			]);
+	const saveExpense = async (values: ExpenseFormValues) => {
+		const body = {
+			client: values.client,
+			transporter: values.transporter,
+			expenseName: values.expenseName.trim() || undefined,
+			expenseType: values.expenseType,
+			amount: Number(values.amount),
+			expenseDate: values.expenseDate,
+			odometer: optionalNumber(values.odometer),
+			engineHours: optionalNumber(values.engineHours),
+			description: values.description.trim() || undefined,
+			quantity: optionalNumber(values.quantity),
+			supplier: values.supplier.trim() || undefined,
+			buyer: values.buyer.trim() || undefined,
+		};
+		try {
+			if (editing) {
+				await updateExpense({ externalId: editing.externalId, body }).unwrap();
+				toast.success("Expense updated.");
+			} else {
+				await createExpense(body).unwrap();
+				toast.success("Expense added.");
+			}
+			setSearch("");
+			setPage(0);
+			setEditing(null);
+			setShowForm(false);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, `Could not ${editing ? "update" : "add"} the expense.`));
 		}
-		setSearch("");
-		setPage(0);
-		setEditing(null);
-		setShowForm(false);
+	};
+
+	const editExpense = async (row: ExpenseRecord) => {
+		try {
+			const expense = await getExpenseById(row.externalId).unwrap();
+			setEditing({
+				...row,
+				client: masterId(expense.client, clientMaster),
+				transporter: masterId(expense.transporter, transporterMaster),
+				expenseName: expense.expenseName ?? "",
+				expenseType: masterId(expense.expenseType, expenseTypeMaster),
+				amount: valueAsString(expense.amount),
+				expenseDate: dateTimeInputValue(expense.expenseDate),
+				odometer: valueAsString(expense.odometer),
+				engineHours: valueAsString(expense.engineHours),
+				description: expense.description ?? "",
+				quantity: valueAsString(expense.quantity),
+				supplier: expense.supplier ?? "",
+				buyer: expense.buyer ?? "",
+			});
+			setShowForm(true);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load the expense."));
+		}
+	};
+
+	const removeExpense = async (row: ExpenseRecord) => {
+		if (!window.confirm("Delete this expense?")) return;
+		try {
+			await deleteExpense(row.externalId).unwrap();
+			toast.success("Expense deleted.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not delete the expense."));
+		}
 	};
 
 	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[220px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
@@ -204,13 +305,13 @@ export default function ExpenseReport() {
 		emptyLabel: string,
 		selected: string[],
 		setSelected: (next: string[]) => void,
-		options: string[],
+		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[220px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={`flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -219,7 +320,7 @@ export default function ExpenseReport() {
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
 					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
+						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
 							Select All
 						</button>
 						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
@@ -227,11 +328,11 @@ export default function ExpenseReport() {
 						</button>
 					</div>
 					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
+						{options.map((option) => (
+							<li key={option.id}>
 								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
+									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
+									{option.name}
 								</label>
 							</li>
 						))}
@@ -244,12 +345,24 @@ export default function ExpenseReport() {
 
 	const cell = (key: ColumnKey, row: ExpenseRecord, serial: number) => {
 		if (key === "sn") return String(serial).padStart(2, "0");
-		if (key === "expenseType" || key === "expenseName") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
+		if (key === "expenseType" || key === "expenseName") {
+			const value = key === "expenseType"
+				? expenseTypeMaster.find((option) => option.id === row.expenseType)?.name ?? row.expenseType
+				: row.expenseName;
+			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(value)}</span>;
+		}
 		if (key === "expenseDate" || key === "added" || key === "updated") return formatDateTime(row[key]);
 		if (key === "edit") {
 			return (
-				<button type="button" onClick={() => { setEditing(row); setShowForm(true); }} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+				<button type="button" onClick={() => void editExpense(row)} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 					Edit
+				</button>
+			);
+		}
+		if (key === "delete") {
+			return (
+				<button type="button" onClick={() => void removeExpense(row)} aria-label={`Delete expense ${row.expenseName || row.externalId}`} className={`rounded-md p-1.5 transition ${isDark ? "text-slate-400 hover:bg-rose-400/[0.10] hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}>
+					<Trash2 className="h-3.5 w-3.5" />
 				</button>
 			);
 		}
@@ -273,8 +386,8 @@ export default function ExpenseReport() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Expense Report</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} expenses</p>
 					</div>
-					<button type="button" onClick={() => { const range = todayRange(); setSearch(""); setSelectedClients([]); setSelectedVehicles([]); setFrom(range.from); setTo(range.to); setApplied({ clients: [], vehicles: [], from: range.from, to: range.to }); setClientQuery(""); setVehicleQuery(""); setOpenMenu(null); setPage(0); }} aria-label="Refresh expenses" title="Refresh expenses" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => { const range = todayRange(); setSearch(""); setSelectedClients([]); setSelectedVehicles([]); setFrom(range.from); setTo(range.to); setApplied({ clients: [], vehicles: [], from: range.from, to: range.to }); setClientQuery(""); setVehicleQuery(""); setOpenMenu(null); setPage(0); void refetch(); }} aria-label="Refresh expenses" title="Refresh expenses" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -375,6 +488,7 @@ export default function ExpenseReport() {
 			{showForm && (
 				<AddExpense
 					initial={editing}
+					isSaving={isCreating || isUpdating}
 					onClose={() => { setShowForm(false); setEditing(null); }}
 					onSubmit={saveExpense}
 				/>
