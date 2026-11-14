@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Eye, EyeOff, Loader2, X } from "lucide-react";
 import type { Client, CreateClientRequest } from "@/interfaces/Client";
+import { Status } from "@/enums/Status";
 import { useCreateClientMutation, useUpdateClientMutation } from "@/store/services/api/Client";
 import {
 	useGetLanguagesQuery,
@@ -11,11 +12,11 @@ import {
 } from "@/store/services/api/Master";
 
 type ClientFormValues = {
-	ownerName: string;
-	username: string;
+	owner_name: string;
+	userName: string;
 	password: string;
 	confirmPassword: string;
-	company: string;
+	companyName: string;
 	name: string;
 	email: string;
 	phone: string;
@@ -39,11 +40,11 @@ const fallbackLanguages = ["English", "Hindi"];
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
 
 const emptyValues: ClientFormValues = {
-	ownerName: "",
-	username: "",
+	owner_name: "",
+	userName: "",
 	password: "",
 	confirmPassword: "",
-	company: "",
+	companyName: "",
 	name: "",
 	email: "",
 	phone: "",
@@ -58,9 +59,9 @@ const emptyValues: ClientFormValues = {
 
 const valuesFromClient = (client: Client): ClientFormValues => ({
 	...emptyValues,
-	ownerName: client.ownerName ?? "",
-	username: client.username ?? "",
-	company: client.company ?? "",
+	owner_name: client.owner_name ?? "",
+	userName: client.userName ?? "",
+	companyName: client.companyName ?? "",
 	name: client.name ?? "",
 	email: client.email ?? "",
 	phone: client.phone ?? "",
@@ -73,10 +74,11 @@ const valuesFromClient = (client: Client): ClientFormValues => ({
 });
 
 const buildClientPayload = (values: ClientFormValues, image: string): CreateClientRequest => ({
-	ownerName: values.ownerName,
-	username: values.username.trim(),
+	owner_name: values.owner_name,
+	userName: values.userName.trim(),
 	password: values.password,
-	company: values.company.trim(),
+	confirmPassword: values.confirmPassword,
+	companyName: values.companyName.trim(),
 	name: values.name.trim() || undefined,
 	email: values.email.trim() || undefined,
 	phone: values.phone.trim() || undefined,
@@ -87,6 +89,7 @@ const buildClientPayload = (values: ClientFormValues, image: string): CreateClie
 	timezone: values.timezone,
 	image: image || undefined,
 	active: values.active,
+	status: values.active ? Status.ACTIVE : Status.INACTIVE,
 });
 
 const apiErrorMessage = (error: unknown, fallback: string) => {
@@ -124,17 +127,23 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 
 	const languageOptions = useMemo(
-		() =>
-			languages.length > 0
-				? languages.map((item) => item.language)
-				: fallbackLanguages,
+		() => languages.length > 0
+			? languages.map((item) => ({
+				value: String(item.externalId ?? item.id ?? item.language),
+				label: item.language,
+			}))
+			: fallbackLanguages.map((language) => ({ value: language, label: language })),
 		[languages],
 	);
 	const timezoneOptions = useMemo(
-		() =>
-			timezones.length > 0
-				? timezones.map((item) => item.timezone ?? "").filter(Boolean)
-				: fallbackTimezones,
+		() => timezones.length > 0
+			? timezones
+				.filter((item) => item.timezone)
+				.map((item) => ({
+					value: String(item.externalId ?? item.id ?? item.timezone),
+					label: item.timezone ?? "",
+				}))
+			: fallbackTimezones.map((timezone) => ({ value: timezone, label: timezone })),
 		[timezones],
 	);
 	const titleId = useId();
@@ -163,10 +172,29 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 	useEffect(() => {
 		setValues((current) => ({
 			...current,
-			language: current.language || languageOptions[0] || "",
-			timezone: current.timezone || timezoneOptions[0] || "",
+			language:
+				languageOptions.find((option) => option.value === current.language || option.label === current.language)?.value ??
+				languageOptions[0]?.value ??
+				"",
+			timezone:
+				timezoneOptions.find((option) => option.value === current.timezone || option.label === current.timezone)?.value ??
+				timezoneOptions[0]?.value ??
+				"",
 		}));
 	}, [languageOptions, timezoneOptions]);
+
+	useEffect(() => {
+		if (!client || ownersLoading) return;
+		const selectedOwner = owners.find(
+			(owner) =>
+				String(owner.externalId ?? owner.id ?? "") === client.owner_name ||
+				owner.ownerName === client.owner_name,
+		);
+		const ownerId = selectedOwner ? String(selectedOwner.externalId ?? selectedOwner.id ?? "") : client.owner_name;
+		setValues((current) =>
+			current.owner_name === ownerId ? current : { ...current, owner_name: ownerId },
+		);
+	}, [client, owners, ownersLoading]);
 
 	const inputClass = `h-[37px] w-full rounded-lg border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
@@ -223,11 +251,11 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!values.ownerName) {
+		if (!values.owner_name) {
 			setFormError("Owner Name is required.");
 			return;
 		}
-		if (!usernamePattern.test(values.username.trim())) {
+		if (!usernamePattern.test(values.userName.trim())) {
 			setFormError("Username can only contain A-z, 0-9, _, -, *, and @.");
 			return;
 		}
@@ -244,12 +272,12 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 		try {
 			if (client) {
 				// Leave the password unchanged when the field is left blank while editing.
-				const { password, ...rest } = body;
+				const { password, confirmPassword, ...rest } = body;
 				await updateClient({ externalId: client.externalId, body: password ? body : rest }).unwrap();
-				toast.success(`${body.username} updated.`);
+				toast.success(`${body.userName} updated.`);
 			} else {
 				await createClient(body).unwrap();
-				toast.success(`${body.username} added.`);
+				toast.success(`${body.userName} added.`);
 			}
 			onClose();
 		} catch (error) {
@@ -302,14 +330,17 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 							"Owner Name",
 							<select
 								required
-								value={values.ownerName}
-								onChange={(event) => update("ownerName", event.target.value)}
+								value={values.owner_name}
+								onChange={(event) => update("owner_name", event.target.value)}
 								className={inputClass}
 								disabled={ownersLoading}
 							>
 								<option value="">{ownersLoading ? "Loading owners…" : "Select Owner Name"}</option>
 								{owners.map((owner) => (
-									<option key={owner.id ?? owner.ownerName} value={owner.ownerName ?? ""}>
+									<option
+										key={owner.externalId ?? owner.id ?? owner.ownerName}
+										value={String(owner.externalId ?? owner.id ?? "")}
+									>
 										{owner.ownerName}
 									</option>
 								))}
@@ -319,7 +350,7 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 						)}
 						{field(
 							"Username",
-							<input required value={values.username} placeholder="Username" pattern="[A-Za-z0-9_.*@\-]+" onChange={(event) => update("username", event.target.value)} className={inputClass} />,
+							<input required value={values.userName} placeholder="Username" pattern="[A-Za-z0-9_.*@\-]+" onChange={(event) => update("userName", event.target.value)} className={inputClass} />,
 							"Only contains [ A-z, 0-9, _, -, *, @ ]",
 							true,
 						)}
@@ -345,7 +376,7 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 							undefined,
 							!isEdit,
 						)}
-						{field("Company Name", <input required value={values.company} placeholder="Company Name" onChange={(event) => update("company", event.target.value)} className={inputClass} />, undefined, true)}
+						{field("Company Name", <input required value={values.companyName} placeholder="Company Name" onChange={(event) => update("companyName", event.target.value)} className={inputClass} />, undefined, true)}
 						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, undefined, false, true)}
 						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, undefined, false, true)}
 						{field("Phone", <input type="tel" value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, undefined, false, true)}
@@ -360,8 +391,8 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 								disabled={languagesLoading}
 							>
 								{languageOptions.map((language) => (
-									<option key={language} value={language}>
-										{language}
+									<option key={language.value} value={language.value}>
+										{language.label}
 									</option>
 								))}
 							</select>,
@@ -380,8 +411,8 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 								disabled={timezonesLoading}
 							>
 								{timezoneOptions.map((timezone) => (
-									<option key={timezone} value={timezone}>
-										{timezone}
+									<option key={timezone.value} value={timezone.value}>
+										{timezone.label}
 									</option>
 								))}
 							</select>,

@@ -1,15 +1,21 @@
 import { useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Plus, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Pencil, Plus, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGetClientMasterQuery } from "@/store/services/api/Master";
+import { useCreateInventoryMutation, useDeleteInventoryMutation, useGetInventoryQuery, useUpdateInventoryMutation } from "@/store/services/api/Inventory";
+import type { CreateInventoryRequest, Inventory } from "@/interfaces/Inventory";
+import { DEVICE_TYPE_ID, DEVICE_TYPE_LABEL } from "@/interfaces/AddDeviceFields";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type InventoryRecord = InventoryFormValues & {
-	id: number;
-	client: string;
+	id: string | number;
+	externalId?: string;
+	clientId?: string;
+	deviceTypeId?: string;
 	technician: string;
 	inventoryStatus: string;
 	transferBy: string;
@@ -75,7 +81,11 @@ const columns: { key: ColumnKey; label: string }[] = [
 const statusOptions = ["All", "In Stock", "Used"];
 const demoHeaders = ["Inventory Type", "Imei", "Sim", "Operator", "Secondary Sim Number", "Secondary Sim Operator", "Device Type", "Client", "Technician", "Inventory Status", "Password", "Status", "Wire+", "Assigned", "Added"] as const;
 
-const textValue = (value: string) => (value.trim() ? value : "—");
+const textValue = (value: unknown) => {
+	if (typeof value === "string") return value.trim() ? value : "—";
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return "—";
+};
 
 const currentMonth = () => {
 	const now = new Date();
@@ -93,12 +103,16 @@ const sheetValue = (row: Record<string, unknown>, header: string) => String(row[
 export default function DeviceInventory() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const clients = clientMaster.map((client) => client.name);
+	const { data: inventoryData = [], isLoading, isError, refetch } = useGetInventoryQuery();
+	const [createInventory, { isLoading: isSavingInventory }] = useCreateInventoryMutation();
+	const [updateInventory, { isLoading: isUpdatingInventory }] = useUpdateInventoryMutation();
+	const [deleteInventory, { isLoading: isDeletingInventory }] = useDeleteInventoryMutation();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const fileRef = useRef<HTMLInputElement>(null);
 	const [tab, setTab] = useState<"Details" | "Summary">("Details");
-	const [rows, setRows] = useState<InventoryRecord[]>([]);
+	const [uploadedRows, setUploadedRows] = useState<InventoryRecord[]>([]);
 	const [search, setSearch] = useState("");
 	const [summarySearch, setSummarySearch] = useState("");
 	const [clientFilter, setClientFilter] = useState("");
@@ -109,7 +123,46 @@ export default function DeviceInventory() {
 	const [summaryPage, setSummaryPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editingInventory, setEditingInventory] = useState<InventoryRecord | null>(null);
 	const [uploadError, setUploadError] = useState("");
+	const [inventoryError, setInventoryError] = useState("");
+
+	const apiRows = useMemo<InventoryRecord[]>(() => inventoryData.map((item: Inventory) => {
+		const addedDate = item.createdAt ? new Date(item.createdAt) : null;
+		const added = addedDate && !Number.isNaN(addedDate.getTime())
+			? `${addedDate.getFullYear()}-${String(addedDate.getMonth() + 1).padStart(2, "0")}`
+			: "";
+		return {
+			...item,
+			id: item.id ?? item.externalId,
+			externalId: item.externalId,
+			inventoryType: item.inventoryType,
+			imei: item.imei,
+			sim: item.simNumber,
+			operator: item.simOperator,
+			secondarySim: item.secondarySimNumber,
+			secondarySimOperator: item.secondarySimOperator,
+			deviceType: item.deviceType === DEVICE_TYPE_ID ? DEVICE_TYPE_LABEL : item.deviceType,
+			assignType: item.assignType,
+			client: clientMaster.find((client) => client.id === item.client)?.name ?? item.client,
+			clientId: item.client,
+			deviceTypeId: item.deviceType,
+			password: item.password,
+			active: item.status === "active",
+			ignitionWire: item.ignitionWireConnected,
+			airConditionWire: item.airConditionWireConnected,
+			analogSensor: item.analogSensor,
+			technician: "",
+			inventoryStatus: item.assignType ? "Used" : "In Stock",
+			transferBy: "",
+			transferTime: "",
+			added,
+			packet: "",
+			prt: "",
+			transfer: "",
+		};
+	}), [clientMaster, inventoryData]);
+	const rows = useMemo(() => [...apiRows, ...uploadedRows], [apiRows, uploadedRows]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -147,28 +200,42 @@ export default function DeviceInventory() {
 	const assignedToSelf = rows.filter((row) => row.assignType === "Self").length;
 	const assignedToTechnician = rows.filter((row) => row.assignType === "Technician").length;
 
-	const nextId = (current: InventoryRecord[]) => current.reduce((max, row) => Math.max(max, row.id), 0) + 1;
+	const nextId = (current: InventoryRecord[]) =>
+		current.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
 
-	const saveInventory = (values: InventoryFormValues) => {
-		setRows((current) => [
-			...current,
-			{
-				...values,
-				id: nextId(current),
-				client: "",
-				technician: "",
-				inventoryStatus: "In Stock",
-				transferBy: "",
-				transferTime: "",
-				added: currentMonth(),
-				packet: "",
-				prt: "",
-				transfer: "",
-			},
-		]);
-		setSearch("");
-		setPage(0);
-		setShowAddDialog(false);
+	const saveInventory = async (values: InventoryFormValues) => {
+		const body: CreateInventoryRequest = {
+			inventoryType: values.inventoryType,
+			imei: values.imei.trim(),
+			simNumber: values.sim.trim(),
+			simOperator: values.operator,
+			secondarySimNumber: values.secondarySim.trim(),
+			secondarySimOperator: values.secondarySimOperator,
+			deviceType: values.deviceType,
+			assignType: values.assignType,
+			client: values.client,
+			password: values.password,
+			ignitionWireConnected: values.ignitionWire,
+			airConditionWireConnected: values.airConditionWire,
+			analogSensor: values.analogSensor,
+			status: values.active ? "active" : "inactive",
+			reason: "New inventory registration",
+		};
+		try {
+			if (editingInventory?.externalId) {
+				await updateInventory({ externalId: editingInventory.externalId, body }).unwrap();
+			} else {
+				await createInventory(body).unwrap();
+			}
+			setInventoryError("");
+			setSearch("");
+			setPage(0);
+			setShowAddDialog(false);
+			setEditingInventory(null);
+		} catch (error) {
+			setInventoryError(apiErrorMessage(error, "Could not save inventory. Please try again."));
+			throw error;
+		}
 	};
 
 	const downloadDemo = () => {
@@ -226,7 +293,7 @@ export default function DeviceInventory() {
 				setUploadError("The file has no inventory rows.");
 				return;
 			}
-			setRows((current) => {
+			setUploadedRows((current) => {
 				let id = nextId(current);
 				return [
 					...current,
@@ -376,6 +443,13 @@ export default function DeviceInventory() {
 								</div>
 							</div>
 							{uploadError && <p role="alert" className={`mx-4 mt-3 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{uploadError}</p>}
+							{inventoryError && <p role="alert" className={`mx-4 mt-3 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{inventoryError}</p>}
+							{isError && (
+								<p role="alert" className={`mx-4 mt-3 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+									Could not load inventory.
+									<button type="button" onClick={() => void refetch()} className="ml-2 underline">Retry</button>
+								</p>
+							)}
 							<div className="overflow-x-auto">
 								<table className="w-full min-w-[1800px] border-collapse text-left">
 									<thead>
@@ -389,13 +463,44 @@ export default function DeviceInventory() {
 											<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 												{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row)}</td>)}
 												<td className="px-3 py-3">
-													<button type="button" aria-label={`Delete ${row.imei || row.inventoryType || "inventory"}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+													{row.externalId && (
+														<button
+															type="button"
+															aria-label={`Edit ${row.imei || row.inventoryType || "inventory"}`}
+															onClick={() => {
+																setEditingInventory(row);
+																setShowAddDialog(true);
+															}}
+															className={`mr-1 flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+														>
+															<Pencil className="h-3.5 w-3.5" />
+														</button>
+													)}
+													<button
+														type="button"
+														disabled={isDeletingInventory}
+														aria-label={`Delete ${row.imei || row.inventoryType || "inventory"}`}
+														onClick={() => {
+															if (!row.externalId) {
+																setUploadedRows((current) => current.filter((item) => item.id !== row.id));
+																return;
+															}
+															void deleteInventory(row.externalId)
+																.unwrap()
+																.then(() => setInventoryError(""))
+																.catch((error: unknown) => setInventoryError(apiErrorMessage(error, "Could not delete inventory.")));
+														}}
+														className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+													>
 														<Trash2 className="h-3.5 w-3.5" />
 													</button>
 												</td>
 											</tr>
 										))}
-										{pageRows.length === 0 && (
+										{isLoading && (
+											<tr><td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center text-xs text-slate-500">Loading inventory...</td></tr>
+										)}
+										{!isLoading && pageRows.length === 0 && (
 											<tr>
 												<td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center">
 													<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No inventory available</p>
@@ -475,7 +580,19 @@ export default function DeviceInventory() {
 				)}
 			</main>
 
-			{showAddDialog && <AddInventory onClose={() => setShowAddDialog(false)} onSubmit={saveInventory} />}
+			{showAddDialog && (
+				<AddInventory
+					key={editingInventory?.externalId ?? "new-inventory"}
+					onClose={() => { setShowAddDialog(false); setEditingInventory(null); }}
+					onSubmit={saveInventory}
+					isSaving={isSavingInventory || isUpdatingInventory}
+					initialValues={editingInventory ? {
+						...editingInventory,
+						client: editingInventory.clientId ?? editingInventory.client,
+						deviceType: editingInventory.deviceTypeId ?? editingInventory.deviceType,
+					} : undefined}
+				/>
+			)}
 		</div>
 	);
 }

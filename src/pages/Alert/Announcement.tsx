@@ -1,7 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ArrowUpDown, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
+import JoditEditor from "jodit-react";
+import "jodit/es2021/jodit.min.css";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
@@ -23,9 +25,23 @@ import {
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useCreateAnnouncementMutation,
+	useDeleteAnnouncementMutation,
+	useGetAnnouncementsQuery,
+} from "@/store/services/api/Announcement";
+import { Status } from "@/enums/Status";
+import type {
+	Announcement as AnnouncementRecord,
+	AnnouncementAudience,
+	AnnouncementMessageType,
+	AnnouncementValidity,
+} from "@/interfaces/Announcement";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type AnnouncementRow = {
-	id: number;
+	id: string;
 	allocatedTo: string;
 	clientList: string;
 	transporterList: string;
@@ -53,37 +69,128 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "added", label: "Added" },
 ];
 
-const audiences = ["All", "Client", "Transporter"];
-const validityOptions = ["1 Hour", "6 Hours", "12 Hours", "24 Hours", "7 Days", "30 Days"];
-const messageTypes = ["Information", "Warning", "Alert", "Update"];
+const audiences: { value: AnnouncementAudience; label: string }[] = [
+	{ value: "all", label: "All" },
+	{ value: "client", label: "Client" },
+	{ value: "transporter", label: "Transporter" },
+];
+const audienceLabels = new Map(audiences.map((audience) => [audience.value, audience.label]));
+const validityOptions: { value: AnnouncementValidity; label: string }[] = [
+	{ value: "hours", label: "HOURS" },
+	{ value: "days", label: "DAYS" },
+];
+const messageTypes: AnnouncementMessageType[] = ["TEXT", "IMAGE"];
 
-const emptyForm = {
+type AnnouncementForm = {
+	announcement: string;
+	client: string;
+	transporter: string;
+	validity: string;
+	duration: string;
+	messageType: string;
+	messageTitle: string;
+	messageBody: string;
+	messageImage: File | null;
+	active: boolean;
+	dontShowAgain: boolean;
+	profileUpdate: boolean;
+};
+
+const emptyForm: AnnouncementForm = {
 	announcement: "",
+	client: "",
+	transporter: "",
 	validity: "",
+	duration: "",
+	messageTitle: "",
 	messageType: "",
-	active: false,
+	messageBody: "",
+	messageImage: null,
+	active: true,
 	dontShowAgain: false,
 	profileUpdate: false,
 };
 
-const todayLabel = () => {
-	const now = new Date();
-	const day = String(now.getDate()).padStart(2, "0");
-	const month = String(now.getMonth() + 1).padStart(2, "0");
-	return `${day}/${month}/${now.getFullYear()}`;
+const dateLabel = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
+
+/** Pre-fills the form from a saved announcement so it can be recreated; an image has to be picked again. */
+const formFromRecord = (record: AnnouncementRecord): AnnouncementForm => ({
+	announcement: record.announcement ?? "",
+	client: record.client ?? "",
+	transporter: record.transporter ?? "",
+	validity: record.validityTime ?? "",
+	duration: record.validityDuration === undefined || record.validityDuration === null ? "" : String(record.validityDuration),
+	messageType: record.messageType ?? "",
+	messageTitle: record.title ?? "",
+	messageBody: record.body ?? "",
+	messageImage: null,
+	active: true,
+	dontShowAgain: Boolean(record.requestForDontShowAgainOption),
+	profileUpdate: Boolean(record.requestForProfileUpdate),
+});
 
 export default function Announcement() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<AnnouncementRow[]>([]);
+	const editorConfig = useMemo(() => ({
+		buttons: ["bold", "italic", "underline", "|", "ul", "ol", "|", "fontsize"],
+		height: 112,
+		minHeight: 112,
+		placeholder: "Type here...",
+		showXPathInStatusbar: false,
+		statusbar: false,
+		theme: isDark ? "dark" : "default",
+		toolbarAdaptive: false,
+	}), [isDark]);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	const { data: announcements = [], isFetching, refetch } = useGetAnnouncementsQuery();
+	const [createAnnouncement, { isLoading: isSaving }] = useCreateAnnouncementMutation();
+	const [deleteAnnouncement] = useDeleteAnnouncementMutation();
+	const rows = useMemo<AnnouncementRow[]>(() => {
+		const clientNames = new Map(clients.map((client) => [client.id, client.name]));
+		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
+		return announcements.map((record) => ({
+			id: record.externalId,
+			allocatedTo: audienceLabels.get(record.announcement) ?? record.announcement ?? "",
+			clientList: record.client ? clientNames.get(record.client) ?? record.client : record.announcement === "all" ? "All clients" : "—",
+			transporterList: record.transporter
+				? transporterNames.get(record.transporter) ?? record.transporter
+				: record.announcement === "all" ? "All transporters" : "—",
+			messageType: record.messageType ?? "",
+			messageTitle: record.title ?? "",
+			status: record.status === Status.ACTIVE ? "Active" : "Inactive",
+			validFor: record.validityTime && record.validityDuration ? `${record.validityDuration} ${record.validityTime}` : "",
+			validityHours: record.validityTime === "hours" ? String(record.validityDuration ?? "") : "—",
+			validityDays: record.validityTime === "days" ? String(record.validityDuration ?? "") : "—",
+			added: dateLabel(record.createdAt),
+		}));
+	}, [announcements, clients, transporters]);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(0);
 	const [sortKey, setSortKey] = useState<ColumnKey>("allocatedTo");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [formOpen, setFormOpen] = useState(false);
-	const [form, setForm] = useState(emptyForm);
+	const [previewOpen, setPreviewOpen] = useState(false);
+	const [editorResetKey, setEditorResetKey] = useState(0);
+	const [form, setForm] = useState<AnnouncementForm>(emptyForm);
+	const [previewImageUrl, setPreviewImageUrl] = useState("");
+
+	useEffect(() => {
+		if (!previewOpen || !form.messageImage) {
+			setPreviewImageUrl("");
+			return;
+		}
+		const imageUrl = URL.createObjectURL(form.messageImage);
+		setPreviewImageUrl(imageUrl);
+		return () => URL.revokeObjectURL(imageUrl);
+	}, [previewOpen, form.messageImage]);
 
 	const pageSize = 10;
 	const filteredRows = useMemo(() => {
@@ -105,44 +212,101 @@ export default function Announcement() {
 		}
 	};
 
-	const buildRow = (source: typeof emptyForm, id = Date.now()): AnnouncementRow => {
-		const hourMatch = source.validity.match(/(\d+)\s*Hour/i);
-		const dayMatch = source.validity.match(/(\d+)\s*Day/i);
-		return {
-			id,
-			allocatedTo: source.announcement,
-			clientList: source.announcement === "Client" || source.announcement === "All" ? "All clients" : "—",
-			transporterList: source.announcement === "Transporter" || source.announcement === "All" ? "All transporters" : "—",
-			messageType: source.messageType,
-			messageTitle: source.profileUpdate ? "Profile Update" : source.dontShowAgain ? "Don't Show Again" : source.messageType,
-			status: source.active ? "Active" : "Inactive",
-			validFor: source.validity,
-			validityHours: hourMatch?.[1] ?? "—",
-			validityDays: dayMatch?.[1] ?? "—",
-			added: todayLabel(),
-		};
-	};
-
-	const saveAnnouncement = () => {
-		if (!form.announcement || !form.validity || !form.messageType) {
-			toast.error("Please select Announcement, Validity Time, and Message Type.");
+	const saveAnnouncement = async () => {
+		if (
+			!form.announcement ||
+			((form.announcement === "client" || form.announcement === "transporter") && !form.client) ||
+			(form.announcement === "transporter" && !form.transporter) ||
+			!form.validity ||
+			!Number.isInteger(Number(form.duration)) ||
+			Number(form.duration) < 1 ||
+			!form.messageType
+		) {
+			toast.error("Please complete the announcement audience, validity, duration, and message type.");
 			return;
 		}
-		setRows((current) => [buildRow(form), ...current]);
-		setForm(emptyForm);
-		setFormOpen(false);
-		setPage(0);
-		toast.success("Announcement saved.");
+		if (form.messageType === "IMAGE" && !form.messageImage) {
+			toast.error("Please choose a message image.");
+			return;
+		}
+		if (isSaving) return;
+		try {
+			const usesClient = form.announcement === "client" || form.announcement === "transporter";
+			await createAnnouncement({
+				announcement: form.announcement as AnnouncementAudience,
+				client: usesClient ? form.client : undefined,
+				transporter: form.announcement === "transporter" ? form.transporter : undefined,
+				validityTime: form.validity as AnnouncementValidity,
+				validityDuration: Number(form.duration),
+				messageType: form.messageType as AnnouncementMessageType,
+				title: form.messageTitle.trim() || undefined,
+				body: form.messageType === "TEXT" ? form.messageBody || undefined : undefined,
+				messageImage: form.messageType === "IMAGE" ? form.messageImage ?? undefined : undefined,
+				requestForDontShowAgainOption: form.dontShowAgain,
+				requestForProfileUpdate: form.profileUpdate,
+				status: form.active ? Status.ACTIVE : Status.INACTIVE,
+				reason: "New announcement created",
+			}).unwrap();
+			setForm({ ...emptyForm });
+			setFormOpen(false);
+			setPage(0);
+			toast.success("Announcement saved.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not save the announcement."));
+		}
 	};
 
-	const field = (id: string, label: string, control: ReactNode) => (
+	const recreateAnnouncement = (externalId: string) => {
+		const record = announcements.find((item) => item.externalId === externalId);
+		if (!record) return;
+		setForm(formFromRecord(record));
+		setEditorResetKey((current) => current + 1);
+		setFormOpen(true);
+	};
+
+	const removeAnnouncement = async (externalId: string) => {
+		try {
+			await deleteAnnouncement(externalId).unwrap();
+			toast.success("Announcement deleted.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not delete the announcement."));
+		}
+	};
+
+	const field = (id: string, label: string, control: ReactNode, required = true) => (
 		<div>
 			<label htmlFor={id} className={labelClass(isDark)}>
-				{label} <span className="text-rose-400">*</span>
+				{label} {required && <span className="text-rose-400">*</span>}
 			</label>
 			{control}
 		</div>
 	);
+
+	const updateAnnouncement = (announcement: string) => {
+		setForm((current) => ({
+			...current,
+			announcement,
+			client: "",
+			transporter: "",
+			validity: "",
+			duration: "",
+			messageType: "",
+			messageTitle: "",
+			messageBody: "",
+			messageImage: null,
+		}));
+	};
+
+	const updateMessageType = (messageType: string) => {
+		setForm((current) => ({
+			...current,
+			messageType,
+			messageBody: "",
+			messageImage: null,
+			messageTitle: "",
+		}));
+		setEditorResetKey((current) => current + 1);
+	};
 
 	const statusBadge = (status: string) => (
 		<span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
@@ -171,8 +335,8 @@ export default function Announcement() {
 							<span className={`rounded-full border px-2.5 py-1 text-[10px] ${isDark ? "border-white/[0.08] bg-white/[0.04] text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>{rows.length} records</span>
 						</div>
 					</div>
-					<button type="button" onClick={() => window.location.reload()} aria-label="Refresh announcements" className={refreshButtonClass(isDark)}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} aria-label="Refresh announcements" className={refreshButtonClass(isDark)}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -189,7 +353,7 @@ export default function Announcement() {
 								className={searchInputClass(isDark)}
 							/>
 						</label>
-						<button type="button" onClick={() => { setForm(emptyForm); setFormOpen(true); }} className={primaryButtonClass(isDark)}>
+						<button type="button" onClick={() => { setForm({ ...emptyForm }); setEditorResetKey((current) => current + 1); setFormOpen(true); }} className={primaryButtonClass(isDark)}>
 							<Plus className="h-3.5 w-3.5" /> Add Announcement
 						</button>
 					</div>
@@ -214,7 +378,6 @@ export default function Announcement() {
 									<EmptyTableRow
 										isDark={isDark}
 										colSpan={columns.length + 1}
-										title={rows.length === 0 ? "No announcements yet" : "No announcements match your search"}
 										hint={rows.length === 0 ? "Click “Add Announcement” to create one." : undefined}
 									/>
 								) : (
@@ -229,14 +392,14 @@ export default function Announcement() {
 												<div className="flex items-center justify-center gap-2">
 													<button
 														type="button"
-														onClick={() => setRows((current) => [{ ...row, id: Date.now(), added: todayLabel() }, ...current])}
+														onClick={() => recreateAnnouncement(row.id)}
 														className={rowActionClass(isDark, "cyan")}
 													>
 														Recreate
 													</button>
 													<button
 														type="button"
-														onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}
+														onClick={() => removeAnnouncement(row.id)}
 														className={rowActionClass(isDark, "rose")}
 													>
 														Delete
@@ -260,33 +423,100 @@ export default function Announcement() {
 					title="Add Announcement"
 					onClose={() => setFormOpen(false)}
 					onSubmit={saveAnnouncement}
+					widthClass="max-w-6xl"
 					footer={
 						<>
-							<button type="button" onClick={() => setForm(emptyForm)} className={secondaryButtonClass(isDark)}>Reset</button>
-							<button type="submit" className={primaryButtonClass(isDark)}>Save</button>
+							<button
+								type="button"
+								onClick={() => {
+									setForm({ ...emptyForm });
+									setEditorResetKey((current) => current + 1);
+									setPreviewOpen(false);
+								}}
+								className={secondaryButtonClass(isDark)}
+							>
+								Reset
+							</button>
+							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>{isSaving ? "Saving..." : "Save"}</button>
 						</>
 					}
 				>
-					<div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+					<div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
 						{field("announcement-audience", "Announcement", (
-							<select id="announcement-audience" value={form.announcement} onChange={(event) => setForm({ ...form, announcement: event.target.value })} className={inputClass(isDark)}>
+							<select id="announcement-audience" value={form.announcement} onChange={(event) => updateAnnouncement(event.target.value)} className={inputClass(isDark)}>
 								<option value="">Select</option>
-								{audiences.map((name) => <option key={name} value={name}>{name}</option>)}
+								{audiences.map((audience) => <option key={audience.value} value={audience.value}>{audience.label}</option>)}
+							</select>
+						))}
+						{(form.announcement === "client" || form.announcement === "transporter") && field("announcement-client", "Client", (
+							<select id="announcement-client" value={form.client} onChange={(event) => setForm({ ...form, client: event.target.value, transporter: "" })} className={inputClass(isDark)}>
+								<option value="">Select Client</option>
+								{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+							</select>
+						))}
+						{form.announcement === "transporter" && field("announcement-transporter", "Transporter", (
+							<select id="announcement-transporter" value={form.transporter} onChange={(event) => setForm({ ...form, transporter: event.target.value })} className={inputClass(isDark)}>
+								<option value="">Select Transporter</option>
+								{transporters.map((transporter) => <option key={transporter.id} value={transporter.id}>{transporter.name}</option>)}
 							</select>
 						))}
 						{field("announcement-validity", "Announcement Validity Time", (
-							<select id="announcement-validity" value={form.validity} onChange={(event) => setForm({ ...form, validity: event.target.value })} className={inputClass(isDark)}>
+							<select id="announcement-validity" value={form.validity} onChange={(event) => setForm({ ...form, validity: event.target.value, duration: event.target.value ? form.duration || "1" : "" })} className={inputClass(isDark)}>
 								<option value="">Select</option>
-								{validityOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+								{validityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 							</select>
 						))}
-						{field("announcement-type", "Message Type", (
-							<select id="announcement-type" value={form.messageType} onChange={(event) => setForm({ ...form, messageType: event.target.value })} className={inputClass(isDark)}>
+						{form.validity && field("announcement-duration", `Announcement For (${form.validity === "hours" ? "Hours" : "Days"})`, (
+							<input
+								id="announcement-duration"
+								type="number"
+								min="1"
+								step="1"
+								value={form.duration}
+								onChange={(event) => setForm({ ...form, duration: event.target.value })}
+								className={inputClass(isDark)}
+							/>
+						))}
+						{field("announcement-type", "MESSAGE TYPE", (
+							<select id="announcement-type" value={form.messageType} onChange={(event) => updateMessageType(event.target.value)} className={inputClass(isDark)}>
 								<option value="">Select</option>
 								{messageTypes.map((name) => <option key={name} value={name}>{name}</option>)}
 							</select>
 						))}
+						{form.messageType && field("announcement-title", "Message Title", (
+							<input
+								id="announcement-title"
+								value={form.messageTitle}
+								placeholder="Message Title"
+								onChange={(event) => setForm({ ...form, messageTitle: event.target.value })}
+								className={inputClass(isDark)}
+							/>
+						), false)}
+						{form.messageType === "IMAGE" && field("announcement-image", "Message Image", (
+							<input
+								id="announcement-image"
+								type="file"
+								accept="image/*"
+								onChange={(event) => setForm({ ...form, messageImage: event.target.files?.[0] ?? null })}
+								className={`h-10 w-full rounded-lg border px-2 py-1 text-xs ${isDark ? "border-white/[0.08] bg-[#03091c]/70 text-slate-300 file:mr-2 file:rounded-md file:border-0 file:bg-white/[0.08] file:px-2 file:py-1 file:text-xs file:text-slate-200" : "border-slate-200 bg-white text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:text-slate-700"}`}
+							/>
+						))}
 					</div>
+					{form.messageType === "TEXT" && (
+						<div className="mt-4">
+							{field("announcement-body", "Body", (
+								<div className={`overflow-hidden rounded-lg border ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}>
+									<JoditEditor
+										key={editorResetKey}
+										id="announcement-body"
+										value={form.messageBody}
+										config={editorConfig}
+										onChange={(messageBody) => setForm((current) => ({ ...current, messageBody }))}
+									/>
+								</div>
+							), false)}
+						</div>
+					)}
 					<div className="mt-6 flex flex-col items-start gap-3">
 						<label className={checkboxLabelClass(isDark)}>
 							<input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} className={checkboxClass} />
@@ -294,12 +524,40 @@ export default function Announcement() {
 						</label>
 						<label className={checkboxLabelClass(isDark)}>
 							<input type="checkbox" checked={form.dontShowAgain} onChange={(event) => setForm({ ...form, dontShowAgain: event.target.checked })} className={checkboxClass} />
-							Request For Don't Show Again Option
+							Request For Don't Show Again
 						</label>
 						<label className={checkboxLabelClass(isDark)}>
 							<input type="checkbox" checked={form.profileUpdate} onChange={(event) => setForm({ ...form, profileUpdate: event.target.checked })} className={checkboxClass} />
-							Request For Profile Update
+							Request for profile update
 						</label>
+					</div>
+					{form.messageType && (
+						<button type="button" onClick={() => setPreviewOpen(true)} className={primaryButtonClass(isDark)}>
+							Preview
+						</button>
+					)}
+				</AlertModal>
+			)}
+			{previewOpen && (
+				<AlertModal
+					isDark={isDark}
+					title="Announcement Preview"
+					onClose={() => setPreviewOpen(false)}
+					widthClass="max-w-3xl"
+				>
+					<div className={`rounded-xl border p-5 ${isDark ? "border-white/[0.08] bg-[#03091c]/50" : "border-slate-200 bg-slate-50"}`}>
+						{form.messageTitle && <h3 className="mb-3 text-lg font-semibold">{form.messageTitle}</h3>}
+						{form.messageType === "TEXT" && (
+							<p className="whitespace-pre-wrap text-sm leading-6">
+								{new DOMParser().parseFromString(form.messageBody, "text/html").body.textContent}
+							</p>
+						)}
+						{form.messageType === "IMAGE" && previewImageUrl && (
+							<img src={previewImageUrl} alt={form.messageTitle || "Announcement"} className="max-h-[60vh] max-w-medium rounded-lg object-contain" />
+						)}
+						{form.messageType === "IMAGE" && !previewImageUrl && (
+							<p className="text-sm text-slate-100">Choose an image to preview.</p>
+						)}
 					</div>
 				</AlertModal>
 			)}

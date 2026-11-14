@@ -4,8 +4,9 @@ import type { RootState } from "../../store";
 import { logout, updateTokens } from "../../slices/authSlice";
 import { startGlobalLoading, stopGlobalLoading } from "../../slices/globalLoaderSlice";
 import type { RefreshTokenResponse } from "@/interfaces";
-import { API_CONFIG } from "@/config/env";
+import { API_CONFIG, AUTH_CONFIG } from "@/config/env";
 import { toast } from "@/hooks/use-toast";
+import { unwrapResponse, type ApiEnvelope } from "./unwrapResponse";
 
 const baseQuery = fetchBaseQuery({
   baseUrl: API_CONFIG.BASE_URL,
@@ -17,6 +18,51 @@ const baseQuery = fetchBaseQuery({
     return headers;
   },
 });
+
+/**
+ * The refresh currently in flight, shared by every request that gets a 401 at the same time.
+ * Without this, a screen that loads several APIs at once (e.g. the Add Vehicle form) sends one
+ * /user/refresh per request; the backend rotates the refresh token on the first one, the rest
+ * fail with the old token, and the user is logged out.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshAccessToken(
+  refreshToken: string,
+  api: Parameters<BaseQueryFn>[1],
+  extraOptions: Parameters<BaseQueryFn>[2],
+): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      api.dispatch(startGlobalLoading());
+      try {
+        const refreshResult = await baseQuery(
+          {
+            url: "/user/refresh",
+            method: "POST",
+            body: { refreshToken },
+          },
+          api,
+          extraOptions
+        );
+        const data = unwrapResponse(refreshResult.data as ApiEnvelope<RefreshTokenResponse>);
+        const accessToken = data?.token ?? data?.accessToken;
+        if (!accessToken) return false;
+        api.dispatch(
+          updateTokens({
+            token: accessToken,
+            refreshToken: data.refreshToken,
+          })
+        );
+        return true;
+      } finally {
+        api.dispatch(stopGlobalLoading());
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
 
 export const baseQueryWithInterceptor: BaseQueryFn<
   string | FetchArgs,
@@ -32,6 +78,7 @@ export const baseQueryWithInterceptor: BaseQueryFn<
     return "Request failed. Please try again.";
   };
 
+  const tokenBeforeRequest = (api.getState() as RootState).auth?.token;
   api.dispatch(startGlobalLoading());
   let result;
   try {
@@ -43,6 +90,11 @@ export const baseQueryWithInterceptor: BaseQueryFn<
   if (result.error) {
     const { status } = result.error as { status?: number };
 
+    if (status === 401 && !AUTH_CONFIG.ENABLED) {
+      // Auth is switched off, so a 401 is just returned to the caller: no refresh, logout or redirect.
+      return result;
+    }
+
     if (status === 401) {
       const state = api.getState() as RootState;
       const refreshToken = state.auth?.refreshToken;
@@ -52,8 +104,14 @@ export const baseQueryWithInterceptor: BaseQueryFn<
           : typeof args?.url === "string"
             ? args.url
             : "";
+      const isLoginEndpoint =
+        url.includes("/user/login") || url.includes("/auth/login");
       const isAuthEndpoint =
-        url.includes("/auth/login") || url.includes("/auth/refresh");
+        isLoginEndpoint || url.includes("/user/refresh") || url.includes("/auth/refresh");
+
+      if (isLoginEndpoint) {
+        return result;
+      }
 
       if (!refreshToken || isAuthEndpoint) {
         try {
@@ -68,31 +126,14 @@ export const baseQueryWithInterceptor: BaseQueryFn<
         return result;
       }
 
-      api.dispatch(startGlobalLoading());
-      let refreshResult;
-      try {
-        refreshResult = await baseQuery(
-          {
-            url: "/auth/refresh",
-            method: "POST",
-            body: { refreshToken },
-          },
-          api,
-          extraOptions
-        );
-      } finally {
-        api.dispatch(stopGlobalLoading());
-      }
+      // Another request may already have refreshed the token while this one was in flight.
+      const tokenAfterRequest = (api.getState() as RootState).auth?.token;
+      const refreshed =
+        tokenAfterRequest && tokenAfterRequest !== tokenBeforeRequest
+          ? true
+          : await refreshAccessToken(refreshToken, api, extraOptions);
 
-      if (refreshResult.data) {
-        const data = refreshResult.data as RefreshTokenResponse;
-        api.dispatch(
-          updateTokens({
-            token: data.accessToken,
-            refreshToken: data.refreshToken,
-          })
-        );
-
+      if (refreshed) {
         api.dispatch(startGlobalLoading());
         let retryResult;
         try {

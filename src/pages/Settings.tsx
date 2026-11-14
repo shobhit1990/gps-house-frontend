@@ -20,7 +20,7 @@ import { CustomFieldsPanel } from "./settings/CustomFieldsPanel";
 import { GeneralPanel } from "./settings/GeneralPanel";
 import { ProfilePanel } from "./settings/ProfilePanel";
 import { SettingsProvider, useSettings } from "./settings/SettingsState";
-import { activeChipClass, panelCardClass, primaryButtonClass } from "./settings/ui";
+import { activeChipClass, panelCardClass } from "./settings/ui";
 import { VehicleConfigPanel } from "./settings/VehicleConfigPanel";
 
 type Section = { id: string; label: string; hint: string; icon: LucideIcon };
@@ -109,7 +109,15 @@ function SettingsWorkspace() {
             <span className={`text-xs ${dirty ? "text-amber-300" : isDark ? "text-slate-400" : "text-slate-500"}`}>
               {dirty ? "Unsaved changes" : "All changes saved"}
             </span>
-            <button type="button" onClick={save} className={primaryButtonClass}>
+            <button
+              type="button"
+              onClick={save}
+              className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-4 text-xs font-semibold transition ${
+                isDark
+                  ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
+                  : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+              }`}
+            >
               Save
             </button>
           </div>

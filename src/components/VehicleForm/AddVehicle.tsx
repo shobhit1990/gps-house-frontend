@@ -2,7 +2,7 @@ import { useState, type ChangeEvent, type ReactNode } from "react";
 import { Minus, Plus } from "lucide-react";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addVehicleFields } from "@/interfaces/AddVehicleFields";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type AddVehicleProps = {
 	isDark: boolean;
@@ -27,9 +27,15 @@ export const vehicleDetailDefaults = {
 export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 	const [detailOpen, setDetailOpen] = useState(false);
 	const { data: clients = [] } = useGetClientMasterQuery();
+	const {
+		data: devices = [],
+		isLoading: devicesLoading,
+		isError: devicesError,
+	} = useGetDeviceMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const masterOptions: Record<string, { id: string; name: string }[]> = {
 		vehicleClient: clients,
+		vehicleDevice: devices,
 		vehicleTransporter: transporters,
 	};
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
@@ -70,12 +76,13 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 						<select
 							value={value}
 							required={field.required}
+							disabled={field.name === "vehicleDevice" && devicesLoading}
 							onChange={(event) => onChange(field.name, event.target.value)}
 							className={`${inputClass} appearance-none pr-9`}
 						>
 							{field.options?.map((option, index) => (
 								<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
-									{option}
+									{field.optionLabels?.[option] ?? option}
 								</option>
 							))}
 							{masterOptions[field.name]?.map((option) => (
@@ -93,6 +100,11 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 						onChange={(event) => onChange(field.name, event.target.value)}
 						className={inputClass}
 					/>
+				)}
+				{field.name === "vehicleDevice" && devicesError && (
+					<span role="alert" className="mt-1 block text-[11px] text-rose-500">
+						Could not load devices.
+					</span>
 				)}
 				{field.helper && (
 					<span className={`mt-1 block text-[11px] font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>

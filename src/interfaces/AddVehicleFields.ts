@@ -1,3 +1,17 @@
+import { VehicleType } from "@/enums/VehicleType";
+
+/** Display names for the vehicle types the backend accepts. */
+const vehicleTypeLabels: Record<string, string> = {
+	[VehicleType.JEEP]: "Jeep",
+	[VehicleType.TRACTOR]: "Tractor",
+	[VehicleType.TRUCK]: "Truck",
+	[VehicleType.TAXI]: "Taxi",
+	[VehicleType.BIKE]: "Bike",
+	[VehicleType.SCHOOLBUS]: "School Bus",
+	[VehicleType.PUBLICBUS]: "Public Bus",
+	[VehicleType.TANKER]: "Tanker",
+};
+
 export type VehicleFieldConfig = {
 	name: string;
 	label: string;
@@ -18,12 +32,12 @@ export type VehicleFieldConfig = {
 export const addVehicleFields: VehicleFieldConfig[] = [
 	{ name: "vehicleNo", label: "Vehicle", placeholder: "Vehicle Number", required: true, helper: "Only contains [a-z, A-Z, 0-9, _, -, ,]" },
 	{ name: "mileage", label: "Mileage", type: "number", required: true },
-	{ name: "vehicleType", label: "Vehicle Type", type: "select", required: true, options: ["Select Vehicle Type", "Personal Car", "Bike", "Taxi", "Pickup", "Truck", "Bus"] },
+	{ name: "vehicleType", label: "Vehicle Type", type: "select", required: true, options: ["Select Vehicle Type", ...Object.values(VehicleType)], optionLabels: vehicleTypeLabels },
 	{ name: "overspeed", label: "Overspeed", type: "number", required: true },
 	{ name: "idleTimeHour", label: "Idle Time (Hour)", type: "select", options: ["Select Hour", ...Array.from({ length: 24 }, (_, hour) => String(hour))] },
-	{ name: "idleTimeMinute", label: "Idle Time (Minute)", type: "select", options: ["Select Minute", ...Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, "0"))] },
+	{ name: "idleTimeMinute", label: "Idle Time (Minute)", type: "select", options: ["Select Minute", ...Array.from({ length: 60 }, (_, minute) => String(minute + 1))] },
 	{ name: "vehicleClient", label: "Client", type: "select", required: true, options: ["Select Client"] },
-	{ name: "vehicleDevice", label: "Device", type: "select", required: true, options: ["Select Device", "Concox (8505)"] },
+	{ name: "vehicleDevice", label: "Device", type: "select", required: true, options: ["Select Device"] },
 	{ name: "vehicleTransporter", label: "Transporter", type: "select", required: true, options: ["Select Transporter"] },
 	{ name: "subscriptionStart", label: "Subscription Start Date", type: "date", required: true },
 	{ name: "subscriptionDue", label: "Subscription Due Date", type: "date", required: true },

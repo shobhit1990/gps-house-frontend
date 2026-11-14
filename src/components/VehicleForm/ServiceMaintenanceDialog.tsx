@@ -3,7 +3,7 @@ import { useTheme } from "next-themes";
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 
 export type ServiceRecord = {
-	id: number;
+	id: string;
 	vehicleNo: string;
 	serviceName: string;
 	odometerInterval: string;

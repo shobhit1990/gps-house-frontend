@@ -2,9 +2,23 @@ import { useState } from "react";
 import { Download, Upload } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
-import { exchangeTargets, landingOptions, type LandingPage } from "./model";
+import type { LandingPage } from "@/interfaces/Settings";
 import { useSettings } from "./SettingsState";
 import { Field, PanelIntro, PillTabs, primaryButtonClass, quietButtonClass, SelectInput, ToggleRow } from "./ui";
+
+const landingOptions: { value: LandingPage; label: string }[] = [
+  { value: "vehicles", label: "Vehicle list" },
+  { value: "dashboard", label: "Dashboard" },
+  { value: "devices", label: "Devices" },
+  { value: "transporters", label: "Transporter" },
+];
+
+const exchangeTargets = [
+  { id: "vehicle", label: "Vehicle", hint: "Vehicle master file" },
+  { id: "poi", label: "POI", hint: "Points of interest" },
+  { id: "payment", label: "Payment detail", hint: "Payment records" },
+  { id: "billing", label: "Billing detail", hint: "Billing records" },
+] as const;
 
 type ExchangeTarget = (typeof exchangeTargets)[number]["id"];
 

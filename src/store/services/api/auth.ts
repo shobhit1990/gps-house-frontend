@@ -1,8 +1,6 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { baseQueryWithInterceptor } from "../utils/baseQuery";
 import {
-  LoginRequest,
-  LoginResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
 } from "@/interfaces";
@@ -12,18 +10,9 @@ export const authApi = createApi({
   baseQuery: baseQueryWithInterceptor,
   tagTypes: ["Auth"],
   endpoints: (builder) => ({
-    login: builder.mutation<LoginResponse, LoginRequest>({
-      query: (credentials) => ({
-        url: "/auth/login",
-        method: "POST",
-        body: credentials,
-      }),
-      invalidatesTags: ["Auth"],
-    }),
-
     refreshToken: builder.mutation<RefreshTokenResponse, RefreshTokenRequest>({
       query: (data) => ({
-        url: "/auth/refresh",
+        url: "/user/refresh",
         method: "POST",
         body: data,
       }),
@@ -32,4 +21,4 @@ export const authApi = createApi({
   }),
 });
 
-export const { useLoginMutation, useRefreshTokenMutation } = authApi;
+export const { useRefreshTokenMutation } = authApi;

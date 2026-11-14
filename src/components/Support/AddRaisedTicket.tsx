@@ -1,19 +1,26 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
+import { toast } from "sonner";
+import { Status } from "@/enums/Status";
+import { ticketTypes } from "@/interfaces/RaiseTicket";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useCreateRaiseTicketMutation } from "@/store/services/api/RaiseTicket";
 
 type AddRaisedTicketProps = {
   isDark: boolean;
   onClose: () => void;
-  onSubmit: () => void;
+  onSaved: () => void;
 };
 
-const ticketTypes = ["Bug", "Feature Request", "General Inquiry", "Service Request"];
-
-export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketProps) {
+export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketProps) {
   const { data: clients = [], isLoading: clientsLoading, isError: clientsError } = useGetClientMasterQuery();
   const { data: transporters = [], isLoading: transportersLoading, isError: transportersError } = useGetTransporterMasterQuery();
   const { data: vehicles = [], isLoading: vehiclesLoading, isError: vehiclesError } = useGetVehicleMasterQuery();
+  const [createTicket, { isLoading: isSaving }] = useCreateRaiseTicketMutation();
+  const [client, setClient] = useState("");
+  const [transporter, setTransporter] = useState("");
+  const [vehicle, setVehicle] = useState("");
   const [ticketType, setTicketType] = useState("");
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState("");
@@ -26,13 +33,28 @@ export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketPr
 
   const labelClass = `mb-1.5 block text-sm font-medium ${isDark ? "text-slate-200" : "text-slate-700"}`;
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (isSaving) return;
     if (!ticketType || !description.trim()) {
       setFormError("Select a ticket type and describe the issue.");
       return;
     }
-    onSubmit();
+    try {
+      await createTicket({
+        client: client || undefined,
+        transporter: transporter || undefined,
+        vehicle: vehicle || undefined,
+        ticketType,
+        description: description.trim(),
+        status: Status.ACTIVE,
+        reason: "New ticket raised",
+      }).unwrap();
+      toast.success("Ticket raised.");
+      onSaved();
+    } catch (error) {
+      setFormError(apiErrorMessage(error, "Could not raise the ticket. Please try again."));
+    }
   };
 
   const closeOnEscape = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -74,7 +96,7 @@ export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketPr
         <div className="grid gap-x-6 gap-y-5 px-5 py-6 sm:grid-cols-2 sm:px-7 lg:grid-cols-4">
           <label>
             <span className={labelClass}>Client <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} defaultValue="">
+            <select className={inputClass} value={client} onChange={(event) => setClient(event.target.value)}>
               <option value="">Select Client</option>
               {clientsLoading ? <option disabled>Loading clients...</option> : null}
               {clientsError ? <option disabled>Could not load clients</option> : null}
@@ -88,7 +110,7 @@ export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketPr
 
           <label>
             <span className={labelClass}>Transporter <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} defaultValue="">
+            <select className={inputClass} value={transporter} onChange={(event) => setTransporter(event.target.value)}>
               <option value="">Select Transporter</option>
               {transportersLoading ? <option disabled>Loading transporters...</option> : null}
               {transportersError ? <option disabled>Could not load transporters</option> : null}
@@ -102,7 +124,7 @@ export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketPr
 
           <label>
             <span className={labelClass}>Vehicle <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} defaultValue="">
+            <select className={inputClass} value={vehicle} onChange={(event) => setVehicle(event.target.value)}>
               <option value="">Select Vehicle</option>
               {vehiclesLoading ? <option disabled>Loading vehicles...</option> : null}
               {vehiclesError ? <option disabled>Could not load vehicles</option> : null}
@@ -154,11 +176,12 @@ export function AddRaisedTicket({ isDark, onClose, onSubmit }: AddRaisedTicketPr
         <footer className={`flex justify-end border-t px-5 py-4 sm:px-7 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-slate-50/70"}`}>
           <button
             type="submit"
-            className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-5 text-sm font-semibold transition ${
+            disabled={isSaving}
+            className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-5 text-sm font-semibold transition disabled:opacity-60 ${
               isDark ? "border-cyan-300/35 bg-cyan-300/[0.16] text-cyan-50 hover:bg-cyan-300/[0.24]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
             }`}
           >
-            Raise Ticket
+            {isSaving ? "Raising..." : "Raise Ticket"}
           </button>
         </footer>
       </form>

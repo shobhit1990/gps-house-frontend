@@ -1,12 +1,19 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { Plus, Trash2, X } from "lucide-react";
+import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import type { DriverDetail } from "@/interfaces/DriverDetail";
+import type { MasterOption } from "@/interfaces/EntityMaster";
+import { Status } from "@/enums/Status";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useUploadDocumentMutation } from "@/store/services/api/UploadDoc";
 
 export type DriverDocumentValues = {
 	id: number;
 	name: string;
 	fileName: string;
+	file?: File;
 };
 
 export type DriverDetailFormValues = {
@@ -22,7 +29,6 @@ export type DriverDetailFormValues = {
 	salary: string;
 	phone: string;
 	licenseNumber: string;
-	licenseType: string;
 	licenseIssue: string;
 	licenseExpiry: string;
 	insuranceNo: string;
@@ -37,18 +43,20 @@ export type DriverDetailFormValues = {
 	licenseAvailable: boolean;
 	licenseVerified: boolean;
 	geoAttendance: boolean;
+	licenseToDrive: string;
+	geofences: string;
+	reason: string;
 	documents: DriverDocumentValues[];
 };
 
 type AddDriverDetailFormProps = {
 	onClose: () => void;
-	onSubmit: (values: DriverDetailFormValues) => void;
+	onSubmit: (values: DriverDetailFormValues, externalId?: string) => Promise<void>;
+	driver?: DriverDetail;
 };
 
 const tabs = ["Add Driver Detail", "Upload Documents"] as const;
 type DriverTab = (typeof tabs)[number];
-
-const licenseOptions = ["LMV", "HMV", "HGMV", "MCWG"];
 
 const isoDate = (date: Date) => {
 	const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -64,6 +72,16 @@ const yearsAgo = (years: number) => {
 	return isoDate(date);
 };
 
+const isAtLeastEighteen = (dateOfBirth: string) => {
+	if (!dateOfBirth) return false;
+	const birthDate = new Date(`${dateOfBirth}T00:00:00`);
+	if (Number.isNaN(birthDate.getTime())) return false;
+	const minimumBirthDate = new Date();
+	minimumBirthDate.setHours(0, 0, 0, 0);
+	minimumBirthDate.setFullYear(minimumBirthDate.getFullYear() - 18);
+	return birthDate <= minimumBirthDate;
+};
+
 const detailDefaults = () => ({
 	client: "",
 	transporter: "",
@@ -77,7 +95,6 @@ const detailDefaults = () => ({
 	salary: "0",
 	phone: "",
 	licenseNumber: "",
-	licenseType: "",
 	licenseIssue: today(),
 	licenseExpiry: today(),
 	insuranceNo: "",
@@ -92,21 +109,60 @@ const detailDefaults = () => ({
 	licenseAvailable: true,
 	licenseVerified: false,
 	geoAttendance: false,
+	licenseToDrive: "",
+	geofences: "",
+	reason: "New driver joining",
 });
 
-export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormProps) {
+const toFormValues = (driver: DriverDetail): ReturnType<typeof detailDefaults> => ({
+	...detailDefaults(),
+	client: String(driver.client ?? ""),
+	transporter: String(driver.transporter ?? ""),
+	firstName: driver.firstName ?? "",
+	lastName: driver.lastName ?? "",
+	deviceId: driver.deviceId ?? "",
+	joiningDate: driver.dateOfJoining ?? "",
+	leavingDate: driver.dateOfLeaving ?? "",
+	dateOfBirth: driver.dateOfBirth ?? "",
+	experience: String(driver.experience ?? 0),
+	salary: String(driver.salary ?? 0),
+	phone: driver.phoneNumber ?? "",
+	licenseNumber: driver.licenseNumber ?? "",
+	licenseIssue: driver.licenseIssueDate ?? "",
+	licenseExpiry: driver.licenseExpiryDate ?? "",
+	insuranceNo: driver.lifeInsuranceNumber ?? "",
+	insuranceExpiry: driver.lifeInsuranceExpiryDate ?? "",
+	mediclaimNo: driver.mediclaimNumber ?? "",
+	mediclaimExpiry: driver.mediclaimExpiryDate ?? "",
+	bloodGroup: driver.bloodGroup ?? "",
+	supervisorName: driver.supervisorName ?? "",
+	supervisorPhone: driver.supervisorPhoneNumber ?? "",
+	address: driver.address ?? "",
+	active: driver.status === Status.ACTIVE,
+	licenseAvailable: driver.licenseAvailable ?? false,
+	licenseVerified: driver.licenseVerified ?? false,
+	geoAttendance: driver.enableGeoVerifiedAttendance ?? false,
+	licenseToDrive: driver.licenseToDrive?.join(", ") ?? "",
+	geofences: driver.geofences?.join(", ") ?? "",
+	reason: driver.reason ?? "",
+});
+
+export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDetailFormProps) {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
+	const clients = clientMaster;
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const transporters = transporterMaster;
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const nextDocumentId = useRef(1);
 	const [activeTab, setActiveTab] = useState<DriverTab>(tabs[0]);
-	const [values, setValues] = useState(detailDefaults);
+	const [values, setValues] = useState(() => driver ? toFormValues(driver) : detailDefaults());
 	const [documents, setDocuments] = useState<DriverDocumentValues[]>([]);
 	const [formError, setFormError] = useState("");
+	const [detailsSaved, setDetailsSaved] = useState(false);
+	const [isSavingDetails, setIsSavingDetails] = useState(false);
+	const [uploadDocument, { isLoading: isUploading }] = useUploadDocumentMutation();
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -143,26 +199,71 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 		setFormError("");
 	};
 
-	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (!values.client || !values.firstName.trim() || !values.lastName.trim()) {
+	const saveDetailsAndContinue = async () => {
+		if (!values.client || !values.transporter || !values.firstName.trim() || !values.lastName.trim()) {
 			setActiveTab("Add Driver Detail");
-			setFormError("Client, First Name, and Last Name are required.");
+			setFormError("Client, Transporter, First Name, and Last Name are required.");
+			return false;
+		}
+		if (!isAtLeastEighteen(values.dateOfBirth)) {
+			setActiveTab("Add Driver Detail");
+			setFormError("Driver must be above 18 years");
+			return false;
+		}
+		if (!detailsSaved) {
+			setIsSavingDetails(true);
+			try {
+				await onSubmit({
+					...values,
+					firstName: values.firstName.trim(),
+					lastName: values.lastName.trim(),
+					experience: values.experience.trim() || "0",
+					salary: values.salary.trim() || "0",
+					documents: [],
+				}, driver?.externalId);
+				setDetailsSaved(true);
+			} catch (error) {
+				setFormError(apiErrorMessage(error, "Unable to save driver details."));
+				return false;
+			} finally {
+				setIsSavingDetails(false);
+			}
+		}
+		setFormError("");
+		setActiveTab("Upload Documents");
+		return true;
+	};
+
+	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		setFormError("");
+
+		if (activeTab === "Add Driver Detail") {
+			await saveDetailsAndContinue();
 			return;
 		}
 		if (documents.some((document) => !document.name.trim() || !document.fileName)) {
-			setActiveTab("Upload Documents");
 			setFormError("Each document needs a name and a file.");
 			return;
 		}
-		onSubmit({
-			...values,
-			firstName: values.firstName.trim(),
-			lastName: values.lastName.trim(),
-			experience: values.experience.trim() || "0",
-			salary: values.salary.trim() || "0",
-			documents: documents.map((document) => ({ ...document, name: document.name.trim() })),
-		});
+		if (documents.some((document) => !document.file)) {
+			setFormError("Please select a file for each document.");
+			return;
+		}
+
+		try {
+			for (const document of documents) {
+				if (!document.file) continue;
+				await uploadDocument({
+					file: document.file,
+					documentName: document.name.trim(),
+				}).unwrap();
+			}
+			if (documents.length > 0) toast.success("Driver documents uploaded.");
+			onClose();
+		} catch (error) {
+			setFormError(apiErrorMessage(error, "Unable to upload driver documents."));
+		}
 	};
 
 	const field = (label: string, control: ReactNode, required?: boolean, className?: string) => (
@@ -179,17 +280,23 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 		<input required={required} value={String(values[name])} placeholder={placeholder} onChange={(event) => update(name, event.target.value)} className={inputClass} />
 	);
 
-	const select = (name: keyof ReturnType<typeof detailDefaults>, placeholder: string, options: string[], required?: boolean) => (
+	const select = (name: keyof ReturnType<typeof detailDefaults>, placeholder: string, options: MasterOption[], required?: boolean) => (
 		<select required={required} value={String(values[name])} onChange={(event) => update(name, event.target.value)} className={inputClass}>
 			<option value="">{placeholder}</option>
 			{options.map((option) => (
-				<option key={option} value={option}>{option}</option>
+				<option key={option.id} value={option.id}>{option.name}</option>
 			))}
 		</select>
 	);
 
 	const date = (name: keyof ReturnType<typeof detailDefaults>) => (
-		<input type="date" value={String(values[name])} onChange={(event) => update(name, event.target.value)} className={inputClass} />
+		<input
+			type="date"
+			value={String(values[name])}
+			max={name === "dateOfBirth" ? yearsAgo(18) : undefined}
+			onChange={(event) => update(name, event.target.value)}
+			className={inputClass}
+		/>
 	);
 
 	const check = (name: "active" | "licenseAvailable" | "licenseVerified" | "geoAttendance", label: string) => (
@@ -227,9 +334,17 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 							<button
 								key={tab}
 								type="button"
-								onClick={() => { setActiveTab(tab); setFormError(""); }}
+								disabled={detailsSaved && tab === "Add Driver Detail"}
+								onClick={() => {
+									if (tab === "Upload Documents") {
+										void saveDetailsAndContinue();
+									} else {
+										setActiveTab(tab);
+										setFormError("");
+									}
+								}}
 								aria-current={activeTab === tab ? "step" : undefined}
-								className={`min-h-[36px] flex-1 whitespace-nowrap border-b px-4 text-[12px] transition ${
+								className={`min-h-[36px] flex-1 whitespace-nowrap border-b px-4 text-[12px] transition disabled:cursor-not-allowed disabled:opacity-50 ${
 									activeTab === tab
 										? isDark
 											? "border-cyan-300/40 bg-cyan-300/[0.08] font-semibold text-cyan-100"
@@ -265,7 +380,7 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 							{field("Salary", <input type="number" min={0} value={values.salary} onChange={(event) => update("salary", event.target.value)} className={inputClass} />)}
 							{field("Phone No.", text("phone", "Phone No."))}
 							{field("License Number", text("licenseNumber", "License Number"))}
-							{field("License to Drive", select("licenseType", "Select License", licenseOptions))}
+							{field("License to Drive IDs (comma-separated)", text("licenseToDrive", "License IDs"))}
 							{field("License issue date", date("licenseIssue"))}
 							{field("License expiry date", date("licenseExpiry"))}
 							{field("Life insurance No.", text("insuranceNo", "Life insurance No."))}
@@ -276,6 +391,8 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 							{field("Supervisor Name", text("supervisorName", "Supervisor Name"))}
 							{field("Supervisor Phone No.", text("supervisorPhone", "Supervisor Phone No."))}
 							{field("Address", text("address", "Address"), false, "xl:col-span-2")}
+							{field("Geofence IDs (comma-separated)", text("geofences", "Geofence IDs"), false, "xl:col-span-2")}
+							{field("Reason", text("reason", "Reason"), false, "xl:col-span-2")}
 							<div className="flex flex-col gap-3 sm:col-span-2 xl:col-span-4">
 								{check("active", "Active")}
 								{check("licenseAvailable", "License available")}
@@ -301,7 +418,10 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 											<input
 												type="file"
 												aria-label={`Upload document ${document.name || document.id}`}
-												onChange={(event) => patchDocument(document.id, { fileName: event.target.files?.[0]?.name ?? "" })}
+												onChange={(event) => {
+													const file = event.target.files?.[0];
+													patchDocument(document.id, { file, fileName: file?.name ?? "" });
+												}}
 												className={fileClass}
 											/>
 											<button type="button" aria-label={`Remove document ${document.name || document.id}`} onClick={() => { setDocuments((current) => current.filter((item) => item.id !== document.id)); setFormError(""); }} className={`flex h-[37px] w-[37px] shrink-0 items-center justify-center rounded-lg border ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
@@ -320,12 +440,13 @@ export function AddDriverDetailForm({ onClose, onSubmit }: AddDriverDetailFormPr
 
 				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
 					{activeTab === "Add Driver Detail" && (
-						<button type="button" onClick={() => { setValues(detailDefaults()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+						<button type="button" onClick={() => { setValues(detailDefaults()); setFormError(""); }} disabled={isSavingDetails} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition disabled:opacity-60 ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 							Reset
 						</button>
 					)}
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						Save
+					<button type="submit" disabled={isUploading || isSavingDetails} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{(isUploading || isSavingDetails) && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+						{isUploading ? "Uploading..." : isSavingDetails ? "Saving..." : activeTab === "Add Driver Detail" ? "Save & Continue" : "Save"}
 					</button>
 				</footer>
 			</form>

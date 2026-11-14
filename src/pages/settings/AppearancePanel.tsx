@@ -1,6 +1,23 @@
-import { themeColors } from "./model";
 import { useSettings } from "./SettingsState";
 import { Field, PanelIntro, TextInput, ToggleRow } from "./ui";
+
+const themeColors = [
+  { id: "mauve", label: "Mauve", hex: "#c084fc" },
+  { id: "lime", label: "Lime", hex: "#84cc16" },
+  { id: "blue", label: "Blue", hex: "#3b82f6" },
+  { id: "cyan", label: "Cyan", hex: "#22d3ee" },
+  { id: "teal", label: "Teal", hex: "#2dd4bf" },
+  { id: "pink", label: "Pink", hex: "#f472b6" },
+  { id: "slate", label: "Slate", hex: "#94a3b8" },
+  { id: "indigo", label: "Indigo", hex: "#818cf8" },
+  { id: "orange", label: "Orange", hex: "#fb923c" },
+  { id: "sage", label: "Sage", hex: "#86efac" },
+  { id: "olive", label: "Olive", hex: "#a3a35a" },
+  { id: "violet", label: "Violet", hex: "#8b5cf6" },
+  { id: "green", label: "Green", hex: "#22c55e" },
+  { id: "ink", label: "Ink", hex: "#312e81" },
+  { id: "red", label: "Red", hex: "#ef4444" },
+];
 
 export function AppearancePanel() {
   const { draft, update } = useSettings();

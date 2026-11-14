@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { ArrowUpDown, ChevronDown, Columns3, Plus, RefreshCw, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { AlertModal } from "@/components/Alert/AlertModal";
+import { BulkUploadDialog } from "@/components/Alert/BulkUploadDialog";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
 	cardClass,
@@ -23,10 +24,17 @@ import {
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import {
+	useCreateServiceMaintenanceMutation,
+	useDeleteServiceMaintenanceMutation,
+	useGetServiceMaintenancesQuery,
+} from "@/store/services/api/ServiceMaintenance";
 import { useAuth } from "@/contexts/AuthContext";
+import type { CreateServiceMaintenanceRequest, ServiceMaintenance, ServiceMaintenanceVehicle } from "@/interfaces/ServiceMaintenance";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type ServiceRow = {
-	id: number;
+	id: string;
 	vehicleNo: string;
 	serviceName: string;
 	odometerInterval: string;
@@ -50,9 +58,10 @@ type ServiceRow = {
 	clone: string;
 	client: string;
 	transporter: string;
+	vehicleId: string;
 };
 
-type ColumnKey = Exclude<keyof ServiceRow, "id" | "client" | "transporter">;
+type ColumnKey = Exclude<keyof ServiceRow, "id" | "client" | "transporter" | "vehicleId">;
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "vehicleNo", label: "Vehicle No." },
@@ -100,25 +109,114 @@ const emptyForm = {
 	daysLeft: "",
 	updateRecord: false,
 	notifyMobile: false,
-	documentName: "",
+	documentFile: null as File | null,
 	visibleToDriver: false,
 };
 
 type FormState = typeof emptyForm;
 
+const text = (value?: string | number | null) => (value === undefined || value === null ? "" : String(value));
+
+const vehicleId = (vehicle: ServiceMaintenanceVehicle) =>
+	typeof vehicle === "string" ? vehicle : String(vehicle.id ?? vehicle.vehicle ?? vehicle.vehicleNo ?? vehicle.name ?? "");
+
+const vehicleLabel = (vehicle: ServiceMaintenanceVehicle) =>
+	typeof vehicle === "string" ? vehicle : vehicle.vehicle ?? vehicle.vehicleNo ?? vehicle.name ?? "";
+
+const dateLabel = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+};
+
+const difference = (due?: number, current?: number) =>
+	typeof due === "number" && typeof current === "number" ? String(due - current) : "";
+
+const daysUntil = (value?: string) => {
+	if (!value) return "";
+	const due = new Date(value);
+	if (Number.isNaN(due.getTime())) return "";
+	return String(Math.ceil((due.getTime() - Date.now()) / 86_400_000));
+};
+
+/** Empty optional numeric inputs are left out; anything else must be a non-negative number. */
+const optionalNumber = (value: string): number | undefined | null => {
+	if (!value.trim()) return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+/** Strips server-managed fields so a record can be posted again as a clone; the stored document is not re-sent. */
+const toCreateRequest = (record: ServiceMaintenance): CreateServiceMaintenanceRequest => ({
+	serviceName: record.serviceName,
+	vehicle: vehicleId(record.vehicle),
+	remark: record.remark,
+	odometerIntervalEnabled: Boolean(record.odometerIntervalEnabled),
+	odometerInterval: record.odometerInterval,
+	lastServiceOdometer: record.lastServiceOdometer,
+	engineIntervalEnabled: Boolean(record.engineIntervalEnabled),
+	engineInterval: record.engineInterval,
+	lastServiceEngine: record.lastServiceEngine,
+	daysIntervalEnabled: Boolean(record.daysIntervalEnabled),
+	daysInterval: record.daysInterval,
+	lastServiceDate: record.lastServiceDate,
+	odometerLeftEnabled: Boolean(record.odometerLeftEnabled),
+	odometerLeft: record.odometerLeft,
+	engineLeftEnabled: Boolean(record.engineLeftEnabled),
+	engineLeft: record.engineLeft,
+	daysLeftEnabled: Boolean(record.daysLeftEnabled),
+	daysLeft: record.daysLeft,
+	updateRecord: Boolean(record.updateRecord),
+	mobile: Boolean(record.mobile),
+	allowVisibilityToDriver: Boolean(record.allowVisibilityToDriver),
+});
+
 export default function ServiceAndMaintenance() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
-	const vehicleOptions = vehicles.map((vehicle) => vehicle.name);
+	const { data: services = [], isFetching, refetch } = useGetServiceMaintenancesQuery();
+	const [createService, { isLoading: isCreating }] = useCreateServiceMaintenanceMutation();
+	const [deleteService] = useDeleteServiceMaintenanceMutation();
+	const isSaving = isCreating;
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const fileRef = useRef<HTMLInputElement>(null);
-	const bulkRef = useRef<HTMLInputElement>(null);
-	const [rows, setRows] = useState<ServiceRow[]>([]);
+	const rows = useMemo<ServiceRow[]>(() => {
+		const vehicleNames = new Map(vehicles.map((item) => [item.id, item.name]));
+		return services.map((service) => {
+			const serviceVehicleId = vehicleId(service.vehicle);
+			return {
+				id: service.externalId,
+				vehicleNo: vehicleNames.get(serviceVehicleId) ?? vehicleLabel(service.vehicle),
+				serviceName: service.serviceName ?? "",
+				odometerInterval: text(service.odometerInterval),
+				lastServiceOdometer: text(service.lastServiceOdometer),
+				nextServiceDueOdometer: text(service.nextServiceDueOdometer),
+				currentOdometer: text(service.currentOdometer),
+				kmLeft: difference(service.nextServiceDueOdometer, service.currentOdometer),
+				odometerLeft: text(service.odometerLeft),
+				engineHoursInterval: text(service.engineInterval),
+				lastServiceEngineHour: text(service.lastServiceEngine),
+				nextServiceDueEngineHour: text(service.nextServiceDueEngineHour),
+				engineHourLeft: text(service.engineLeft),
+				daysInterval: text(service.daysInterval),
+				lastServiceOn: dateLabel(service.lastServiceDate),
+				nextServiceDueOn: dateLabel(service.nextServiceDueOn),
+				daysLeftForNext: daysUntil(service.nextServiceDueOn),
+				daysLeft: text(service.daysLeft),
+				updateRecord: service.updateRecord ? "Yes" : "No",
+				remark: service.remark ?? "",
+				uploadDoc: service.serviceDocument ? "Uploaded" : "",
+				clone: "Clone",
+				client: service.client ?? "",
+				transporter: service.transporter ?? "",
+				vehicleId: serviceVehicleId,
+			};
+		});
+	}, [services, vehicles]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
 	const [vehicle, setVehicle] = useState("");
@@ -130,6 +228,7 @@ export default function ServiceAndMaintenance() {
 	const [sortKey, setSortKey] = useState<ColumnKey>("vehicleNo");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [formOpen, setFormOpen] = useState(false);
+	const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 	const [form, setForm] = useState<FormState>(emptyForm);
 
 	const pageSize = 10;
@@ -141,12 +240,12 @@ export default function ServiceAndMaintenance() {
 			const matchesFilters =
 				(!applied.client || row.client === applied.client) &&
 				(!applied.transporter || row.transporter === applied.transporter) &&
-				(!applied.vehicle || row.vehicleNo === applied.vehicle);
+				(!applied.vehicle || row.vehicleId === applied.vehicle);
 			const matchesSearch = !query || Object.values(row).join(" ").toLowerCase().includes(query);
 			return matchesFilters && matchesSearch;
 		});
 		return [...matched].sort((left, right) => {
-			const result = left[sortKey].localeCompare(right[sortKey], undefined, { numeric: true });
+			const result = String(left[sortKey] ?? "").localeCompare(String(right[sortKey] ?? ""), undefined, { numeric: true });
 			return sortDir === "asc" ? result : -result;
 		});
 	}, [rows, applied, search, sortKey, sortDir]);
@@ -175,43 +274,77 @@ export default function ServiceAndMaintenance() {
 		setFormOpen(true);
 	};
 
-	const saveForm = () => {
+	const saveForm = async () => {
+		if (isSaving) return;
 		if (!form.serviceName.trim() || !form.vehicleNo) {
 			toast.error("Service Name and Vehicle are required.");
 			return;
 		}
-		setRows((current) => [
-			{
-				id: Date.now(),
-				vehicleNo: form.vehicleNo,
+		const numbers = {
+			odometerInterval: form.odometerEnabled ? optionalNumber(form.odometerInterval) : undefined,
+			lastServiceOdometer: form.odometerEnabled ? optionalNumber(form.lastServiceOdometer) : undefined,
+			engineInterval: form.engineEnabled ? optionalNumber(form.engineInterval) : undefined,
+			lastServiceEngine: form.engineEnabled ? optionalNumber(form.lastServiceEngine) : undefined,
+			daysInterval: form.daysEnabled ? optionalNumber(form.daysInterval) : undefined,
+			odometerLeft: form.odometerLeftEnabled ? optionalNumber(form.odometerLeft) : undefined,
+			engineLeft: form.engineLeftEnabled ? optionalNumber(form.engineLeft) : undefined,
+			daysLeft: form.daysLeftEnabled ? optionalNumber(form.daysLeft) : undefined,
+		};
+		if (Object.values(numbers).some((value) => value === null)) {
+			toast.error("Interval and trigger values must be valid non-negative numbers.");
+			return;
+		}
+		try {
+			await createService({
 				serviceName: form.serviceName.trim(),
-				odometerInterval: form.odometerEnabled ? form.odometerInterval : "",
-				lastServiceOdometer: form.odometerEnabled ? form.lastServiceOdometer : "",
-				nextServiceDueOdometer: "",
-				currentOdometer: "",
-				kmLeft: "",
-				odometerLeft: form.odometerLeftEnabled ? form.odometerLeft : "",
-				engineHoursInterval: form.engineEnabled ? form.engineInterval : "",
-				lastServiceEngineHour: form.engineEnabled ? form.lastServiceEngine : "",
-				nextServiceDueEngineHour: "",
-				engineHourLeft: form.engineLeftEnabled ? form.engineLeft : "",
-				daysInterval: form.daysEnabled ? form.daysInterval : "",
-				lastServiceOn: form.daysEnabled ? form.lastServiceDate : "",
-				nextServiceDueOn: "",
-				daysLeftForNext: "",
-				daysLeft: form.daysLeftEnabled ? form.daysLeft : "",
-				updateRecord: form.updateRecord ? "Yes" : "No",
-				remark: form.remark,
-				uploadDoc: form.documentName,
-				clone: "Clone",
-				client,
-				transporter,
-			},
-			...current,
-		]);
-		setFormOpen(false);
-		setPage(0);
-		toast.success("Service saved.");
+				vehicle: form.vehicleNo,
+				remark: form.remark.trim() || undefined,
+				odometerIntervalEnabled: form.odometerEnabled,
+				odometerInterval: numbers.odometerInterval ?? undefined,
+				lastServiceOdometer: numbers.lastServiceOdometer ?? undefined,
+				engineIntervalEnabled: form.engineEnabled,
+				engineInterval: numbers.engineInterval ?? undefined,
+				lastServiceEngine: numbers.lastServiceEngine ?? undefined,
+				daysIntervalEnabled: form.daysEnabled,
+				daysInterval: numbers.daysInterval ?? undefined,
+				lastServiceDate: form.daysEnabled && form.lastServiceDate ? form.lastServiceDate : undefined,
+				odometerLeftEnabled: form.odometerLeftEnabled,
+				odometerLeft: numbers.odometerLeft ?? undefined,
+				engineLeftEnabled: form.engineLeftEnabled,
+				engineLeft: numbers.engineLeft ?? undefined,
+				daysLeftEnabled: form.daysLeftEnabled,
+				daysLeft: numbers.daysLeft ?? undefined,
+				updateRecord: form.updateRecord,
+				mobile: form.notifyMobile,
+				serviceDocument: form.documentFile ?? undefined,
+				allowVisibilityToDriver: form.visibleToDriver,
+			}).unwrap();
+			setFormOpen(false);
+			setPage(0);
+			toast.success("Service saved.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not save the service."));
+		}
+	};
+
+	const cloneService = async (externalId: string) => {
+		const record = services.find((service) => service.externalId === externalId);
+		if (!record) return;
+		try {
+			await createService(toCreateRequest(record)).unwrap();
+			toast.success("Service cloned.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not clone the service."));
+		}
+	};
+
+	const removeService = async (externalId: string) => {
+		try {
+			await deleteService(externalId).unwrap();
+			toast.success("Service deleted.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not delete the service."));
+		}
 	};
 
 	const sortBy = (key: ColumnKey) => {
@@ -249,8 +382,8 @@ export default function ServiceAndMaintenance() {
 							<span className={`rounded-full border px-2.5 py-1 text-[10px] ${isDark ? "border-white/[0.08] bg-white/[0.04] text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>{rows.length} records</span>
 						</div>
 					</div>
-					<button type="button" onClick={() => window.location.reload()} aria-label="Refresh services" className={refreshButtonClass(isDark)}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => refetch()} aria-label="Refresh services" className={refreshButtonClass(isDark)}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -259,17 +392,17 @@ export default function ServiceAndMaintenance() {
 						<label className="sr-only" htmlFor="service-client">Client</label>
 						<select id="service-client" value={client} onChange={(event) => setClient(event.target.value)} className={inputClass(isDark)}>
 							<option value="">Select Client</option>
-							{clients.map((name) => <option key={name} value={name}>{name}</option>)}
+							{clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<label className="sr-only" htmlFor="service-transporter">Transporter</label>
 						<select id="service-transporter" value={transporter} onChange={(event) => setTransporter(event.target.value)} className={inputClass(isDark)}>
 							<option value="">Select Transporter</option>
-							{transporters.map((name) => <option key={name} value={name}>{name}</option>)}
+							{transporters.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<label className="sr-only" htmlFor="service-vehicle">Vehicle</label>
 						<select id="service-vehicle" value={vehicle} onChange={(event) => setVehicle(event.target.value)} className={inputClass(isDark)}>
 							<option value="">Select Vehicle</option>
-							{vehicleOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+							{vehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<button type="button" onClick={() => { setApplied({ client, transporter, vehicle }); setPage(0); }} className={primaryButtonClass(isDark)}>
 							<Search className="h-3.5 w-3.5" /> Search
@@ -299,10 +432,9 @@ export default function ServiceAndMaintenance() {
 									</div>
 								)}
 							</div>
-							<button type="button" onClick={() => bulkRef.current?.click()} className={`${secondaryButtonClass(isDark)} h-9 text-[11px]`}>
+							<button type="button" onClick={() => setBulkUploadOpen(true)} className={`${secondaryButtonClass(isDark)} h-9 text-[11px]`}>
 								<Upload className="h-3.5 w-3.5" /> Bulk Upload
 							</button>
-							<input ref={bulkRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" aria-label="Bulk upload file" onChange={(event) => { if (event.target.files?.[0]) toast.success(`${event.target.files[0].name} selected.`); event.target.value = ""; }} />
 							<button type="button" onClick={openForm} className={`${primaryButtonClass(isDark)} h-9 text-[11px]`}>
 								<Plus className="h-3.5 w-3.5" /> Add Service
 							</button>
@@ -340,8 +472,8 @@ export default function ServiceAndMaintenance() {
 											))}
 											<td className="px-4 py-2.5">
 												<div className="flex items-center justify-center gap-2">
-													<button type="button" onClick={() => setRows((current) => [{ ...row, id: Date.now() }, ...current])} className={rowActionClass(isDark, "cyan")}>Clone</button>
-													<button type="button" onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))} className={rowActionClass(isDark, "rose")}>Delete</button>
+													<button type="button" onClick={() => cloneService(row.id)} className={rowActionClass(isDark, "cyan")}>Clone</button>
+													<button type="button" onClick={() => removeService(row.id)} className={rowActionClass(isDark, "rose")}>Delete</button>
 												</div>
 											</td>
 										</tr>
@@ -355,6 +487,7 @@ export default function ServiceAndMaintenance() {
 				</section>
 			</main>
 
+			<BulkUploadDialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen} />
 			{formOpen && (
 				<AlertModal
 					isDark={isDark}
@@ -364,7 +497,7 @@ export default function ServiceAndMaintenance() {
 					footer={
 						<>
 							<button type="button" onClick={() => { setForm(emptyForm); if (fileRef.current) fileRef.current.value = ""; }} className={secondaryButtonClass(isDark)}>Reset</button>
-							<button type="submit" className={primaryButtonClass(isDark)}>Save</button>
+							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>{isSaving ? "Saving..." : "Save"}</button>
 						</>
 					}
 				>
@@ -380,7 +513,7 @@ export default function ServiceAndMaintenance() {
 									<span className="mb-1.5 block">Vehicle <span className="text-rose-400">*</span></span>
 									<select value={form.vehicleNo} onChange={(event) => patch({ vehicleNo: event.target.value })} className={fieldClass()}>
 										<option value="">Select Vehicles</option>
-										{vehicleOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+										{vehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 									</select>
 								</label>
 								<label className={labelClass}>
@@ -437,8 +570,8 @@ export default function ServiceAndMaintenance() {
 							<label className={`mt-4 block ${labelClass}`}>
 								<span className="mb-1.5 block">Upload Document <span className="font-normal text-slate-500">(Optional)</span></span>
 								<span className="flex flex-wrap items-center gap-3">
-									<input ref={fileRef} type="file" aria-label="Upload Document" onChange={(event) => patch({ documentName: event.target.files?.[0]?.name ?? "" })} className={`h-10 min-w-[240px] flex-1 rounded-lg border px-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-transparent file:text-xs file:font-medium ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-slate-400 file:text-slate-200" : "border-slate-200 bg-white text-slate-600 file:text-slate-700"}`} />
-									<button type="button" onClick={() => { patch({ documentName: "" }); if (fileRef.current) fileRef.current.value = ""; }} className={dangerButtonClass(isDark)}>Delete</button>
+									<input ref={fileRef} type="file" aria-label="Upload Document" onChange={(event) => patch({ documentFile: event.target.files?.[0] ?? null })} className={`h-10 min-w-[240px] flex-1 rounded-lg border px-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-transparent file:text-xs file:font-medium ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-slate-400 file:text-slate-200" : "border-slate-200 bg-white text-slate-600 file:text-slate-700"}`} />
+									<button type="button" onClick={() => { patch({ documentFile: null }); if (fileRef.current) fileRef.current.value = ""; }} className={dangerButtonClass(isDark)}>Delete</button>
 									<label className="flex items-center gap-2">
 										<input type="checkbox" checked={form.visibleToDriver} onChange={(event) => patch({ visibleToDriver: event.target.checked })} className={checkboxClass} />
 										Allow visibility to driver

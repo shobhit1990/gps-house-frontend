@@ -1,7 +1,8 @@
 export interface CreateTransporterRequest {
-  username: string;
+  userName: string;
   password: string;
-  company: string;
+  confirmPassword: string;
+  companyName: string;
   client: string;
   timezone: string;
   inactiveTime: number;
@@ -10,22 +11,22 @@ export interface CreateTransporterRequest {
   email?: string;
   phone?: string;
   address?: string;
-  subscriptionStart: string;
-  subscriptionDue: string;
+  subscriptionStartDate: string;
+  subscriptionDueDate: string;
   subscriptionExtend?: string;
   subscriptionExpiryCount?: number;
-  maxPoiRadius?: number;
-  minAddressDistance?: number;
-  dataRestriction?: number;
+  maximumRadiusForNearestPOI: string;
+  minimumDistanceForAddress: string;
+  dataRestriction: string;
   active: boolean;
   overwriteSubscription: boolean;
   inactiveAfterExpiry: boolean;
-  roles: string[];
+  roles?: string[];
 }
 
 export type UpdateTransporterRequest = Partial<CreateTransporterRequest>;
 
-export interface Transporter extends Omit<CreateTransporterRequest, "password"> {
+export interface Transporter extends Omit<CreateTransporterRequest, "password" | "confirmPassword"> {
   id: string | number;
   externalId: string;
   createdAt?: string;

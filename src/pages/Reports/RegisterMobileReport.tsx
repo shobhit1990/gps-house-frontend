@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type MobileRecord = {
 	id: number;
@@ -29,9 +30,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "activeCount", label: "Active Count" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
 const userTypes = ["Client", "User"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 
 const textValue = (value: string) => (value.trim() ? value : "—");
 const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
@@ -39,6 +38,10 @@ const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected
 const notice = "This report shows the list of active registered mobile counts associated with a particular user. If the count exceeds the maximum limit, the user will not receive any notifications in the mobile application.";
 
 export default function RegisterMobileReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

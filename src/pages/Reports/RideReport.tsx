@@ -4,6 +4,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Play, Refre
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type RideRecord = {
 	id: number;
@@ -53,8 +54,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "play", label: "Play" },
 ];
 
-const clients = ["gpshouse", "arun.singh", "tushar.shukla"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const durations = ["0", "5", "10", "30", "60", "120"];
 
@@ -89,6 +88,10 @@ const textValue = (value: string) => (value.trim() ? value : "—");
 const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 export default function RideReport() {
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster.map((client) => client.name);
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

@@ -50,6 +50,8 @@
     "date-fns": "3.6.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.5.0",
+    "jodit": "^4.18.12",
+    "jodit-react": "^5.8.10",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.9",
     "leaflet": "^1.9.4",

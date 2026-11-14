@@ -4,10 +4,14 @@ import { toast } from "sonner";
 import { useSelector } from "@/store/hooks";
 import { selectCurrentUser } from "@/store/slices/authSlice";
 import { vehicles } from "@/components/data/vehicles";
-import { entityOptions, viewOnOptions, type CustomFieldDraft } from "./model";
+import type { CustomFieldDraft } from "@/interfaces/Settings";
 import { useSettings } from "./SettingsState";
-import { EmptyState, Field, PanelIntro, primaryButtonClass, quietButtonClass, SelectInput, TextInput } from "./ui";
+import { EmptyState, Field, PanelIntro, quietButtonClass, SelectInput, TextInput } from "./ui";
 
+const actionButtonClass =
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-4 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 dark:border-cyan-300/25 dark:bg-cyan-300/[0.10] dark:text-cyan-100 dark:hover:bg-cyan-300/[0.16]";
+const viewOnOptions = ["Vehicle list", "Vehicle detail", "Dashboard", "Reports", "Certificate"];
+const entityOptions = ["Vehicle", "Device", "Transporter", "Driver"];
 const blankField = (): CustomFieldDraft => ({ fieldName: "", viewOn: "" });
 
 export function CustomFieldsPanel({
@@ -130,7 +134,7 @@ export function CustomFieldsPanel({
             </div>
           ))}
         </div>
-        <button type="button" onClick={saveFields} className={`mt-5 ${primaryButtonClass}`}>
+        <button type="button" onClick={saveFields} className={`mt-5 ${actionButtonClass}`}>
           Save
         </button>
       </div>
@@ -144,7 +148,7 @@ export function CustomFieldsPanel({
         <button
           type="button"
           onClick={() => onSectionChange("form")}
-          className={`${primaryButtonClass} shrink-0`}
+          className={`${actionButtonClass} shrink-0`}
         >
           <Plus className="h-3.5 w-3.5" />
           Add custom fields
@@ -156,7 +160,7 @@ export function CustomFieldsPanel({
       </label>
       <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-white/[0.08]">
         <table className="w-full min-w-[640px] text-left text-xs">
-          <thead className="bg-violet-900 text-white dark:bg-violet-500/15 dark:text-violet-100">
+          <thead className="bg-slate-50 text-slate-600 dark:bg-white/[0.025] dark:text-slate-400">
             <tr>
               {["Created by", "Client", "Created for", "Entity", "Field name", "View on", "Action"].map((label) => (
                 <th key={label} className="px-3 py-3 font-medium">{label}</th>

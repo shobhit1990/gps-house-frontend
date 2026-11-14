@@ -51,7 +51,8 @@ export function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isMobile, showMobileSidebar]);
 
-  const userRole = currentUser?.roleName || currentUser?.role || "User";
+  const userRole =
+    currentUser?.roleName || currentUser?.role || currentUser?.userType || currentUser?.roleCode || "User";
 
   return (
     <div className="flex min-h-screen w-full bg-gradient-to-br from-background via-muted/10 to-background">

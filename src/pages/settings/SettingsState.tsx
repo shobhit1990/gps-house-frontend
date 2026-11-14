@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { createDraft, type SettingsDraft } from "./model";
+import type { SettingsDraft } from "@/interfaces/Settings";
 
 type SettingsKey = keyof SettingsDraft;
 
@@ -11,6 +11,46 @@ type SettingsContextValue = {
   save: () => void;
   resetKey: <K extends SettingsKey>(key: K) => void;
 };
+
+const createDraft = (): SettingsDraft => ({
+  general: {
+    landingPage: "vehicles",
+    downloadXlsx: false,
+    fuelChartVoltage: false,
+    sortByHighchart: true,
+    uploads: { vehicle: "", poi: "", payment: "", billing: "" },
+  },
+  theme: {
+    domain: "",
+    viewChartInReports: true,
+    themeColor: "cyan",
+  },
+  profile: {
+    name: "",
+    mobile: "",
+    email: "",
+    companyName: "",
+    website: "",
+    gstin: "",
+    cin: "",
+    address: "",
+    webLink: "",
+    androidLink: "",
+    iosLink: "",
+  },
+  preferences: {
+    distance: "KILO_METER",
+    volume: "LITER",
+    currency: "INR",
+    fuelType: "",
+    fuelCost: "",
+    fuelCosts: [{ fuelType: "", fuelCost: "" }],
+    dateFormat: "dd/MM/yyyy",
+    timeFormat: "HH:mm:ss",
+  },
+  certificates: [],
+  customFields: [],
+});
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 

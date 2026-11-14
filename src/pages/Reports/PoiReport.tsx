@@ -4,12 +4,12 @@ import { Activity, ChevronDown, RefreshCw, Search } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type MenuKind = "report" | "filter" | "transporter" | "vehicle";
 
 const reportTypes = ["Vehicle Wise", "Geofence Wise"];
 const filterTypes = ["Transporter", "Group"];
-const transporters = ["Aviator", "vicky.9", "vga", "rahul.sharma"];
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -27,6 +27,8 @@ const todayRange = () => {
 const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 export default function PoiReport() {
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster.map((transporter) => transporter.name);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";

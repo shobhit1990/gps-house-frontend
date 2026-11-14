@@ -2,10 +2,21 @@ import { api } from "../api";
 import type { Client, CreateClientRequest, UpdateClientRequest } from "@/interfaces/Client";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-type ClientApiRecord = Omit<Client, "externalId"> & { externalId?: string };
+type ClientApiRecord = Omit<Client, "externalId" | "companyName" | "userName" | "owner_name"> & {
+  externalId?: string;
+  companyName?: string;
+  company?: string;
+  userName?: string;
+  username?: string;
+  owner_name?: string;
+  ownerName?: string;
+};
 
 const normalizeClient = (record: ClientApiRecord): Client => ({
   ...record,
+  companyName: record.companyName ?? record.company ?? "",
+  userName: record.userName ?? record.username ?? "",
+  owner_name: record.owner_name ?? record.ownerName ?? "",
   externalId: String(record?.externalId ?? record?.id ?? ""),
 });
 

@@ -2,10 +2,11 @@ import type { Status } from "@/enums/Status";
 
 export interface CreateBillingDetailsRequest {
   transporter: string;
-  billingName: string;
+  companyName: string;
   gstNumber?: string;
   billingEmail?: string;
   billingPhone?: string;
+  website?: string;
   billingAddress?: string;
   paymentMode?: string;
   status: Status;

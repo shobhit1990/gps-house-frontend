@@ -2,8 +2,11 @@ import React, { useState } from "react";
 import { useTheme } from "next-themes";
 import { useToast } from "@/hooks/use-toast";
 import { useDispatch } from "@/store/hooks";
-import { useLoginMutation } from "@/store/services/api/auth";
-import { setCredentials } from "@/store/slices/authSlice";
+import { useLoginMutation } from "@/store/services/api/login";
+import { useLazyGetSidebarMenusQuery } from "@/store/services/api/Menu";
+import { setCredentials, setMenus } from "@/store/slices/authSlice";
+import { AUTH_CONFIG } from "@/config/env";
+import { userFromLoginResponse } from "@/lib/authUser";
 import {
   ArrowRight,
   BarChart3,
@@ -29,6 +32,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [login, { isLoading }] = useLoginMutation();
+  const [fetchSidebarMenus] = useLazyGetSidebarMenusQuery();
   const dispatch = useDispatch();
   const { toast } = useToast();
 
@@ -51,24 +55,34 @@ const Login = () => {
 
     try {
       const response = await login({
-        username: formData.email.trim(),
+        userName: formData.email.trim(),
         password: formData.password,
       }).unwrap();
 
+      const accessToken = response?.token ?? response?.accessToken;
+      if (!accessToken) {
+        throw { data: { message: "Login response did not include an access token." } };
+      }
+
+      const username = formData.email.trim();
       dispatch(
         setCredentials({
-          token: response.accessToken,
+          token: accessToken,
           refreshToken: response.refreshToken,
-          user: {
-            id: response.userId,
-            username: response.username || formData.email.trim(),
-            name: response.name,
-            role: response.roleName || response.roleCode,
-            roleName: response.roleName,
-          },
+          user: userFromLoginResponse(response, username),
           menus: response.menus ?? [],
         }),
       );
+
+      // Backend login does not return menus; load them from /menu/sidebar.
+      if (!response.menus?.length) {
+        try {
+          const menus = await fetchSidebarMenus().unwrap();
+          if (menus.length > 0) dispatch(setMenus(menus));
+        } catch {
+          // MenusBootstrap will retry after auth; keep login successful.
+        }
+      }
     } catch (error) {
       const apiError = error as {
         data?: { message?: string };
@@ -84,6 +98,8 @@ const Login = () => {
   };
 
   const handleDemoLogin = () => {
+    if (!AUTH_CONFIG.DEMO_LOGIN_ENABLED) return;
+
     dispatch(
       setCredentials({
         token: "demo-session-token",
@@ -93,6 +109,7 @@ const Login = () => {
           name: "Demo User",
           role: "Administrator",
           roleName: "Administrator",
+          roleCode: "ADMIN",
         },
         menus: [],
       }),
@@ -583,29 +600,31 @@ const Login = () => {
                     </span>
                   </button>
 
-                  {/* Divider */}
-                  <div className="flex items-center gap-4 py-1">
-                    <div className="h-px flex-1 bg-white/10" />
-                    <span className="text-xs font-medium text-slate-500">
-                      OR
-                    </span>
-                    <div className="h-px flex-1 bg-white/10" />
-                  </div>
+                  {AUTH_CONFIG.DEMO_LOGIN_ENABLED && (
+                    <>
+                      <div className="flex items-center gap-4 py-1">
+                        <div className="h-px flex-1 bg-white/10" />
+                        <span className="text-xs font-medium text-slate-500">
+                          OR
+                        </span>
+                        <div className="h-px flex-1 bg-white/10" />
+                      </div>
 
-                  {/* Demo login */}
-                  <button
-                    type="button"
-                    onClick={handleDemoLogin}
-                    className={`flex h-11 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-semibold transition ${
-                      isDark
-                        ? "border-white/10 bg-white/[0.025] text-slate-200 hover:border-white/20 hover:bg-white/[0.06]"
-                        : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
-                    }`}
-                  >
-                    <Navigation size={17} className="text-cyan-400" />
-                    Demo Login
-                    <ArrowRight size={17} className="text-slate-500" />
-                  </button>
+                      <button
+                        type="button"
+                        onClick={handleDemoLogin}
+                        className={`flex h-11 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-semibold transition ${
+                          isDark
+                            ? "border-white/10 bg-white/[0.025] text-slate-200 hover:border-white/20 hover:bg-white/[0.06]"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                        }`}
+                      >
+                        <Navigation size={17} className="text-cyan-400" />
+                        Demo Login
+                        <ArrowRight size={17} className="text-slate-500" />
+                      </button>
+                    </>
+                  )}
                 </form>
 
                 {/* =================================================

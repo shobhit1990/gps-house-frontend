@@ -1,6 +1,11 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, Loader2, X } from "lucide-react";
+import { AssignType } from "@/enums/AssignType";
+import { InventoryType } from "@/enums/InventoryType";
+import { SimOperator } from "@/enums/SimOperator";
+import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 export type InventoryFormValues = {
 	inventoryType: string;
@@ -11,6 +16,7 @@ export type InventoryFormValues = {
 	secondarySimOperator: string;
 	deviceType: string;
 	assignType: string;
+	client: string;
 	password: string;
 	active: boolean;
 	ignitionWire: boolean;
@@ -20,23 +26,31 @@ export type InventoryFormValues = {
 
 type AddInventoryProps = {
 	onClose: () => void;
-	onSubmit: (values: InventoryFormValues) => void;
+	onSubmit: (values: InventoryFormValues) => Promise<void>;
+	isSaving?: boolean;
+	initialValues?: Partial<InventoryFormValues>;
 };
 
-const inventoryTypes = ["GPS Device", "Dashcam", "Fuel Sensor"];
-const operators = ["Airtel Gprs (airtelgprs.com)"];
-const deviceTypes = ["Concox (8505)"];
-const assignTypes = ["Self", "Technician", "Client"];
+const inventoryTypes = [
+	{ value: InventoryType.SIM, label: "SIM" },
+	{ value: InventoryType.DEVICE, label: "Device" },
+];
+const operators = Object.values(SimOperator).map((operator) => ({ value: operator, label: operator }));
+const assignTypes = [
+	{ value: AssignType.CLIENT, label: "Client" },
+	{ value: AssignType.TECHNICIAN, label: "Technician" },
+];
 
 const emptyValues = (): InventoryFormValues => ({
-	inventoryType: "",
+	inventoryType: InventoryType.SIM,
 	imei: "",
 	sim: "",
-	operator: operators[0],
+	operator: SimOperator.AIRTEL_LIVE,
 	secondarySim: "",
-	secondarySimOperator: operators[0],
-	deviceType: deviceTypes[0],
+	secondarySimOperator: SimOperator.MOBITEL,
+	deviceType: "",
 	assignType: "",
+	client: "",
 	password: "",
 	active: true,
 	ignitionWire: false,
@@ -46,12 +60,24 @@ const emptyValues = (): InventoryFormValues => ({
 
 const digitsOnly = (value: string) => value.replace(/\D/g, "").slice(0, 24);
 
-export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
+export function AddInventory({ onClose, onSubmit, isSaving = false, initialValues }: AddInventoryProps) {
 	const { theme } = useTheme();
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const {
+		data: deviceTypeMaster = [],
+		isLoading: isLoadingDeviceTypes,
+		isError: deviceTypesFailed,
+	} = useGetDeviceTypeMasterQuery();
 	const isDark = theme !== "light";
 	const titleId = useId();
-	const [values, setValues] = useState<InventoryFormValues>(emptyValues);
+	const [values, setValues] = useState<InventoryFormValues>(() => ({ ...emptyValues(), ...initialValues }));
 	const [formError, setFormError] = useState("");
+	const deviceTypes = deviceTypeMaster
+		.map((deviceType) => ({
+			value: String(deviceType.externalId ?? deviceType.id ?? ""),
+			label: deviceType.deviceName ?? deviceType.deviceTypeName ?? "",
+		}))
+		.filter((deviceType) => deviceType.value && deviceType.label);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -74,12 +100,18 @@ export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
 		setFormError("");
 	};
 
-	const select = (key: keyof InventoryFormValues, placeholder: string, options: string[], required = false) => (
+	const select = (
+		key: keyof InventoryFormValues,
+		placeholder: string,
+		options: { value: string; label: string }[],
+		required = false,
+		disabled = false,
+	) => (
 		<span className="relative block">
-			<select required={required} value={String(values[key])} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+			<select required={required} disabled={disabled} value={String(values[key])} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8 disabled:cursor-not-allowed disabled:opacity-60`}>
 				<option value="">{placeholder}</option>
 				{options.map((option) => (
-					<option key={option} value={option}>{option}</option>
+					<option key={option.value} value={option.value}>{option.label}</option>
 				))}
 			</select>
 			<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
@@ -98,13 +130,17 @@ export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
 		</label>
 	);
 
-	const submit = (event: FormEvent) => {
+	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.inventoryType || !values.operator || !values.deviceType || !values.assignType) {
-			setFormError("Inventory Type, Sim Operator, Device Type, and Assign Type are required.");
+		if (!values.inventoryType || !values.operator || !values.deviceType || !values.assignType || !values.client) {
+			setFormError("Inventory Type, Sim Operator, Device Type, Assign Type, and Client are required.");
 			return;
 		}
-		onSubmit(values);
+		try {
+			await onSubmit(values);
+		} catch (error) {
+			setFormError(apiErrorMessage(error, "Could not save inventory. Please try again."));
+		}
 	};
 
 	const check = (key: "active" | "ignitionWire" | "airConditionWire" | "analogSensor", label: string) => (
@@ -127,7 +163,7 @@ export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
 						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Inventory Add</h2>
+						<h2 id={titleId} className="text-[15px] font-semibold">{initialValues ? "Edit Inventory" : "Inventory Add"}</h2>
 					</div>
 					<button type="button" onClick={onClose} aria-label="Close" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
 						<X className="h-5 w-5 stroke-[3]" />
@@ -147,8 +183,24 @@ export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
 						{field("Sim Operator", select("operator", "Select", operators, true), true)}
 						{field("Secondary Sim Number", <input value={values.secondarySim} inputMode="numeric" placeholder="Sim Number" onChange={(event) => update("secondarySim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
 						{field("Secondary Sim Operator", select("secondarySimOperator", "Select", operators))}
-						{field("Device Type", select("deviceType", "Select", deviceTypes, true), true)}
+						{field(
+							"Device Type",
+							select(
+								"deviceType",
+								isLoadingDeviceTypes ? "Loading device types..." : "Select",
+								deviceTypes,
+								true,
+								isLoadingDeviceTypes || deviceTypesFailed || deviceTypes.length === 0,
+							),
+							true,
+							deviceTypesFailed
+								? "Could not load device types."
+								: !isLoadingDeviceTypes && deviceTypes.length === 0
+									? "No active device types found."
+									: undefined,
+						)}
 						{field("Select Assign Type", select("assignType", "Select", assignTypes, true), true)}
+						{field("Client", select("client", "Select Client", clients.map((client) => ({ value: client.id, label: client.name })), true), true)}
 						{field("Password", <input type="password" value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, false, undefined, true)}
 					</div>
 					<div className="mt-5 flex flex-col gap-2.5">
@@ -160,11 +212,12 @@ export function AddInventory({ onClose, onSubmit }: AddInventoryProps) {
 				</div>
 
 				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="button" onClick={() => { setValues(emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+					<button type="button" onClick={() => { setValues({ ...emptyValues(), ...initialValues }); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
-					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						Save
+					<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+						{isSaving ? "Saving..." : "Save"}
 					</button>
 				</footer>
 			</form>

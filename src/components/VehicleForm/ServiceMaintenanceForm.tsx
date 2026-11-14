@@ -8,6 +8,7 @@ export type ServiceMaintenanceMode = "custom" | "template";
 export type ServiceMaintenanceValues = {
 	mode: ServiceMaintenanceMode;
 	serviceName: string;
+	/** Vehicle externalId. */
 	vehicleNo: string;
 	remark: string;
 	odometerEnabled: boolean;
@@ -82,7 +83,6 @@ const emptyValues = (): ServiceMaintenanceValues => ({
 export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(function ServiceMaintenanceForm(_props, ref) {
 	const { theme } = useTheme();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
-	const vehicleOptions = vehicles.map((vehicle) => vehicle.name);
 	const isDark = theme !== "light";
 	const menuRef = useRef<HTMLDivElement>(null);
 	const fileRef = useRef<HTMLInputElement>(null);
@@ -212,7 +212,7 @@ export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(funct
 						<span className="mb-1.5 flex items-center gap-1">Vehicle <span className="text-rose-400">*</span></span>
 						<select required value={values.vehicleNo} onChange={(event) => patch({ vehicleNo: event.target.value })} className={inputClass()}>
 							<option value="">Select Vehicle</option>
-							{vehicleOptions.map((vehicle) => <option key={vehicle}>{vehicle}</option>)}
+							{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}
 						</select>
 					</label>
 				)}
@@ -221,7 +221,7 @@ export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(funct
 						<span className="mb-1.5 flex items-center gap-1">Vehicle <span className="text-rose-400">*</span></span>
 						<select required value={values.vehicleNo} onChange={(event) => patch({ vehicleNo: event.target.value })} className={inputClass()}>
 							<option value="">Select Vehicle</option>
-							{vehicleOptions.map((vehicle) => <option key={vehicle}>{vehicle}</option>)}
+							{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}
 						</select>
 					</label>
 				)}

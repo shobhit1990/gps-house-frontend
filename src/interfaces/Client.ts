@@ -1,8 +1,11 @@
+import type { Status } from "@/enums/Status";
+
 export interface CreateClientRequest {
-  ownerName: string;
-  username: string;
+  owner_name: string;
+  userName: string;
   password: string;
-  company: string;
+  confirmPassword: string;
+  companyName: string;
   name?: string;
   email?: string;
   phone?: string;
@@ -14,16 +17,18 @@ export interface CreateClientRequest {
   /** Cropped client image as a data URL. */
   image?: string;
   active: boolean;
+  status: Status;
 }
 
 export type UpdateClientRequest = Partial<CreateClientRequest> & {
   suspended?: boolean;
 };
 
-export interface Client extends Omit<CreateClientRequest, "password"> {
+export interface Client extends Omit<CreateClientRequest, "password" | "confirmPassword" | "status"> {
   id: string | number;
   externalId: string;
   password?: string;
+  status?: Status;
   vehicleCount?: number;
   suspended?: boolean;
   inactiveDate?: string;

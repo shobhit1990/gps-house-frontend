@@ -5,7 +5,7 @@ import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useCreateBillingDetailsMutation } from "@/store/services/api/BillingDetails";
 import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
-import { useCreateTransporterMutation } from "@/store/services/api/Transporter";
+import { useCreateTransporterMutation, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
 import { CalendarDays, Eye, EyeOff, Info, Search, X } from "lucide-react";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
@@ -49,10 +49,10 @@ const defaultRolePermissions: Record<string, boolean> = {
 const usernamePattern = /^[A-Za-z0-9_\-*@]+$/;
 
 type FormState = {
-	username: string;
+	userName: string;
 	password: string;
 	confirmPassword: string;
-	company: string;
+	companyName: string;
 	client: string;
 	timezone: string;
 	inactiveTime: string;
@@ -61,8 +61,8 @@ type FormState = {
 	email: string;
 	phone: string;
 	address: string;
-	subscriptionStart: string;
-	subscriptionDue: string;
+	subscriptionStartDate: string;
+	subscriptionDueDate: string;
 	subscriptionExtend: string;
 	subscriptionExpiryCount: string;
 	maxPoiRadius: string;
@@ -71,10 +71,11 @@ type FormState = {
 	active: string;
 	overwriteSubscription: string;
 	inactiveAfterExpiry: string;
-	billingName: string;
+	billingCompanyName: string;
 	gstNumber: string;
 	billingEmail: string;
 	billingPhone: string;
+	website: string;
 	billingAddress: string;
 	paymentMode: string;
 };
@@ -89,10 +90,10 @@ function localDate(yearsAhead = 0) {
 
 function createEmptyForm(timezone: string, language: string): FormState {
 	return {
-		username: "",
+		userName: "",
 		password: "",
 		confirmPassword: "",
-		company: "",
+		companyName: "",
 		client: "",
 		timezone,
 		inactiveTime: "12",
@@ -101,8 +102,8 @@ function createEmptyForm(timezone: string, language: string): FormState {
 		email: "",
 		phone: "",
 		address: "",
-		subscriptionStart: localDate(),
-		subscriptionDue: localDate(1),
+		subscriptionStartDate: localDate(),
+		subscriptionDueDate: localDate(1),
 		subscriptionExtend: localDate(1),
 		subscriptionExpiryCount: "10",
 		maxPoiRadius: "",
@@ -111,11 +112,12 @@ function createEmptyForm(timezone: string, language: string): FormState {
 		active: "true",
 		overwriteSubscription: "false",
 		inactiveAfterExpiry: "false",
-		billingName: "",
+		billingCompanyName: "",
 		gstNumber: "",
 		billingEmail: "",
 		billingPhone: "",
 		billingAddress: "",
+		website: "",
 		paymentMode: "",
 	};
 }
@@ -155,8 +157,9 @@ export function AddTransporterDialog({
 	onSave: () => void;
 }) {
 	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
+	const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
 	const [createBillingDetails, { isLoading: creatingBilling }] = useCreateBillingDetailsMutation();
-	const isSaving = creatingTransporter || creatingBilling;
+	const isSaving = creatingTransporter || updatingTransporter || creatingBilling;
 	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
@@ -169,6 +172,7 @@ export function AddTransporterDialog({
 		[timezones],
 	);
 	const [activeTab, setActiveTab] = useState<TransporterTab>("Add Transporter");
+	const [savedTransporterId, setSavedTransporterId] = useState("");
 	const [formError, setFormError] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -208,13 +212,15 @@ export function AddTransporterDialog({
 		if (activeTab === "Billing Detail") {
 			setValues((current) => ({
 				...current,
-				billingName: "",
+				billingCompanyName: "",
 				gstNumber: "",
 				billingEmail: "",
 				billingPhone: "",
 				billingAddress: "",
+				website: "",
 				paymentMode: "",
 			}));
+			setFormError("");
 			return;
 		}
 		setValues(createEmptyForm(timezoneOptions[0] || fallbackTimezones[0], languageOptions[0] || fallbackLanguages[0]));
@@ -225,59 +231,87 @@ export function AddTransporterDialog({
 
 	const save = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.company.trim() || !values.client || !values.timezone || !values.inactiveTime || !values.language || !values.subscriptionStart || !values.subscriptionDue) {
-			setActiveTab("Add Transporter");
-			setFormError("Fill the required transporter fields before saving.");
-			return;
-		}
-		if (!usernamePattern.test(values.username.trim())) {
-			setActiveTab("Add Transporter");
-			setFormError("Username can only contain A-z, 0-9, _, -, *, @.");
-			return;
-		}
-		if (values.password !== values.confirmPassword) {
-			setActiveTab("Add Transporter");
-			setFormError("Password and Confirm Password must match.");
-			return;
-		}
-		const hasBilling = [values.billingName, values.gstNumber, values.billingEmail, values.billingPhone, values.billingAddress, values.paymentMode].some((value) => value.trim());
-		if (hasBilling && !values.billingName.trim()) {
-			setActiveTab("Billing Detail");
-			setFormError("Billing Name is required to save billing details.");
+		setFormError("");
+
+		if (activeTab === "Add Transporter") {
+			if (!values.userName.trim() || !values.password || !values.confirmPassword || !values.companyName.trim() || !values.client || !values.timezone || !values.inactiveTime || !values.language || !values.subscriptionStartDate || !values.subscriptionDueDate) {
+				setFormError("Fill the required transporter fields before saving.");
+				return;
+			}
+			if (!usernamePattern.test(values.userName.trim())) {
+				setFormError("Username can only contain A-z, 0-9, _, -, *, @.");
+				return;
+			}
+			if (values.password !== values.confirmPassword) {
+				setFormError("Password and Confirm Password must match.");
+				return;
+			}
+			try {
+				const saved = await createTransporter(buildTransporterPayload(values, [], false)).unwrap();
+				setSavedTransporterId(saved.externalId);
+				setActiveTab("Access Management");
+				toast.success("Transporter saved. Set access roles and save to continue.");
+			} catch (error) {
+				console.error("Failed to create transporter.", error);
+				setFormError(apiErrorMessage(error, "Could not save the transporter. Please try again."));
+			}
 			return;
 		}
 
-		let transporterId: string;
-		try {
-			const saved = await createTransporter(buildTransporterPayload(values, transporterRoles.filter((role) => rolePermissions[role]))).unwrap();
-			transporterId = saved.externalId;
-		} catch (error) {
-			console.error("Failed to create transporter.", error);
-			setFormError(apiErrorMessage(error, "Could not save the transporter. Please try again."));
+		if (!savedTransporterId) {
+			setFormError("Save the transporter details before saving access or billing information.");
 			return;
 		}
 
+		if (activeTab === "Access Management") {
+			try {
+				await updateTransporter({
+					externalId: savedTransporterId,
+					body: { roles: transporterRoles.filter((role) => rolePermissions[role]) },
+				}).unwrap();
+				setActiveTab("Billing Detail");
+				toast.success("Transporter access roles saved.");
+			} catch (error) {
+				console.error("Failed to update transporter access roles.", error);
+				setFormError(apiErrorMessage(error, "Could not save transporter access roles. Please try again."));
+			}
+			return;
+		}
+
+		const hasBilling = [
+			values.billingCompanyName,
+			values.gstNumber,
+			values.billingEmail,
+			values.billingPhone,
+			values.billingAddress,
+			values.website,
+			values.paymentMode,
+		].some((value) => Boolean(value?.trim()));
+		if (hasBilling && (!values.billingCompanyName.trim() || !values.billingAddress.trim())) {
+			setFormError("Company Name and Address are required to save billing details.");
+			return;
+		}
 		if (hasBilling) {
 			try {
 				await createBillingDetails({
-					transporter: transporterId,
-					billingName: values.billingName.trim(),
+					transporter: savedTransporterId,
+					companyName: values.billingCompanyName.trim(),
 					gstNumber: values.gstNumber.trim() || undefined,
 					billingEmail: values.billingEmail.trim() || undefined,
 					billingPhone: values.billingPhone.trim() || undefined,
 					billingAddress: values.billingAddress.trim() || undefined,
+					website: values.website.trim() || undefined,
 					paymentMode: values.paymentMode || undefined,
 					status: Status.ACTIVE,
 				}).unwrap();
 			} catch (error) {
 				console.error("Failed to create billing details.", error);
-				toast.error(apiErrorMessage(error, "Transporter saved, but billing details could not be saved."));
-				onSave();
+				setFormError(apiErrorMessage(error, "Transporter and access roles were saved, but billing details could not be saved."));
 				return;
 			}
 		}
 
-		toast.success("Transporter saved.");
+		toast.success(hasBilling ? "Billing details saved." : "Transporter setup completed.");
 		onSave();
 	};
 
@@ -351,7 +385,7 @@ export function AddTransporterDialog({
 								{control(
 									<>
 										<FieldLabel label="Username" required isDark={isDark} />
-										<input value={values.username} onChange={(event) => update("username", event.target.value)} placeholder="Username" className={inputClass} />
+										<input value={values.userName} onChange={(event) => update("userName", event.target.value)} placeholder="" className={inputClass} />
 									</>,
 									"Only contains [ A-z, 0-9, _, -, *, @ ]",
 								)}
@@ -359,7 +393,7 @@ export function AddTransporterDialog({
 									<>
 										<FieldLabel label="Password" required isDark={isDark} />
 										<span className="relative block">
-											<input type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => update("password", event.target.value)} placeholder="Password" className={`${inputClass} pr-11`} />
+											<input type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => update("password", event.target.value)} placeholder="" className={`${inputClass} pr-11`} />
 											<button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
 												{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 											</button>
@@ -370,7 +404,7 @@ export function AddTransporterDialog({
 									<>
 										<FieldLabel label="Confirm Password" required isDark={isDark} />
 										<span className="relative block">
-											<input type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} placeholder="Confirm Password" className={`${inputClass} pr-11`} />
+											<input type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} placeholder="" className={`${inputClass} pr-11`} />
 											<button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
 												{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
 											</button>
@@ -380,7 +414,7 @@ export function AddTransporterDialog({
 								{control(
 									<>
 										<FieldLabel label="Company Name" required isDark={isDark} />
-										<input value={values.company} onChange={(event) => update("company", event.target.value)} placeholder="Company Name" className={inputClass} />
+										<input value={values.companyName} onChange={(event) => update("companyName", event.target.value)} placeholder="" className={inputClass} />
 									</>,
 								)}
 								{control(
@@ -428,15 +462,15 @@ export function AddTransporterDialog({
 										</span>
 									</>,
 								)}
-								{control(<><FieldLabel label="Name" optional isDark={isDark} /><input value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="Name" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} placeholder="Email" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" value={values.phone} onChange={(event) => update("phone", event.target.value)} placeholder="Phone" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Address" optional isDark={isDark} /><input value={values.address} onChange={(event) => update("address", event.target.value)} placeholder="Address" className={inputClass} /></>)}
+								{control(<><FieldLabel label="Name" optional isDark={isDark} /><input value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="" className={inputClass} /></>)}
+								{control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} placeholder="" className={inputClass} /></>)}
+								{control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" value={values.phone} onChange={(event) => update("phone", event.target.value)} placeholder="" className={inputClass} /></>)}
+								{control(<><FieldLabel label="Address" optional isDark={isDark} /><input value={values.address} onChange={(event) => update("address", event.target.value)} placeholder="" className={inputClass} /></>)}
 								{control(
 									<>
 										<FieldLabel label="Subscription Start Date" required isDark={isDark} />
 										<span className="relative block">
-											<input type="date" value={values.subscriptionStart} onChange={(event) => update("subscriptionStart", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
+											<input type="date" value={values.subscriptionStartDate} onChange={(event) => update("subscriptionStartDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
 											<CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
 										</span>
 									</>,
@@ -445,7 +479,7 @@ export function AddTransporterDialog({
 									<>
 										<FieldLabel label="Subscription Due Date" required isDark={isDark} />
 										<span className="relative block">
-											<input type="date" value={values.subscriptionDue} onChange={(event) => update("subscriptionDue", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
+											<input type="date" value={values.subscriptionDueDate} onChange={(event) => update("subscriptionDueDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
 											<CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
 										</span>
 									</>,
@@ -459,7 +493,7 @@ export function AddTransporterDialog({
 										</span>
 									</>,
 								)}
-								{control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="number" min="0" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", event.target.value)} placeholder="10" className={inputClass} /></>)}
+								{control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="number" min="0" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", event.target.value)} placeholder="" className={inputClass} /></>)}
 								{control(<><FieldLabel label="Maximum Radius For Nearest POI (in Km)" info="Radius used to match the nearest point of interest." isDark={isDark} /><input type="number" min="0" value={values.maxPoiRadius} onChange={(event) => update("maxPoiRadius", event.target.value)} className={inputClass} /></>)}
 								{control(<><FieldLabel label="Minimum Distance For Address (in Km)" info="Minimum distance before an address is resolved." isDark={isDark} /><input type="number" min="0" value={values.minAddressDistance} onChange={(event) => update("minAddressDistance", event.target.value)} className={inputClass} /></>)}
 								{control(<><FieldLabel label="Data Restriction (in Days)" optional info="How many days of history this transporter can view." isDark={isDark} /><input type="number" min="0" value={values.dataRestriction} onChange={(event) => update("dataRestriction", event.target.value)} className={inputClass} /></>)}
@@ -507,7 +541,7 @@ export function AddTransporterDialog({
 						<section aria-label="Transporter role access">
 							<label className="relative mb-3 block max-w-sm">
 								<Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-								<input type="search" value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} placeholder="Search roles" aria-label="Search roles" className={`${inputClass} pl-9`} />
+								<input type="search" value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} placeholder="" aria-label="Search roles" className={`${inputClass} pl-9`} />
 							</label>
 							<div className={`overflow-hidden rounded-xl border ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
 								<div className={`grid grid-cols-[1fr_100px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${isDark ? "bg-[#08142e] text-slate-400" : "bg-slate-100 text-slate-600"}`}>
@@ -539,25 +573,20 @@ export function AddTransporterDialog({
 
 					{activeTab === "Billing Detail" ? (
 						<div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-							{control(<><FieldLabel label="Billing Name" optional isDark={isDark} /><input value={values.billingName} onChange={(event) => update("billingName", event.target.value)} placeholder="Billing Name" className={inputClass} /></>)}
-							{control(<><FieldLabel label="GST Number" optional isDark={isDark} /><input value={values.gstNumber} onChange={(event) => update("gstNumber", event.target.value)} placeholder="GST Number" className={inputClass} /></>)}
-							{control(<><FieldLabel label="Billing Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value)} placeholder="Billing Email" className={inputClass} /></>)}
-							{control(<><FieldLabel label="Billing Phone" optional isDark={isDark} /><input type="tel" value={values.billingPhone} onChange={(event) => update("billingPhone", event.target.value)} placeholder="Billing Phone" className={inputClass} /></>)}
-							{control(<><FieldLabel label="Billing Address" optional isDark={isDark} /><input value={values.billingAddress} onChange={(event) => update("billingAddress", event.target.value)} placeholder="Billing Address" className={inputClass} /></>)}
 							{control(
 								<>
-									<FieldLabel label="Payment Mode" optional isDark={isDark} />
-									<span className="relative block">
-										<select value={values.paymentMode} onChange={(event) => update("paymentMode", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-											<option value="">Select</option>
-											<option value="cash">Cash</option>
-											<option value="online">Online</option>
-											<option value="cheque">Cheque</option>
-										</select>
-										<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
-									</span>
+									<FieldLabel label="Company Name" required isDark={isDark} />
+									<input value={values.billingCompanyName} onChange={(event) => update("billingCompanyName", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} />
 								</>,
+								"Only contains [ A-z, 0-9, ., _, -, *, @ ]",
 							)}
+							{control(<><FieldLabel label="Contact" optional isDark={isDark} /><input type="tel" value={values.billingPhone} onChange={(event) => update("billingPhone", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+							{control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+							{control(<><FieldLabel label="Website" optional isDark={isDark} /><input type="url" value={values.website} onChange={(event) => update("website", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+							{control(<><FieldLabel label="GSTIN" optional isDark={isDark} /><input value={values.gstNumber} onChange={(event) => update("gstNumber", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+							<div className="sm:col-span-2">
+								{control(<><FieldLabel label="Address" required isDark={isDark} /><input value={values.billingAddress} onChange={(event) => update("billingAddress", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+							</div>
 						</div>
 					) : null}
 				</div>
@@ -567,7 +596,7 @@ export function AddTransporterDialog({
 						Reset
 					</button>
 					<button type="submit" disabled={isSaving} className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
-						{isSaving ? "Saving…" : "Save"}
+						{isSaving ? "Saving…" : activeTab === "Billing Detail" ? "Finish" : "Save & Continue"}
 					</button>
 				</footer>
 			</form>
