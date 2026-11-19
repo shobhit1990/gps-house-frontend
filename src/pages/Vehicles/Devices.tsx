@@ -1,10 +1,11 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import {
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
 	Columns3,
+	Loader2,
 	Plus,
 	RefreshCw,
 	RotateCcw,
@@ -12,14 +13,19 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { AddDevice } from "@/components/VehicleForm/AddDeviceForm";
-import { AddSensorForm } from "@/components/VehicleForm/AddSensorForm";
+import AddDeviceForm from "@/components/Devices/AddDeviceForm";
 import { useAuth } from "@/contexts/AuthContext";
+import type { Device } from "@/interfaces/AddDevice";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useDeleteDeviceMutation, useGetDevicesQuery } from "@/store/services/api/AddDevice";
+import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
 
 type DeviceStatus = "Active" | "Inactive";
 
 type DeviceRecord = {
+	externalId: string;
 	imei: string;
 	sim: string;
 	operator: string;
@@ -30,8 +36,8 @@ type DeviceRecord = {
 	ignitionWire: "C" | "P";
 	assigned: "Y" | "N";
 	addedMonth: string;
-    added?: string;
-    delete?: boolean;
+	added?: string;
+	delete?: boolean;
 };
 
 const columns: { key: keyof DeviceRecord; label: string }[] = [
@@ -48,41 +54,27 @@ const columns: { key: keyof DeviceRecord; label: string }[] = [
 	{ key: "delete", label: "Delete" },
 ];
 
-const previewDevices: DeviceRecord[] = ([
-	{ imei: "12341234", sim: "1234123412342", operator: "Airtel Gprs", type: "Concox", client: "arun.singh", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-02" },
-	{ imei: "000000000000", sim: "0000000000001", operator: "Airtel Gprs", type: "Concox", client: "arun.singh", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-02" },
-	{ imei: "0000000000001", sim: "0000000000002", operator: "Airtel Gprs", type: "Concox", client: "arun.singh", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-03" },
-	{ imei: "0000000000002", sim: "0000000000003", operator: "Airtel Gprs", type: "Concox", client: "arun.singh", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-03" },
-	{ imei: "0000000000003", sim: "0000000000004", operator: "Airtel Gprs", type: "Concox", client: "arun.singh", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-04" },
-	{ imei: "356857100874929", sim: "5754190080205", operator: "Airtel lot", type: "EV-02", client: "gpshouse", password: "654321", status: "Active", ignitionWire: "P", assigned: "N", addedMonth: "2026-04" },
-	{ imei: "354778340022949", sim: "5754190209563", operator: "Airtel lot", type: "S102A", client: "gpshouse", password: "", status: "Active", ignitionWire: "P", assigned: "Y", addedMonth: "2026-05" },
-	{ imei: "35865710108871", sim: "12541412541251", operator: "Airtel lot", type: "EV-02", client: "gpshouse", password: "", status: "Active", ignitionWire: "P", assigned: "N", addedMonth: "2026-05" },
-	{ imei: "356857101099179", sim: "57541900803017", operator: "Airtel lot", type: "EV-02", client: "gpshouse", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-06" },
-	{ imei: "123123123123123", sim: "3213213213213", operator: "Airtel Gprs", type: "Concox", client: "gpshouse", password: "", status: "Active", ignitionWire: "C", assigned: "N", addedMonth: "2026-06" },
-	{ imei: "8672305202312965", sim: "5754190080000", operator: "Airtel lot", type: "Concox GT06F", client: "gpshouse", password: "", status: "Active", ignitionWire: "P", assigned: "N", addedMonth: "2026-07" },
-	{ imei: "352887075130470", sim: "5754190080205", operator: "Airtel lot", type: "TK-06A", client: "gpshouse", password: "", status: "Active", ignitionWire: "P", assigned: "Y", addedMonth: "2026-08" },
-] as DeviceRecord[]).map((device) => ({
-	...device,
-	added: `01/${device.addedMonth.slice(5)}/${device.addedMonth.slice(0, 4)}`,
-	delete: true,
-}));
+const refId = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as { externalId?: string; id?: string | number; name?: string; deviceName?: string };
+		return String(record.externalId ?? record.id ?? record.name ?? record.deviceName ?? "");
+	}
+	return "";
+};
 
-const emptyDeviceForm = (): Record<string, string> => ({
-	imei: "",
-	sim: "",
-	simOperator: "Airtel Gprs (airtelgprs.com)",
-	secondarySim: "",
-	secondarySimOperator: "Airtel Gprs (airtelgprs.com)",
-	deviceType: "Concox (8505)",
-	deviceClient: "",
-	devicePassword: "",
-	deviceActive: "true",
-	ignitionPositive: "false",
-	ignitionDisconnected: "false",
-	airConditionPositive: "false",
-	attendance: "false",
-	timezoneSetting: "false",
-});
+const formatAdded = (value?: string) => {
+	if (!value) return { added: "—", addedMonth: "" };
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return { added: value, addedMonth: "" };
+	const day = String(date.getDate()).padStart(2, "0");
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const year = date.getFullYear();
+	return {
+		added: `${day}/${month}/${year}`,
+		addedMonth: `${year}-${month}`,
+	};
+};
 
 const inputClass = (isDark: boolean) =>
 	`h-10 min-w-0 rounded-lg border px-3 text-xs outline-none transition ${
@@ -95,7 +87,10 @@ export default function Devices() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState(previewDevices);
+	const { data: devices = [], isLoading, isFetching, refetch } = useGetDevicesQuery();
+	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const { data: deviceTypeMaster = [] } = useGetDeviceTypeMasterQuery();
+	const [deleteDevice, { isLoading: isDeleting }] = useDeleteDeviceMutation();
 	const [search, setSearch] = useState("");
 	const [clientFilter, setClientFilter] = useState("All clients");
 	const [statusFilter, setStatusFilter] = useState("All");
@@ -104,13 +99,51 @@ export default function Devices() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<(keyof DeviceRecord)[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
-	const [deviceStep, setDeviceStep] = useState<"device" | "sensors">("device");
-	const [savedImei, setSavedImei] = useState<string | null>(null);
-	const [addedSensors, setAddedSensors] = useState<string[]>([]);
-	const [showSensorForm, setShowSensorForm] = useState(false);
-	const [deviceForm, setDeviceForm] = useState(emptyDeviceForm);
+	const [deletingId, setDeletingId] = useState<string | null>(null);
 
-	const clients = [...new Set(rows.map((row) => row.client))];
+	const clientNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		clientMaster.forEach((client) => {
+			const id = String(client.id ?? "");
+			if (id) map.set(id, client.name ?? id);
+		});
+		return map;
+	}, [clientMaster]);
+
+	const deviceTypeNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		deviceTypeMaster.forEach((deviceType) => {
+			const id = String(deviceType.externalId ?? deviceType.id ?? "");
+			const name = deviceType.deviceName ?? deviceType.deviceTypeName ?? id;
+			if (id) map.set(id, name);
+		});
+		return map;
+	}, [deviceTypeMaster]);
+
+	const rows = useMemo<DeviceRecord[]>(() => {
+		return devices.map((device: Device) => {
+			const clientId = refId(device.client);
+			const typeId = refId(device.deviceType);
+			const { added, addedMonth } = formatAdded(device.createdAt);
+			return {
+				externalId: device.externalId,
+				imei: device.imei || "—",
+				sim: device.simNumber || "—",
+				operator: device.simOperator || "—",
+				type: deviceTypeNameById.get(typeId) || typeId || "—",
+				client: clientNameById.get(clientId) || clientId || "—",
+				password: device.password || "",
+				status: device.active === false ? "Inactive" : "Active",
+				ignitionWire: device.ignitionWireConnected ? "C" : "P",
+				assigned: "N",
+				addedMonth,
+				added,
+				delete: true,
+			};
+		});
+	}, [devices, clientNameById, deviceTypeNameById]);
+
+	const clients = [...new Set(rows.map((row) => row.client).filter((client) => client && client !== "—"))];
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 
 	const filteredRows = useMemo(() => {
@@ -149,44 +182,20 @@ export default function Devices() {
 
 	const closeAddDialog = () => {
 		setShowAddDialog(false);
-		setDeviceStep("device");
-		setSavedImei(null);
-		setAddedSensors([]);
-		setShowSensorForm(false);
-		setDeviceForm(emptyDeviceForm());
 	};
 
-	const handleAddDevice = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		const imei = deviceForm.imei.trim();
-		if (!imei) return;
-		const now = new Date();
-		const addedMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-		const added = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
-		const record: DeviceRecord = {
-			imei,
-			sim: deviceForm.sim.trim() || "—",
-			operator: deviceForm.simOperator || "—",
-			type: deviceForm.deviceType || "—",
-			client: deviceForm.deviceClient || "—",
-			password: deviceForm.devicePassword || "",
-			status: deviceForm.deviceActive === "true" ? "Active" : "Inactive",
-			ignitionWire: deviceForm.ignitionPositive === "true" ? "C" : "P",
-			assigned: "N",
-			addedMonth,
-			added,
-			delete: true,
-		};
-
-		setRows((current) => {
-			if (savedImei && current.some((row) => row.imei === savedImei)) {
-				return current.map((row) => (row.imei === savedImei ? record : row));
-			}
-			return [record, ...current];
-		});
-		setSavedImei(imei);
-		setDeviceStep("sensors");
-		setPage(0);
+	const handleDelete = async (device: DeviceRecord) => {
+		if (!device.externalId) return;
+		setDeletingId(device.externalId);
+		try {
+			await deleteDevice(device.externalId).unwrap();
+			toast.success("Device deleted.");
+		} catch (error) {
+			console.error("Failed to delete device.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the device."));
+		} finally {
+			setDeletingId(null);
+		}
 	};
 
 	return (
@@ -219,14 +228,15 @@ export default function Devices() {
 						{activeCount} active devices
 						<button
 							type="button"
-							onClick={resetFilters}
+							onClick={() => void refetch()}
 							aria-label="Refresh device list"
 							title="Refresh device list"
-							className={`ml-2 flex h-9 w-9 items-center justify-center rounded-lg border transition ${
+							disabled={isFetching}
+							className={`ml-2 flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-50 ${
 								isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"
 							}`}
 						>
-							<RefreshCw className="h-4 w-4" />
+							<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 						</button>
 					</div>
 				</section>
@@ -346,48 +356,64 @@ export default function Devices() {
 								</tr>
 							</thead>
 							<tbody>
-								{pageRows.map((device) => (
-									<tr key={device.imei} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
-										{visibleColumns.map((column) => (
-											<td key={column.key} className="whitespace-nowrap px-4 py-2.5">
-												{column.key === "delete" ? (
-													device.delete ? (
-														<button
-															type="button"
-															onClick={() => setRows((current) => current.filter((row) => row !== device))}
-															aria-label={`Delete device ${device.imei}`}
-															className={`flex h-7 w-7 items-center justify-center rounded-md transition ${isDark ? "text-slate-500 hover:bg-rose-300/[0.09] hover:text-rose-200" : "text-slate-500 hover:bg-rose-100 hover:text-rose-600"}`}
-														>
-															<Trash2 className="h-3.5 w-3.5" />
-														</button>
-													) : "—"
-												) : column.key === "imei" || column.key === "sim" ? (
-													<span className={`font-medium ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{device[column.key] || "—"}</span>
-												) : column.key === "status" ? (
-													<span className={`rounded-md border px-2 py-1 text-[9px] font-semibold ${device.status === "Active" ? (isDark ? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700") : (isDark ? "border-slate-300/15 bg-slate-300/[0.06] text-slate-300" : "border-slate-200 bg-slate-100 text-slate-700")}`}>
-														{device.status}
-													</span>
-												) : column.key === "ignitionWire" || column.key === "assigned" ? (
-													<span className={`inline-flex min-w-5 justify-center rounded px-1.5 py-0.5 text-[9px] font-bold ${device[column.key] === "C" || device[column.key] === "Y" ? (isDark ? "bg-emerald-300/20 text-emerald-200" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-amber-300/20 text-amber-200" : "bg-amber-100 text-amber-700")}`}>
-														{device[column.key]}
-													</span>
-												) : column.key === "added" ? (
-													device.added || "—"
-												) : (
-													device[column.key] || "—"
-												)}
-											</td>
-										))}
-									</tr>
-								))}
-								{pageRows.length === 0 && (
+								{isLoading ? (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<Search className={`mx-auto h-5 w-5 ${isDark ? "text-slate-600" : "text-slate-400"}`} />
-											<p className={`mt-3 text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No devices found</p>
-											<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-500"}`}>Adjust the filters or search terms and try again.</p>
+											<Loader2 className={`mx-auto h-5 w-5 animate-spin ${isDark ? "text-cyan-300" : "text-cyan-600"}`} />
+											<p className={`mt-3 text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>Loading devices...</p>
 										</td>
 									</tr>
+								) : (
+									<>
+										{pageRows.map((device) => (
+											<tr key={device.externalId || device.imei} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+												{visibleColumns.map((column) => (
+													<td key={column.key} className="whitespace-nowrap px-4 py-2.5">
+														{column.key === "delete" ? (
+															device.delete ? (
+																<button
+																	type="button"
+																	onClick={() => void handleDelete(device)}
+																	disabled={isDeleting && deletingId === device.externalId}
+																	aria-label={`Delete device ${device.imei}`}
+																	className={`flex h-7 w-7 items-center justify-center rounded-md transition disabled:opacity-50 ${isDark ? "text-slate-500 hover:bg-rose-300/[0.09] hover:text-rose-200" : "text-slate-500 hover:bg-rose-100 hover:text-rose-600"}`}
+																>
+																	{isDeleting && deletingId === device.externalId ? (
+																		<Loader2 className="h-3.5 w-3.5 animate-spin" />
+																	) : (
+																		<Trash2 className="h-3.5 w-3.5" />
+																	)}
+																</button>
+															) : "—"
+														) : column.key === "imei" || column.key === "sim" ? (
+															<span className={`font-medium ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{device[column.key] || "—"}</span>
+														) : column.key === "status" ? (
+															<span className={`rounded-md border px-2 py-1 text-[9px] font-semibold ${device.status === "Active" ? (isDark ? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700") : (isDark ? "border-slate-300/15 bg-slate-300/[0.06] text-slate-300" : "border-slate-200 bg-slate-100 text-slate-700")}`}>
+																{device.status}
+															</span>
+														) : column.key === "ignitionWire" || column.key === "assigned" ? (
+															<span className={`inline-flex min-w-5 justify-center rounded px-1.5 py-0.5 text-[9px] font-bold ${device[column.key] === "C" || device[column.key] === "Y" ? (isDark ? "bg-emerald-300/20 text-emerald-200" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-amber-300/20 text-amber-200" : "bg-amber-100 text-amber-700")}`}>
+																{device[column.key]}
+															</span>
+														) : column.key === "added" ? (
+															device.added || "—"
+														) : (
+															String(device[column.key] ?? "—")
+														)}
+													</td>
+												))}
+											</tr>
+										))}
+										{pageRows.length === 0 && (
+											<tr>
+												<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
+													<Search className={`mx-auto h-5 w-5 ${isDark ? "text-slate-600" : "text-slate-400"}`} />
+													<p className={`mt-3 text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No devices found</p>
+													<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-500"}`}>Adjust the filters or search terms and try again.</p>
+												</td>
+											</tr>
+										)}
+									</>
 								)}
 							</tbody>
 						</table>
@@ -431,114 +457,15 @@ export default function Devices() {
 						if (event.target === event.currentTarget) closeAddDialog();
 					}}
 				>
-					<div
-						className={`flex max-h-[96vh] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="device-add-title"
-					>
-						<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${
-							isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"
-						}`}>
-							<div>
-								<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-								<h2 id="device-add-title" className="text-[15px] font-semibold">Add device</h2>
-							</div>
-							<button
-								type="button"
-								onClick={closeAddDialog}
-								aria-label="Close device form"
-								className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
-							>
-								<X className="h-5 w-5 stroke-[3]" />
-							</button>
-						</header>
-						{deviceStep === "device" ? (
-							<form onSubmit={handleAddDevice} className="flex min-h-0 flex-1 flex-col">
-								<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
-									<AddDevice
-										isDark={isDark}
-										values={deviceForm}
-										onChange={(name, value) => setDeviceForm((current) => ({ ...current, [name]: value }))}
-									/>
-								</div>
-								<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${
-									isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
-								}`}>
-									<button
-										type="button"
-										onClick={() => setDeviceForm(emptyDeviceForm())}
-										className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
-											isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-										}`}
-									>
-										Reset
-									</button>
-									<button
-										type="submit"
-										className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition ${
-											isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-										}`}
-									>
-										<Plus className="h-3.5 w-3.5" /> Save
-									</button>
-								</footer>
-							</form>
-						) : (
-							<div className="flex min-h-[320px] flex-1 flex-col">
-								<div className={`grid grid-cols-2 border-b text-[13px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-									<button
-										type="button"
-										onClick={() => setDeviceStep("device")}
-										className={`h-12 ${isDark ? "text-slate-300 hover:bg-white/[0.03]" : "text-slate-700 hover:bg-slate-50"}`}
-									>
-										Add Device
-									</button>
-									<button
-										type="button"
-										aria-current="page"
-										className={`h-12 font-medium ${isDark ? "bg-white/[0.06] text-white" : "bg-slate-100 text-slate-900"}`}
-									>
-										Add Sensor Details
-									</button>
-								</div>
-								<div className="flex flex-1 flex-col px-5 py-5">
-									{addedSensors.length > 0 && (
-										<ul className={`mb-4 space-y-2 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-											{addedSensors.map((sensor) => (
-												<li key={sensor} className={`rounded-lg border px-3 py-2 ${isDark ? "border-white/[0.08] bg-white/[0.03]" : "border-slate-200 bg-slate-50"}`}>
-													{sensor}
-												</li>
-											))}
-										</ul>
-									)}
-									<div className="mt-auto flex justify-end">
-										<button
-											type="button"
-											onClick={() => setShowSensorForm(true)}
-											className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition ${
-												isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-											}`}
-										>
-											<Plus className="h-3.5 w-3.5" /> Add Sensor
-										</button>
-									</div>
-								</div>
-							</div>
-						)}
-					</div>
-					{showSensorForm && (
-						<AddSensorForm
-							onClose={() => setShowSensorForm(false)}
-							onSubmit={(sensorValues) => {
-								const name = sensorValues.sensorName || "Sensor";
-								setAddedSensors((current) => [...current, sensorValues.sensorType ? `${name} · ${sensorValues.sensorType}` : name]);
-								setShowSensorForm(false);
+					<div className="w-full max-w-[1160px]" role="dialog" aria-modal="true">
+						<AddDeviceForm
+							isDark={isDark}
+							onClose={closeAddDialog}
+							onSaved={() => {
+								setPage(0);
 							}}
 						/>
-					)}
+					</div>
 				</div>
 			)}
 		</div>

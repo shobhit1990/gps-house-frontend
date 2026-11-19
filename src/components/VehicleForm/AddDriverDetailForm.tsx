@@ -401,37 +401,66 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							</div>
 						</div>
 					) : (
-						<div className="space-y-5">
-							{documents.map((document) => (
-								<div key={document.id} className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
-									<label className={labelClass}>
-										<span className="mb-1.5 flex items-center gap-1">
-											Document Name <span className="text-rose-400">*</span>
-										</span>
-										<input value={document.name} placeholder="Document Name" onChange={(event) => patchDocument(document.id, { name: event.target.value })} className={inputClass} />
-									</label>
-									<div>
-										<span className={`mb-1.5 flex items-center gap-1 ${labelClass}`}>
-											Upload Document <span className="text-rose-400">*</span>
-										</span>
-										<div className="flex items-center gap-3">
-											<input
-												type="file"
-												aria-label={`Upload document ${document.name || document.id}`}
-												onChange={(event) => {
-													const file = event.target.files?.[0];
-													patchDocument(document.id, { file, fileName: file?.name ?? "" });
-												}}
-												className={fileClass}
-											/>
-											<button type="button" aria-label={`Remove document ${document.name || document.id}`} onClick={() => { setDocuments((current) => current.filter((item) => item.id !== document.id)); setFormError(""); }} className={`flex h-[37px] w-[37px] shrink-0 items-center justify-center rounded-lg border ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
-												<Trash2 className="h-3.5 w-3.5" />
-											</button>
+						<div className="flex min-h-[280px] flex-col gap-5">
+							{documents.length > 0 ? (
+								<div className="space-y-5">
+									{documents.map((document) => (
+										<div key={document.id} className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+											<label className={labelClass}>
+												<span className="mb-1.5 flex items-center gap-1">
+													Document Name <span className="text-rose-400">*</span>
+												</span>
+												<input
+													value={document.name}
+													placeholder="Document Name"
+													onChange={(event) => patchDocument(document.id, { name: event.target.value })}
+													className={inputClass}
+												/>
+											</label>
+											<div>
+												<span className={`mb-1.5 flex items-center gap-1 ${labelClass}`}>
+													Upload Document <span className="text-rose-400">*</span>
+												</span>
+												<div className="flex items-center gap-3">
+													<input
+														type="file"
+														aria-label={`Upload document ${document.name || document.id}`}
+														onChange={(event) => {
+															const file = event.target.files?.[0];
+															patchDocument(document.id, { file, fileName: file?.name ?? "" });
+														}}
+														className={fileClass}
+													/>
+													<button
+														type="button"
+														aria-label={`Remove document ${document.name || document.id}`}
+														onClick={() => {
+															setDocuments((current) => current.filter((item) => item.id !== document.id));
+															setFormError("");
+														}}
+														className={`flex h-[37px] w-[37px] shrink-0 items-center justify-center rounded-lg border transition ${
+															isDark
+																? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-200 hover:bg-cyan-300/[0.18]"
+																: "border-cyan-200 bg-cyan-50 text-cyan-600 hover:bg-cyan-100"
+														}`}
+													>
+														<Trash2 className="h-3.5 w-3.5" />
+													</button>
+												</div>
+											</div>
 										</div>
-									</div>
+									))}
 								</div>
-							))}
-							<button type="button" onClick={addDocument} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							) : null}
+							<button
+								type="button"
+								onClick={addDocument}
+								className={`inline-flex h-9 w-fit items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition ${
+									isDark
+										? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
+										: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+								}`}
+							>
 								<Plus className="h-3.5 w-3.5" /> Add Document
 							</button>
 						</div>

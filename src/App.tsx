@@ -55,6 +55,7 @@ import Announcement from "@/pages/Alert/Announcement";
 import Owners from "@/pages/Master/Owners";
 import DeviceType from "@/pages/Master/DeviceType";
 import Roles from "@/pages/Master/Roles";
+import GeoType from "@/pages/Geofence/GeoType";
 import RaisedTicket from "@/pages/Support/RaisedTicket";
 import AnsweredTickets from "@/pages/Support/AnsweredTickets";
 
@@ -84,6 +85,7 @@ const AppContent = () => {
         <Route path="/owners" element={<Owners />} />
         <Route path="/roles" element={<Roles />} />
         <Route path="/device-types" element={<DeviceType />} />
+        <Route path="/geo-types" element={<GeoType />} />
         <Route path="/vehicles" element={<Vehicle />} />
         <Route path="/devices" element={<Devices />} />
         <Route path="/transporters" element={<Transporter />} />

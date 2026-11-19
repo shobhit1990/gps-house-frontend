@@ -1,5 +1,5 @@
 export enum Shapes {
-  CIRCLE = "cirlce",
+  CIRCLE = "circle",
   POLYGON = "polygon",
   RECTANGLE = "rectangle",
 }

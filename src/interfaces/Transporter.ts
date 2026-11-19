@@ -13,7 +13,7 @@ export interface CreateTransporterRequest {
   address?: string;
   subscriptionStartDate: string;
   subscriptionDueDate: string;
-  subscriptionExtend?: string;
+  subscriptionExtendDate?: string;
   subscriptionExpiryCount?: number;
   maximumRadiusForNearestPOI: string;
   minimumDistanceForAddress: string;

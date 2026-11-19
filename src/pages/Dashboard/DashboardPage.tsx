@@ -145,10 +145,7 @@ export default function DashboardPage() {
       <main id="overview" className="mx-auto max-w-[1900px] px-4 pb-6 pt-6 sm:px-6 lg:px-7 lg:pt-7">
           <section className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-gradient-to-r from-cyan-300/[0.09] to-violet-400/[0.08] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100">
-                <Activity className="h-3 w-3" />
-                Fleet overview
-              </div>
+              
             </div>
             <div className="flex w-fit items-center gap-2 rounded-xl border border-white/[0.08] bg-[#08142e]/70 px-3 py-2 text-[11px] text-slate-300 shadow-[0_10px_30px_rgba(0,0,0,0.12)]">
               <Clock3 className="h-3.5 w-3.5 text-violet-200" />

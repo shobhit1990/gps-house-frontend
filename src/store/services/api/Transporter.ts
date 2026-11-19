@@ -4,10 +4,14 @@ import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapRes
 
 type TransporterApiRecord = Omit<Transporter, "externalId"> & { externalId?: string };
 
-const normalizeTransporter = (record: TransporterApiRecord): Transporter => ({
-  ...record,
-  externalId: String(record?.externalId ?? record?.id ?? ""),
-});
+const normalizeTransporter = (record?: TransporterApiRecord | null): Transporter => {
+  const safeRecord = record && typeof record === "object" ? record : ({} as TransporterApiRecord);
+  return {
+    ...safeRecord,
+    id: safeRecord.id ?? "",
+    externalId: String(safeRecord.externalId ?? safeRecord.id ?? ""),
+  };
+};
 
 export const transporterApi = api.injectEndpoints({
   endpoints: (builder) => ({
@@ -28,11 +32,17 @@ export const transporterApi = api.injectEndpoints({
 
     createTransporter: builder.mutation<Transporter, CreateTransporterRequest>({
       query: (body) => ({
-        url: "/transporter/",
+        url: "/transporter",
         method: "POST",
         body,
       }),
-      transformResponse: (response: ApiEnvelope<TransporterApiRecord>) => normalizeTransporter(unwrapResponse(response)),
+      transformResponse: (response: ApiEnvelope<TransporterApiRecord | string>) => {
+        const data = unwrapResponse(response);
+        if (typeof data === "string") {
+          return normalizeTransporter({ id: data } as TransporterApiRecord);
+        }
+        return normalizeTransporter(data);
+      },
       invalidatesTags: [{ type: "Transporters", id: "LIST" }],
     }),
 

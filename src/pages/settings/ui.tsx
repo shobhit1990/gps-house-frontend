@@ -5,7 +5,7 @@ export const inputClass =
   "h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-cyan-400 dark:border-white/[0.08] dark:bg-[#03091c]/70 dark:text-slate-300 dark:placeholder:text-slate-600 dark:focus:border-cyan-300/35";
 
 export const primaryButtonClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-violet-300/30 bg-violet-500/10 px-4 text-xs font-semibold text-violet-800 transition hover:bg-violet-500/15 dark:border-violet-300/20 dark:bg-violet-300/[0.10] dark:text-violet-100 dark:hover:bg-violet-300/[0.16]";
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-gradient-to-r from-cyan-50 to-violet-50 px-4 text-xs font-semibold text-cyan-700 transition hover:from-cyan-100 hover:to-violet-100 dark:border-cyan-300/25 dark:from-cyan-300/10 dark:to-violet-400/10 dark:text-cyan-100 dark:hover:from-cyan-300/[0.16] dark:hover:to-violet-400/[0.16]";
 
 export const quietButtonClass =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:border-cyan-300 dark:border-white/[0.08] dark:bg-[#03091c]/65 dark:text-slate-300 dark:hover:border-cyan-300/20 dark:hover:text-cyan-100";

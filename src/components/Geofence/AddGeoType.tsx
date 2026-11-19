@@ -1,0 +1,113 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { toast } from "sonner";
+import { Loader2, X } from "lucide-react";
+import type { GeoType } from "@/interfaces/GeoType";
+import { useCreateGeoTypeMutation, useUpdateGeoTypeMutation } from "@/store/services/api/GeoType";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+
+type AddGeoTypeDialogProps = {
+	isDark: boolean;
+	geoType?: GeoType | null;
+	onClose: () => void;
+};
+
+export function AddGeoTypeDialog({ isDark, geoType, onClose }: AddGeoTypeDialogProps) {
+	const isEdit = Boolean(geoType);
+	const [geofType, setGeofType] = useState(geoType?.geofType ?? "");
+	const [formError, setFormError] = useState("");
+	const [createGeoType, { isLoading: isCreating }] = useCreateGeoTypeMutation();
+	const [updateGeoType, { isLoading: isUpdating }] = useUpdateGeoTypeMutation();
+	const isSaving = isCreating || isUpdating;
+
+	useEffect(() => {
+		setGeofType(geoType?.geofType ?? "");
+		setFormError("");
+	}, [geoType]);
+
+	const inputClass = `h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition focus:ring-2 ${
+		isDark
+			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08]"
+			: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
+	}`;
+
+	const save = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const trimmed = geofType.trim();
+		if (!trimmed) {
+			setFormError("Geo type name is required.");
+			return;
+		}
+
+		try {
+			if (geoType) {
+				await updateGeoType({ externalId: geoType.externalId, geofType: trimmed }).unwrap();
+				toast.success(`${trimmed} updated.`);
+			} else {
+				await createGeoType({ geofType: trimmed }).unwrap();
+				toast.success(`${trimmed} added.`);
+			}
+			onClose();
+		} catch (error) {
+			console.error("Failed to save geo type.", error);
+			setFormError(apiErrorMessage(error, "Could not save geo type. Please try again."));
+		}
+	};
+
+	return (
+		<div
+			className={`fixed inset-0 z-[800] flex items-center justify-center p-2 backdrop-blur-sm sm:p-4 ${isDark ? "bg-[#020718]/80" : "bg-slate-900/50"}`}
+			onMouseDown={(event) => {
+				if (event.target === event.currentTarget && !isSaving) onClose();
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Escape" && !isSaving) onClose();
+			}}
+		>
+			<form
+				onSubmit={save}
+				noValidate
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="geo-type-dialog-title"
+				className={`flex w-full max-w-md flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+			>
+				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+					<h2 id="geo-type-dialog-title" className="text-[15px] font-semibold">{isEdit ? "Edit Geo Type" : "Add Geo Type"}</h2>
+					<button type="button" onClick={onClose} disabled={isSaving} aria-label="Close dialog" className={`rounded-lg p-1.5 transition disabled:opacity-40 ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
+						<X className="h-5 w-5" />
+					</button>
+				</header>
+
+				<div className="px-5 py-5">
+					<label className="block">
+						<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+							Geo Type<span className="text-rose-400"> *</span>
+						</span>
+						<input
+							autoFocus
+							value={geofType}
+							onChange={(event) => {
+								setGeofType(event.target.value);
+								setFormError("");
+							}}
+							placeholder="Enter geo type (e.g. ATM, Bank)"
+							aria-invalid={Boolean(formError)}
+							className={inputClass}
+						/>
+					</label>
+					{formError && <p role="alert" className={`mt-2 text-[11px] ${isDark ? "text-rose-300" : "text-rose-600"}`}>{formError}</p>}
+				</div>
+
+				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
+					<button type="button" onClick={onClose} disabled={isSaving} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition disabled:opacity-40 ${isDark ? "border-white/[0.10] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+						Cancel
+					</button>
+					<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
+						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+						{isEdit ? "Update" : "Save"}
+					</button>
+				</footer>
+			</form>
+		</div>
+	);
+}

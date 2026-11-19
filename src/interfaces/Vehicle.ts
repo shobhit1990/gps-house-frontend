@@ -1,6 +1,10 @@
 import type { Status } from "@/enums/Status";
 
+export type VehicleSaveType = "vehicle" | "transporter" | "device" | "payment";
+
 export interface CreateVehicleRequest {
+  /** Which form tab is saving this payload. */
+  type: VehicleSaveType;
   vehicle: string;
   mileage: number;
   vehicleType: string;
@@ -9,9 +13,10 @@ export interface CreateVehicleRequest {
   minutes?: string;
   /** Client externalId. */
   client: string;
-  device: string;
-  /** Transporter externalId. */
-  transporter: string;
+  /** Device externalId — linked from the Device tab. */
+  device?: string;
+  /** Transporter externalId — linked from the Transporter / Payment tabs. */
+  transporter?: string;
   subscriptionStartDate: string;
   subscriptionDueDate: string;
   fuelType?: string;
@@ -33,7 +38,20 @@ export interface CreateVehicleRequest {
   reason?: string;
 }
 
-export type UpdateVehicleRequest = Partial<CreateVehicleRequest>;
+/** Payment-tab fields sent on `/vehicle/update/:id` when `type` is `"payment"`. */
+export type VehiclePaymentFields = {
+  sellingPrice?: number;
+  paymentTerm?: string;
+  installationDate?: string;
+  rentalDueDate?: string;
+  technicianName?: string;
+  rental?: number;
+};
+
+export type UpdateVehicleRequest = Partial<CreateVehicleRequest> &
+  VehiclePaymentFields & {
+    type?: VehicleSaveType;
+  };
 
 export interface Vehicle extends CreateVehicleRequest {
   id: string | number;
@@ -41,3 +59,4 @@ export interface Vehicle extends CreateVehicleRequest {
   createdAt?: string;
   updatedAt?: string;
 }
+

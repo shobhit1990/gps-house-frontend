@@ -1,12 +1,19 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import type { MasterOption } from "@/interfaces/EntityMaster";
+import type { TransferCoin } from "@/interfaces/TransferCoin";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useCreateTransferCoinMutation, useGetTransferCoinsQuery } from "@/store/services/api/CoinBanking";
 
 type CoinRecord = {
-	id: number;
+	id: string;
+	externalId: string;
 	added: string;
 	from: string;
 	to: string;
@@ -31,22 +38,48 @@ type AssignType = (typeof assignTypes)[number];
 
 const houseAccount = "gpshouse";
 
-const todayLabel = () => {
-	const now = new Date();
-	return `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+const formatAdded = (value?: string) => {
+	if (!value?.trim()) return "—";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+};
+
+const resolveName = (options: MasterOption[], externalId?: string | null) => {
+	if (!externalId) return "";
+	return options.find((option) => option.id === externalId || option.externalId === externalId)?.name ?? "";
+};
+
+const toCoinRecord = (transfer: TransferCoin, clients: MasterOption[], transporters: MasterOption[]): CoinRecord => {
+	const amount = Number(transfer.coins ?? transfer.coinsDebit ?? 0);
+	const recipientName =
+		transfer.to?.trim() ||
+		(transfer.assignTo === "transporter"
+			? resolveName(transporters, transfer.transporter)
+			: resolveName(clients, transfer.client)) ||
+		"—";
+
+	return {
+		id: String(transfer.id ?? transfer.externalId),
+		externalId: transfer.externalId,
+		added: formatAdded(transfer.createdAt),
+		from: transfer.from?.trim() || houseAccount,
+		to: recipientName,
+		coinsDebit: Number(transfer.coinsDebit ?? amount),
+		coinsCredit: Number(transfer.coinsCredit ?? 0),
+		remainingCoins: Number(transfer.remainingCoins ?? 0),
+	};
 };
 
 export default function CoinBanking() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	const { data: transfers = [], isFetching, refetch } = useGetTransferCoinsQuery();
+	const [createTransfer, { isLoading: isSaving }] = useCreateTransferCoinMutation();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
-	const [rows, setRows] = useState<CoinRecord[]>([]);
-	const [houseBalance, setHouseBalance] = useState(0);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -57,11 +90,22 @@ export default function CoinBanking() {
 	const [coins, setCoins] = useState("0");
 	const [formError, setFormError] = useState("");
 
+	const rows = useMemo(() => transfers.map((transfer) => toCoinRecord(transfer, clients, transporters)), [transfers, clients, transporters]);
+	const houseBalance = useMemo(() => {
+		if (rows.length === 0) return 0;
+		return rows[0]?.remainingCoins ?? 0;
+	}, [rows]);
+
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.added, row.from, row.to, String(row.coinsDebit), String(row.coinsCredit), String(row.remainingCoins)].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) =>
+			[row.added, row.from, row.to, String(row.coinsDebit), String(row.coinsCredit), String(row.remainingCoins)]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
@@ -91,10 +135,12 @@ export default function CoinBanking() {
 		setFormError("");
 	};
 
-	const saveTransfer = (event: FormEvent) => {
+	const saveTransfer = async (event: FormEvent) => {
 		event.preventDefault();
+		if (isSaving) return;
 		const amount = Number(coins);
-		if (!assignee) {
+		const selected = assigneeOptions.find((option) => option.id === assignee);
+		if (!selected) {
 			setFormError(assignType === "Client" ? "Select a client." : "Select a transporter.");
 			return;
 		}
@@ -102,29 +148,29 @@ export default function CoinBanking() {
 			setFormError("No. of Coins must be a whole number greater than 0.");
 			return;
 		}
-		if (amount > houseBalance) {
+		if (amount > houseBalance && houseBalance > 0) {
 			setFormError("Not enough coins.");
 			return;
 		}
 
-		const nextBalance = houseBalance - amount;
-		setHouseBalance(nextBalance);
-		setRows((current) => [
-			{
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				added: todayLabel(),
-				from: houseAccount,
-				to: assignee,
-				coinsDebit: amount,
-				coinsCredit: 0,
-				remainingCoins: nextBalance,
-			},
-			...current,
-		]);
-		setSearch("");
-		setPage(0);
-		resetTransfer();
-		setShowTransfer(false);
+		const assignTo = assignType === "Client" ? "client" : "transporter";
+		try {
+			await createTransfer({
+				assignTo,
+				client: assignTo === "client" ? selected.id : null,
+				transporter: assignTo === "transporter" ? selected.id : null,
+				coins: amount,
+				status: Status.ACTIVE,
+				reason: assignTo === "client" ? "Coins transferred to client" : "Coins transferred to transporter",
+			}).unwrap();
+			toast.success("Coins transferred.");
+			setSearch("");
+			setPage(0);
+			resetTransfer();
+			setShowTransfer(false);
+		} catch (error) {
+			setFormError(apiErrorMessage(error, "Could not transfer coins. Please try again."));
+		}
 	};
 
 	const cell = (key: ColumnKey, row: CoinRecord) => {
@@ -149,8 +195,18 @@ export default function CoinBanking() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Coin Banking</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} transfers</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh coin banking" title="Refresh coin banking" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button
+						type="button"
+						onClick={() => {
+							setSearch("");
+							setPage(0);
+							void refetch();
+						}}
+						aria-label="Refresh coin banking"
+						title="Refresh coin banking"
+						className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}
+					>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -205,7 +261,7 @@ export default function CoinBanking() {
 							</thead>
 							<tbody>
 								{pageRows.map((row) => (
-									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+									<tr key={row.externalId || row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row)}</td>)}
 									</tr>
 								))}
@@ -272,7 +328,7 @@ export default function CoinBanking() {
 									<span className="sr-only">Select {assignType}</span>
 									<select required aria-label={`Select ${assignType}`} value={assignee} onChange={(event) => { setAssignee(event.target.value); setFormError(""); }} className={`${inputClass} h-10 appearance-none pr-8`}>
 										<option value="">Select {assignType}</option>
-										{assigneeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+										{assigneeOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
 									</select>
 									<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 								</label>
@@ -282,8 +338,8 @@ export default function CoinBanking() {
 								</label>
 							</div>
 							<div className="mt-5 flex justify-end">
-								<button type="submit" className={`h-9 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-									Transfer
+								<button type="submit" disabled={isSaving} className={`h-9 rounded-lg border px-5 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+									{isSaving ? "Transferring..." : "Transfer"}
 								</button>
 							</div>
 						</div>
