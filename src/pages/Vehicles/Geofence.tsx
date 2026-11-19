@@ -1,52 +1,35 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Home, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddGeofence, type GeofenceFormValues } from "@/components/Geofence/AddGeofence";
 import { useAuth } from "@/contexts/AuthContext";
+import type { Geofence as GeofenceRecord } from "@/interfaces/Geofence";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import {
+	useCreateGeofenceMutation,
+	useDeleteGeofenceMutation,
+	useGetGeofencesQuery,
+	useLazyGetGeofenceByIdQuery,
+	useUpdateGeofenceMutation,
+} from "@/store/services/api/Geofence";
 
-type GeofenceRecord = {
-	id: number;
-	name: string;
-	placeType: string;
-	geoType: string;
-	assignTo: string;
-	geofenceCode: string;
-	transitTime: string;
-	radius: string;
-	latitude: string;
-	longitude: string;
-	address: string;
-	status: string;
-};
-
-type ColumnKey = "sn" | "name" | "placeType" | "geoType" | "assignTo" | "geofenceCode" | "transitTime";
+type ColumnKey = "sn" | "name" | "type" | "assignType" | "geofenceCode" | "transitTime" | "radius" | "latitude" | "longitude" | "status" | "reason" | "actions";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
 	{ key: "name", label: "Name" },
-	{ key: "placeType", label: "Place Type" },
-	{ key: "geoType", label: "Geo Type" },
-	{ key: "assignTo", label: "Assign To" },
+	{ key: "type", label: "Type" },
+	{ key: "assignType", label: "Assign Type" },
 	{ key: "geofenceCode", label: "Geofence Code" },
 	{ key: "transitTime", label: "Transit Time" },
-];
-
-const seedRows: GeofenceRecord[] = [
-	{
-		id: 1,
-		name: "Home 7996",
-		placeType: "Home",
-		geoType: "GEOFENCE",
-		assignTo: "Vehicle [1]",
-		geofenceCode: "",
-		transitTime: "",
-		radius: "500",
-		latitude: "26.465800",
-		longitude: "80.349800",
-		address: "",
-		status: "Active",
-	},
+	{ key: "radius", label: "Radius" },
+	{ key: "latitude", label: "Latitude" },
+	{ key: "longitude", label: "Longitude" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
+	{ key: "actions", label: "Actions" },
 ];
 
 const textValue = (value: string) => (value.trim() ? value : "—");
@@ -55,66 +38,135 @@ export default function Geofence() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const [rows, setRows] = useState<GeofenceRecord[]>(seedRows);
+	const { data: rows = [], isLoading, isFetching, isError, refetch } = useGetGeofencesQuery();
+	const [createGeofence, { isLoading: isCreating }] = useCreateGeofenceMutation();
+	const [updateGeofence, { isLoading: isUpdating }] = useUpdateGeofenceMutation();
+	const [deleteGeofence, { isLoading: isDeleting }] = useDeleteGeofenceMutation();
+	const [loadGeofence, { isFetching: isLoadingGeofence }] = useLazyGetGeofenceByIdQuery();
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editingGeofence, setEditingGeofence] = useState<GeofenceRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<GeofenceRecord | null>(null);
+	const isSaving = isCreating || isUpdating;
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.name, row.placeType, row.geoType, row.assignTo, row.geofenceCode, row.transitTime].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) =>
+			[
+				row.name,
+				row.geofType,
+				row.type,
+				row.assignType,
+				row.geofenceCode,
+				row.transitTime,
+				row.radius,
+				row.status,
+				row.reason,
+			].join(" ").toLowerCase().includes(query),
+		);
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const saveGeofence = (values: GeofenceFormValues) => {
-		setRows((current) => [
-			...current,
-			{
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				name: values.name,
-				placeType: "",
-				geoType: "GEOFENCE",
-				assignTo: "",
-				geofenceCode: "",
-				transitTime: "",
-				radius: values.radius,
-				latitude: values.latitude,
-				longitude: values.longitude,
-				address: values.address,
-				status: values.status,
-			},
-		]);
-		setSearch("");
-		setPage(0);
+	const closeDialog = () => {
 		setShowAddDialog(false);
+		setEditingGeofence(null);
+	};
+
+	const saveGeofence = async (values: GeofenceFormValues) => {
+		try {
+			if (editingGeofence) {
+				await updateGeofence({
+					externalId: editingGeofence.externalId,
+					body: values,
+				}).unwrap();
+				toast.success("Geofence updated.");
+			} else {
+				await createGeofence(values).unwrap();
+				toast.success("Geofence created.");
+			}
+			setSearch("");
+			setPage(0);
+			closeDialog();
+		} catch (error) {
+			console.error("Failed to save geofence.", error);
+			toast.error(apiErrorMessage(error, "Could not save the geofence."));
+		}
+	};
+
+	const editGeofence = async (row: GeofenceRecord) => {
+		try {
+			const geofence = await loadGeofence(row.externalId).unwrap();
+			setEditingGeofence(geofence);
+			setShowAddDialog(true);
+		} catch (error) {
+			console.error("Failed to load geofence.", error);
+			toast.error(apiErrorMessage(error, "Could not load the geofence."));
+		}
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDelete?.externalId) {
+			toast.error("This geofence does not have a valid ID.");
+			return;
+		}
+		try {
+			await deleteGeofence(pendingDelete.externalId).unwrap();
+			toast.success(`${pendingDelete.name || "Geofence"} deleted.`);
+			setPendingDelete(null);
+		} catch (error) {
+			console.error("Failed to delete geofence.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the geofence."));
+		}
 	};
 
 	const cell = (key: ColumnKey, row: GeofenceRecord, index: number) => {
 		if (key === "sn") return <span className="text-slate-500">{String(safePage * pageSize + index + 1).padStart(2, "0")}</span>;
 		if (key === "name") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.name}</span>;
-		if (key === "placeType") {
-			if (!row.placeType) return "—";
+		if (key === "actions") {
 			return (
-				<span className="inline-flex items-center gap-2">
-					{row.placeType === "Home" && (
-						<span className={`flex h-6 w-6 items-center justify-center rounded-full ${isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>
-							<Home className="h-3.5 w-3.5" />
-						</span>
-					)}
-					{row.placeType}
-				</span>
+				<div className="flex items-center gap-1">
+					<button
+						type="button"
+						onClick={() => void editGeofence(row)}
+						disabled={isLoadingGeofence || !row.externalId}
+						aria-label={`Edit geofence ${row.name}`}
+						title="Edit geofence"
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+					>
+						<Pencil className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
+						onClick={() => setPendingDelete(row)}
+						disabled={isDeleting || !row.externalId}
+						aria-label={`Delete geofence ${row.name}`}
+						title="Delete geofence"
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
+					>
+						<Trash2 className="h-3.5 w-3.5" />
+					</button>
+				</div>
 			);
 		}
-		if (key === "geoType") {
-			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold tracking-wide ${isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>{row.geoType}</span>;
+		if (key === "latitude") return textValue(row.latitude.join(", "));
+		if (key === "longitude") return textValue(row.longitude.join(", "));
+		if (key === "status") {
+			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${row.status.toLowerCase() === "active" ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-slate-300/[0.08] text-slate-300" : "bg-slate-100 text-slate-700")}`}>{row.status}</span>;
 		}
-		return textValue(row[key]);
+		if (key === "type") return textValue(row.geofType || row.type);
+		if (key === "assignType") return textValue(row.assignType);
+		if (key === "geofenceCode") return textValue(row.geofenceCode);
+		if (key === "transitTime") return textValue(row.transitTime);
+		if (key === "radius") return row.radius != null && Number(row.radius) > 0 ? String(row.radius) : "—";
+		if (key === "reason") return textValue(row.reason);
+		return "—";
 	};
 
 	return (
@@ -134,8 +186,8 @@ export default function Geofence() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Geofence</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} geofences</p>
 					</div>
-					<button type="button" onClick={() => { setSearch(""); setPage(0); }} aria-label="Refresh geofences" title="Refresh geofences" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button type="button" onClick={() => void refetch()} aria-label="Refresh geofences" title="Refresh geofences" disabled={isFetching} className={`flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -172,7 +224,7 @@ export default function Geofence() {
 									))}
 								</div>
 							</details>
-							<button type="button" onClick={() => setShowAddDialog(true)} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							<button type="button" onClick={() => { setEditingGeofence(null); setShowAddDialog(true); }} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 								<Plus className="h-3.5 w-3.5" /> Add
 							</button>
 						</div>
@@ -188,14 +240,29 @@ export default function Geofence() {
 								</tr>
 							</thead>
 							<tbody>
-								{pageRows.map((row, index) => (
+								{isLoading && (
+									<tr>
+										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center text-xs text-slate-500">Loading geofences...</td>
+									</tr>
+								)}
+								{isError && (
+									<tr>
+										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
+											<p className="text-sm font-medium text-rose-600">Could not load geofences.</p>
+											<button type="button" onClick={() => void refetch()} className={`mt-3 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.05]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+												<RefreshCw className="h-3.5 w-3.5" /> Retry
+											</button>
+										</td>
+									</tr>
+								)}
+								{!isLoading && !isError && pageRows.map((row, index) => (
 									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => (
 											<td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row, index)}</td>
 										))}
 									</tr>
 								))}
-								{pageRows.length === 0 && (
+								{!isLoading && !isError && pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No geofences match this search</p>
@@ -224,7 +291,57 @@ export default function Geofence() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddGeofence onClose={() => setShowAddDialog(false)} onSubmit={saveGeofence} />}
+			{showAddDialog && (
+				<AddGeofence
+					onClose={closeDialog}
+					onSubmit={saveGeofence}
+					initialValues={editingGeofence ?? undefined}
+					isSaving={isSaving}
+				/>
+			)}
+
+			{pendingDelete && (
+				<div
+					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="geofence-delete-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+					>
+						<h3 id="geofence-delete-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+							Delete geofence?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							This will permanently remove{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>{pendingDelete.name || "this geofence"}</strong>.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(null)}
+								disabled={isDeleting}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmDelete()}
+								disabled={isDeleting}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
+							>
+								{isDeleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			)}
 		</div>
 	);
 }

@@ -24,8 +24,12 @@ export const vehicleApi = api.injectEndpoints({
     }),
 
     getVehicleById: builder.query<Vehicle, string>({
-      query: (externalId) => `/vehicle/getById/${externalId}`,
-      transformResponse: (response: ApiEnvelope<VehicleApiRecord>) => normalizeVehicle(unwrapResponse(response)),
+      query: (externalId) => `/vehicle/getById/${encodeURIComponent(externalId)}`,
+      transformResponse: (response: ApiEnvelope<VehicleApiRecord>) => {
+        const record = unwrapResponse(response);
+        if (!record) throw new Error("Vehicle API returned an empty record.");
+        return normalizeVehicle(record);
+      },
       providesTags: (_result, _error, externalId) => [{ type: "Vehicles", id: externalId }],
     }),
 
@@ -69,6 +73,7 @@ export const vehicleApi = api.injectEndpoints({
 export const {
   useGetVehiclesQuery,
   useGetVehicleByIdQuery,
+  useLazyGetVehicleByIdQuery,
   useCreateVehicleMutation,
   useUpdateVehicleMutation,
   useDeleteVehicleMutation,

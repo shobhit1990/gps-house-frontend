@@ -22,6 +22,8 @@ type AddDeviceProps = {
 	onSelectDevice: (device: Device) => void;
 	onAddNew: () => void;
 	onConfirm?: (field: VehicleFieldConfig) => void;
+	/** When true, detail fields are view-only (selected from master). */
+	readOnly?: boolean;
 };
 
 const referenceValue = (value: unknown): string => {
@@ -41,6 +43,7 @@ export function AddDevice({
 	onSelectDevice,
 	onAddNew,
 	onConfirm,
+	readOnly = false,
 }: AddDeviceProps) {
 	const [inventoryOpen, setInventoryOpen] = useState(false);
 	const [selectedDeviceValue, setSelectedDeviceValue] = useState(selectedDeviceId);
@@ -116,9 +119,7 @@ export function AddDevice({
 
 	const startNewDevice = () => {
 		setDeviceError("");
-		setSelectedDeviceValue("");
 		setSelectedInventoryId("");
-		setFormOpen(true);
 		onAddNew();
 	};
 
@@ -184,14 +185,16 @@ export function AddDevice({
 					<input
 						type="checkbox"
 						checked={value === "true"}
+						disabled={readOnly}
 						onChange={(event: ChangeEvent<HTMLInputElement>) => {
+							if (readOnly) return;
 							if (event.target.checked && confirmOnEnable.has(field.name) && onConfirm) {
 								onConfirm(field);
 								return;
 							}
 							onChange(field.name, String(event.target.checked));
 						}}
-						className="h-4 w-4 rounded border-slate-400 accent-cyan-500"
+						className="h-4 w-4 rounded border-slate-400 accent-cyan-500 disabled:cursor-not-allowed disabled:opacity-70"
 					/>
 					{field.label}
 				</label>
@@ -208,7 +211,7 @@ export function AddDevice({
 							<span className={`ml-1 font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>(Optional)</span>
 						)}
 					</span>
-					{field.actionLabel && (
+					{field.actionLabel && !readOnly && (
 						<button
 							type="button"
 							onClick={openInventory}
@@ -225,8 +228,9 @@ export function AddDevice({
 						<select
 							value={value}
 							required={field.required}
+							disabled={readOnly || (field.name === "deviceType" && deviceTypesLoading)}
 							onChange={(event) => onChange(field.name, event.target.value)}
-							className={`${inputClass} appearance-none pr-9`}
+							className={`${inputClass} appearance-none pr-9 disabled:cursor-not-allowed disabled:opacity-70`}
 						>
 							{field.name === "deviceType" && <option value="">Select Device Type</option>}
 							{(field.name === "deviceClient"
@@ -257,19 +261,22 @@ export function AddDevice({
 							type={field.type === "password" && passwordVisible ? "text" : field.type ?? "text"}
 							value={value}
 							required={field.required}
+							disabled={readOnly}
+							readOnly={readOnly}
 							placeholder={field.placeholder}
 							maxLength={field.maxLength}
 							inputMode={field.inputMode}
 							pattern={field.pattern}
 							onChange={(event) => {
+								if (readOnly) return;
 								const nextValue = field.inputMode === "numeric"
 									? event.target.value.replace(/\D/g, "").slice(0, field.maxLength)
 									: event.target.value;
 								onChange(field.name, nextValue);
 							}}
-							className={`${inputClass} min-w-0 ${field.type === "password" ? "pr-11" : ""}`}
+							className={`${inputClass} min-w-0 disabled:cursor-not-allowed disabled:opacity-70 ${field.type === "password" ? "pr-11" : ""}`}
 						/>
-						{field.type === "password" && (
+						{field.type === "password" && !readOnly && (
 							<button
 								type="button"
 								onClick={() => setPasswordVisible((visible) => !visible)}

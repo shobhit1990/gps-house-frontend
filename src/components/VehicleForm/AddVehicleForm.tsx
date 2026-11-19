@@ -3,20 +3,28 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { CalendarDays, Eye, EyeOff, Info, Loader2, Plus, Search, X } from "lucide-react";
 import { AddDevice } from "@/components/VehicleForm/AddDeviceForm";
+import { AddDeviceDialog } from "@/components/VehicleForm/AddDeviceDialog";
 import { AddSensorForm } from "@/components/VehicleForm/AddSensorForm";
 import { AddVehicle, vehicleDetailDefaults } from "@/components/VehicleForm/AddVehicle";
 import { Payment } from "@/components/VehicleForm/Payment";
+import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { addVehicleFields, type VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
 import type { Device } from "@/interfaces/AddDevice";
 import type { Transporter } from "@/interfaces/Transporter";
 import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-import { useCreatePaymentDetailsMutation, useUpdatePaymentDetailsMutation } from "@/store/services/api/PaymentDetails";
-import { useCreateTransporterMutation, useLazyGetTransporterByIdQuery, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
-import { useCreateVehicleMutation, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
-import { buildDevicePayload, buildPaymentDetailsPayload, buildTransporterPayload, buildVehiclePayload } from "@/components/VehicleForm/vehiclePayloads";
-import { useCreateDeviceMutation, useUpdateDeviceMutation } from "@/store/services/api/AddDevice";
+import { useLazyGetTransporterByIdQuery, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
+import { useCreateVehicleMutation, useLazyGetVehicleByIdQuery, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
+import {
+    buildPaymentDetailsPayload,
+    buildVehicleLinkPayload,
+    buildVehiclePayload,
+    vehicleRelationIds,
+    vehicleToFormValues,
+} from "@/components/VehicleForm/vehiclePayloads";
+import { useLazyGetDeviceByIdQuery } from "@/store/services/api/AddDevice";
 import { SimOperator } from "@/enums/SimOperator";
+import { DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
@@ -24,8 +32,10 @@ const fallbackLanguages = ["English", "Hindi"];
 type VehicleFormValues = Record<string, string>;
 
 type AddVehicleFormProps = {
-	onClose: () => void;
-	onSubmit: (values: VehicleFormValues) => void;
+    onClose: () => void;
+    onSubmit: (values: VehicleFormValues) => void;
+    /** When set, form opens in edit mode and loads `/vehicle/getById/:id`. */
+    vehicleId?: string;
 };
 
 type FieldConfig = VehicleFieldConfig;
@@ -34,1022 +44,1189 @@ type FieldConfig = VehicleFieldConfig;
 type SaveTarget = "transporter" | "device" | "vehicle" | "paymentDetails";
 
 const saveLabels: Record<SaveTarget, string> = {
-	transporter: "Transporter",
-	device: "Device",
-	vehicle: "Vehicle",
-	paymentDetails: "Payment details",
+    transporter: "Transporter",
+    device: "Device",
+    vehicle: "Vehicle",
+    paymentDetails: "Payment details",
 };
 
 const tabs = [
-	"Add Vehicle",
-	"Add Transporter",
-	"Transporter Access Manage",
-	"Add Device",
-	// "Add Sensor Details",
-	"Payment Details (Optional)",
-	// "Custom Fields (Optional)",
+    "Add Vehicle",
+    "Transporter",
+    "Transporter Access Manage",
+    "Add Device",
+    // "Add Sensor Details",
+    "Payment Details (Optional)",
+    // "Custom Fields (Optional)",
 ];
 
 const transporterRoles = [
-	"Basic reports",
-	"Geofence Access Full",
-	"Geofence reports",
-	"Schedule Parking",
-	"Sim Tracking",
-	"Tickets",
-	"User Change Password",
-	"Vehicle Lock",
-	"Users & group access",
-	"Analytics dashboard Access",
-	"No Dashboard Access",
-	"History No Access",
-	"Live_Trip_Dashboard_Only",
-	"No Driver Access",
-	"No History Access",
-	"No Notification Access",
-	"No Parking Access",
-	"No Service Reminder Access",
-	"No Setting Access",
-	"No Share Access",
+    "Basic reports",
+    "Geofence Access Full",
+    "Geofence reports",
+    "Schedule Parking",
+    "Sim Tracking",
+    "Tickets",
+    "User Change Password",
+    "Vehicle Lock",
+    "Users & group access",
+    "Analytics dashboard Access",
+    "No Dashboard Access",
+    "History No Access",
+    "Live_Trip_Dashboard_Only",
+    "No Driver Access",
+    "No History Access",
+    "No Notification Access",
+    "No Parking Access",
+    "No Service Reminder Access",
+    "No Setting Access",
+    "No Share Access",
 ];
 
 const saveTargetByTab: Partial<Record<string, SaveTarget>> = {
-	Transporter: "transporter",
-	"Add Device": "device",
-	"Transporter Access Manage": "transporter",
-	"Add Vehicle": "vehicle",
-	"Payment Details (Optional)": "paymentDetails",
+    Transporter: "transporter",
+    "Add Device": "device",
+    "Transporter Access Manage": "transporter",
+    "Add Vehicle": "vehicle",
+    "Payment Details (Optional)": "paymentDetails",
 };
 
 const usernamePattern = /^[A-Za-z0-9_\-*@]+$/;
 
 const apiErrorMessage = (error: unknown, fallback: string) => {
-	if (!error || typeof error !== "object" || !("data" in error)) {
-		return error instanceof Error ? error.message : fallback;
-	}
+    if (!error || typeof error !== "object" || !("data" in error)) {
+        return error instanceof Error ? error.message : fallback;
+    }
 
-	const data = error.data;
-	if (!data || typeof data !== "object") return fallback;
+    const data = error.data;
+    if (!data || typeof data !== "object") return fallback;
 
-	const payload = data as {
-		message?: unknown;
-		errors?: Array<{ field?: string; message?: string }>;
-	};
-	if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
-	if (Array.isArray(payload.message)) return payload.message.filter((message): message is string => typeof message === "string").join(" ");
-	if (Array.isArray(payload.errors)) {
-		const details = payload.errors
-			.map(({ field, message }) => (message ? `${field ? `${field}: ` : ""}${message}` : ""))
-			.filter(Boolean);
-		if (details.length > 0) return details.join(" ");
-	}
-	return fallback;
+    const payload = data as {
+        message?: unknown;
+        errors?: Array<{ field?: string; message?: string }>;
+    };
+    if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+    if (Array.isArray(payload.message)) return payload.message.filter((message): message is string => typeof message === "string").join(" ");
+    if (Array.isArray(payload.errors)) {
+        const details = payload.errors
+            .map(({ field, message }) => (message ? `${field ? `${field}: ` : ""}${message}` : ""))
+            .filter(Boolean);
+        if (details.length > 0) return details.join(" ");
+    }
+    return fallback;
 };
 
 const toDateInputValue = (value?: string) => value?.slice(0, 10) ?? "";
 
 const transporterToFormValues = (transporter: Transporter): VehicleFormValues => ({
-	username: transporter.userName ?? "",
-	password: "",
-	confirmPassword: "",
-	company: transporter.companyName ?? "",
-	client: String(transporter.client ?? ""),
-	timezone: transporter.timezone ?? "",
-	inactiveTime: String(transporter.inactiveTime ?? ""),
-	language: transporter.language ?? "",
-	name: transporter.name ?? "",
-	email: transporter.email ?? "",
-	phone: transporter.phone ?? "",
-	address: transporter.address ?? "",
-	subscriptionStart: toDateInputValue(transporter.subscriptionStartDate),
-	subscriptionDue: toDateInputValue(transporter.subscriptionDueDate),
-	subscriptionExtend: toDateInputValue(transporter.subscriptionExtend),
-	subscriptionExpiryCount: String(transporter.subscriptionExpiryCount ?? ""),
-	maxPoiRadius: transporter.maximumRadiusForNearestPOI ?? "",
-	minAddressDistance: transporter.minimumDistanceForAddress ?? "",
-	dataRestriction: transporter.dataRestriction === "disabled" ? "" : String(transporter.dataRestriction ?? ""),
-	active: String(transporter.active ?? true),
-	overwriteSubscription: String(transporter.overwriteSubscription ?? false),
-	inactiveAfterExpiry: String(transporter.inactiveAfterExpiry ?? false),
+    username: transporter.userName ?? "",
+    password: "",
+    confirmPassword: "",
+    company: transporter.companyName ?? "",
+    client: String(transporter.client ?? ""),
+    timezone: transporter.timezone ?? "",
+    inactiveTime: String(transporter.inactiveTime ?? ""),
+    language: transporter.language ?? "",
+    name: transporter.name ?? "",
+    email: transporter.email ?? "",
+    phone: transporter.phone ?? "",
+    address: transporter.address ?? "",
+    subscriptionStart: toDateInputValue(transporter.subscriptionStartDate),
+    subscriptionDue: toDateInputValue(transporter.subscriptionDueDate),
+    subscriptionExtend: toDateInputValue(transporter.subscriptionExtendDate),
+    subscriptionExpiryCount: String(transporter.subscriptionExpiryCount ?? ""),
+    maxPoiRadius: transporter.maximumRadiusForNearestPOI ?? "",
+    minAddressDistance: transporter.minimumDistanceForAddress ?? "",
+    dataRestriction: transporter.dataRestriction === "disabled" ? "" : String(transporter.dataRestriction ?? ""),
+    active: String(transporter.active ?? true),
+    overwriteSubscription: String(transporter.overwriteSubscription ?? false),
+    inactiveAfterExpiry: String(transporter.inactiveAfterExpiry ?? false),
 });
 
 const defaultRolePermissions: Record<string, boolean> = {
-	"Basic reports": true,
-	"Tickets": true,
-	"User Change Password": true,
-	"Vehicle Lock": true,
-	"Users & group access": true,
-	"Analytics dashboard Access": true,
+    "Basic reports": true,
+    "Tickets": true,
+    "User Change Password": true,
+    "Vehicle Lock": true,
+    "Users & group access": true,
+    "Analytics dashboard Access": true,
 };
 
 const fieldsByTab: Record<string, FieldConfig[]> = {
-	Transporter: [
-		{ name: "username", label: "Username", placeholder: "Username", required: true, helper: "Only contains [ A-z, 0-9, _, -, *, @ ]" },
-		{ name: "password", label: "Password", placeholder: "Password", type: "password", required: true },
-		{ name: "confirmPassword", label: "Confirm Password", placeholder: "Confirm Password", type: "password", required: true },
-		{ name: "company", label: "Company Name", placeholder: "Company Name", required: true },
-		{ name: "client", label: "Client", placeholder: "Select Client", type: "select", required: true, options: ["Select Client"] },
-		{ name: "timezone", label: "Timezone", type: "select", required: true, options: fallbackTimezones },
-		{ name: "inactiveTime", label: "Inactive Time", type: "select", required: true, options: ["12", "24", "48", "72"] },
-		{ name: "language", label: "Language", type: "select", required: true, options: fallbackLanguages },
-		{ name: "name", label: "Name", placeholder: "Name", optional: true },
-		{ name: "email", label: "Email", placeholder: "Email", type: "email", optional: true },
-		{ name: "phone", label: "Phone", placeholder: "Phone", type: "tel", optional: true },
-		{ name: "address", label: "Address", placeholder: "Address", optional: true },
-		{ name: "subscriptionStart", label: "Subscription Start Date", type: "date", required: true },
-		{ name: "subscriptionDue", label: "Subscription Due Date", type: "date", required: true },
-		{ name: "subscriptionExtend", label: "Subscription Extend Date", type: "date", optional: true },
-		{ name: "subscriptionExpiryCount", label: "Subscription Expiry Count", placeholder: "10", type: "number", optional: true },
-		{ name: "maxPoiRadius", label: "Maximum Radius For Nearest POI (in Km)", type: "number", info: true },
-		{ name: "minAddressDistance", label: "Minimum Distance For Address (in Km)", type: "number", info: true },
-		{ name: "dataRestriction", label: "Data Restriction (in Days)", type: "number", optional: true, info: true },
-		{ name: "active", label: "Active", type: "checkbox" },
-		{ name: "overwriteSubscription", label: "Overwrite Subscription for all vehicles", type: "checkbox" },
-		{ name: "inactiveAfterExpiry", label: "Should vehicle inactive after subscription expire", type: "checkbox" },
-	],
-	"Transporter Access Manage": [],
-	"Add Device": [],
-	"Add Sensor Details": [],
-	"Add Vehicle": [],
-	"Payment Details (Optional)": [
-		{ name: "paymentTransporter", label: "Transporter", type: "select", required: true },
-		{ name: "sellingPrice", label: "Selling Price", type: "number" },
-		{ name: "paymentTerm", label: "Payment Term", type: "select", required: true },
-		{ name: "installationDate", label: "Installation Date", type: "date" },
-		{ name: "rentalDueDate", label: "Rental Due Date", type: "date" },
-		{ name: "technicianName", label: "Technician Name" },
-		{ name: "rental", label: "Rental" },
-		{ name: "paymentRemark", label: "Remark" },
-	],
-	"Custom Fields (Optional)": [
-		{ name: "customField1", label: "Custom Field 1", placeholder: "Enter value", optional: true },
-	],
+    Transporter: [
+        { name: "username", label: "Username", placeholder: "Username", required: true, helper: "Only contains [ A-z, 0-9, _, -, *, @ ]" },
+        { name: "password", label: "Password", placeholder: "Password", type: "password", required: true },
+        { name: "confirmPassword", label: "Confirm Password", placeholder: "Confirm Password", type: "password", required: true },
+        { name: "company", label: "Company Name", placeholder: "Company Name", required: true },
+        { name: "client", label: "Client", placeholder: "Select Client", type: "select", required: true, options: ["Select Client"] },
+        { name: "timezone", label: "Timezone", type: "select", required: true, options: fallbackTimezones },
+        { name: "inactiveTime", label: "Inactive Time", type: "select", required: true, options: ["12", "24", "48", "72"] },
+        { name: "language", label: "Language", type: "select", required: true, options: fallbackLanguages },
+        { name: "name", label: "Name", placeholder: "Name", optional: true },
+        { name: "email", label: "Email", placeholder: "Email", type: "email", optional: true },
+        { name: "phone", label: "Phone", placeholder: "Phone", type: "tel", optional: true },
+        { name: "address", label: "Address", placeholder: "Address", optional: true },
+        { name: "subscriptionStart", label: "Subscription Start Date", type: "date", required: true },
+        { name: "subscriptionDue", label: "Subscription Due Date", type: "date", required: true },
+        { name: "subscriptionExtend", label: "Subscription Extend Date", type: "date", optional: true },
+        { name: "subscriptionExpiryCount", label: "Subscription Expiry Count", placeholder: "10", type: "number", optional: true },
+        { name: "maxPoiRadius", label: "Maximum Radius For Nearest POI (in Km)", type: "number", info: true },
+        { name: "minAddressDistance", label: "Minimum Distance For Address (in Km)", type: "number", info: true },
+        { name: "dataRestriction", label: "Data Restriction (in Days)", type: "number", optional: true, info: true },
+        { name: "active", label: "Active", type: "checkbox" },
+        { name: "overwriteSubscription", label: "Overwrite Subscription for all vehicles", type: "checkbox" },
+        { name: "inactiveAfterExpiry", label: "Should vehicle inactive after subscription expire", type: "checkbox" },
+    ],
+    "Transporter Access Manage": [],
+    "Add Device": [],
+    "Add Sensor Details": [],
+    "Add Vehicle": [],
+    "Payment Details (Optional)": [
+        { name: "paymentTransporter", label: "Transporter", type: "select", required: true },
+        { name: "sellingPrice", label: "Selling Price", type: "number" },
+        { name: "paymentTerm", label: "Payment Term", type: "select", required: true },
+        { name: "installationDate", label: "Installation Date", type: "date" },
+        { name: "rentalDueDate", label: "Rental Due Date", type: "date" },
+        { name: "technicianName", label: "Technician Name" },
+        { name: "rental", label: "Rental" },
+        { name: "paymentRemark", label: "Remark" },
+    ],
+    "Custom Fields (Optional)": [
+        { name: "customField1", label: "Custom Field 1", placeholder: "Enter value", optional: true },
+    ],
 };
 
 function FormField({
-	field,
-	value,
-	onChange,
-	onAction,
-	isDark,
-	disabled,
+    field,
+    value,
+    onChange,
+    onAction,
+    isDark,
+    disabled,
 }: {
-	field: FieldConfig;
-	value: string;
-	onChange: (value: string) => void;
-	onAction?: () => void;
-	isDark: boolean;
-	disabled?: boolean; 
+    field: FieldConfig;
+    value: string;
+    onChange: (value: string) => void;
+    onAction?: () => void;
+    isDark: boolean;
+    disabled?: boolean; 
 }) {
-	const [passwordVisible, setPasswordVisible] = useState(false);
-	const inputType = field.type === "password" && passwordVisible ? "text" : field.type ?? "text";
-	const inputClasses = `h-[37px] w-full rounded-lg border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
-		isDark
-			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08]"
-			: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
-	}`;
+    const [passwordVisible, setPasswordVisible] = useState(false);
+    const inputType = field.type === "password" && passwordVisible ? "text" : field.type ?? "text";
+    const inputClasses = `h-[37px] w-full rounded-lg border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
+        isDark
+            ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08]"
+            : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
+    }`;
 
-	return (
-		<label className={`block min-w-0 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-			<span className="mb-1.5 flex items-center justify-between gap-1.5">
-				<span className="flex items-center gap-1.5">
-					{field.label}{" "}
-					{field.required ? <span className="text-rose-400">*</span> : field.optional ? <span className={`font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>(Optional)</span> : null}
-				</span>
-				{field.actionLabel && (
-					<button
-						type="button"
-						onClick={onAction}
-						className={`shrink-0 text-[11px] font-medium underline underline-offset-2 ${
-							isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
-						}`}
-					>
-						{field.actionLabel}
-					</button>
-				)}
-				{field.info && (
-					<Info
-						aria-label={`Information about ${field.label}`}
-						aria-labelledby={field.label}
-						className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`}
-					/>
-				)}
-			</span>
-			<span className="relative flex">
-				{field.type === "select" ? (
-					<select
-						value={value}
-						required={field.required}
-						disabled={disabled}
-						onChange={(event) => onChange(event.target.value)}
-						className={`${inputClasses} appearance-none pr-9`}
-					>
-						{field.options?.map((option, index) => (
-							<option key={option} value={index === 0 && option?.startsWith("Select ") ? "" : option}>
-								{field.optionLabels?.[option] ?? option}
-							</option>
-						))}
-					</select>
-				) : (
-					<>
-						<input
-							type={inputType}
-							value={value}
-							required={field.required}
-							placeholder={field.placeholder}
-							maxLength={field.maxLength}
-							inputMode={field.inputMode}
-							pattern={field.pattern}
-							onChange={(event) => onChange(event.target.value)}
-							className={`${inputClasses} min-w-0`}
-						/>
-						{field.type === "password" && (
-							<button
-								type="button"
-								onClick={() => setPasswordVisible((visible) => !visible)}
-								aria-label={passwordVisible ? "Hide password" : "Show password"}
-								className={`absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg border-l ${
-									isDark
-										? "border-white/[0.09] bg-white/[0.04] text-slate-400 hover:text-cyan-100"
-										: "border-slate-200 bg-slate-50 text-slate-600 hover:text-cyan-700"
-								}`}
-							>
-								{passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-							</button>
-						)}
-					</>
-				)}
-				{field.type === "select" && (
-					<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>⌄</span>
-				)}
-				{field.type === "date" && <CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-500"}`} />}
-			</span>
-			{field.helper && <span className={`mt-1 block text-[11px] font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>{field.helper}</span>}
-		</label>
-	);
+    return (
+        <label className={`block min-w-0 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+            <span className="mb-1.5 flex items-center justify-between gap-1.5">
+                <span className="flex items-center gap-1.5">
+                    {field.label}{" "}
+                    {field.required ? <span className="text-rose-400">*</span> : field.optional ? <span className={`font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>(Optional)</span> : null}
+                </span>
+                {field.actionLabel && (
+                    <button
+                        type="button"
+                        onClick={onAction}
+                        className={`shrink-0 text-[11px] font-medium underline underline-offset-2 ${
+                            isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
+                        }`}
+                    >
+                        {field.actionLabel}
+                    </button>
+                )}
+                {field.info && (
+                    <Info
+                        aria-label={`Information about ${field.label}`}
+                        aria-labelledby={field.label}
+                        className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`}
+                    />
+                )}
+            </span>
+            <span className="relative flex">
+                {field.type === "select" ? (
+                    <select
+                        value={value}
+                        required={field.required}
+                        disabled={disabled}
+                        onChange={(event) => onChange(event.target.value)}
+                        className={`${inputClasses} appearance-none pr-9`}
+                    >
+                        {field.options?.map((option, index) => (
+                            <option key={option} value={index === 0 && option?.startsWith("Select ") ? "" : option}>
+                                {field.optionLabels?.[option] ?? option}
+                            </option>
+                        ))}
+                    </select>
+                ) : (
+                    <>
+                        <input
+                            type={inputType}
+                            value={value}
+                            required={field.required}
+                            disabled={disabled}
+                            readOnly={disabled}
+                            placeholder={field.placeholder}
+                            maxLength={field.maxLength}
+                            inputMode={field.inputMode}
+                            pattern={field.pattern}
+                            onChange={(event) => onChange(event.target.value)}
+                            className={`${inputClasses} min-w-0 disabled:cursor-not-allowed disabled:opacity-70`}
+                        />
+                        {field.type === "password" && (
+                            <button
+                                type="button"
+                                onClick={() => setPasswordVisible((visible) => !visible)}
+                                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                                className={`absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-lg border-l ${
+                                    isDark
+                                        ? "border-white/[0.09] bg-white/[0.04] text-slate-400 hover:text-cyan-100"
+                                        : "border-slate-200 bg-slate-50 text-slate-600 hover:text-cyan-700"
+                                }`}
+                            >
+                                {passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
+                        )}
+                    </>
+                )}
+                {field.type === "select" && (
+                    <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>⌄</span>
+                )}
+                {field.type === "date" && <CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-500"}`} />}
+            </span>
+            {field.helper && <span className={`mt-1 block text-[11px] font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>{field.helper}</span>}
+        </label>
+    );
 }
 
-export function AddVehicleForm({ onClose, onSubmit }: AddVehicleFormProps) {
-	const { theme } = useTheme();
-	const isDark = theme !== "light";
-	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
-	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
-	const { data: clients = [] } = useGetClientMasterQuery();
-	const {
-		data: transporterOptions = [],
-		isLoading: transporterOptionsLoading,
-		isError: transporterOptionsError,
-	} = useGetTransporterMasterQuery();
-	const languageOptions = useMemo(
-		() =>
-			languages.length > 0
-				? languages.map((item) => item.language)
-				: fallbackLanguages,
-		[languages],
-	);
-	const timezoneOptions = useMemo(
-		() =>
-			timezones.length > 0
-				? timezones.map((item) => item.timezone ?? "").filter(Boolean)
-				: fallbackTimezones,
-		[timezones],
-	);
-	const fieldsByTabWithMaster = useMemo(() => {
-		const transporterFields = fieldsByTab.Transporter.map((field) => {
-			if (field.name === "language") return { ...field, options: languageOptions };
-			if (field.name === "timezone") return { ...field, options: timezoneOptions };
-			if (field.name === "client") {
-				return {
-					...field,
-					options: ["Select Client", ...clients.map((client) => client.id)],
-					optionLabels: Object.fromEntries(clients.map((client) => [client.id, client.name])),
-				};
-			}
-			return field;
-		});
-		return { ...fieldsByTab, Transporter: transporterFields };
-	}, [languageOptions, timezoneOptions, clients]);
-	const [activeTab, setActiveTab] = useState(tabs[0]);
-	const [formError, setFormError] = useState("");
-	const [showTransporterForm, setShowTransporterForm] = useState(false);
-	const [selectedTransporterId, setSelectedTransporterId] = useState("");
-	const [showAddSensorDialog, setShowAddSensorDialog] = useState(false);
-	const [pendingConfirmation, setPendingConfirmation] = useState<FieldConfig | null>(null);
-	const [roleSearch, setRoleSearch] = useState("");
-	const [selectedDeviceId, setSelectedDeviceId] = useState("");
-	const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(
-		() => Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
-	);
-	const [savedIds, setSavedIds] = useState<Partial<Record<SaveTarget, string>>>({});
-	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
-	const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
-	const [loadTransporter, { isFetching: loadingTransporter }] = useLazyGetTransporterByIdQuery();
-	const [createDevice, { isLoading: creatingDevice }] = useCreateDeviceMutation();
-	const [updateDevice, { isLoading: updatingDevice }] = useUpdateDeviceMutation();
-	const [createVehicle, { isLoading: creatingVehicle }] = useCreateVehicleMutation();
-	const [updateVehicle, { isLoading: updatingVehicle }] = useUpdateVehicleMutation();
-	const [createPaymentDetails, { isLoading: creatingPayment }] = useCreatePaymentDetailsMutation();
-	const [updatePaymentDetails, { isLoading: updatingPayment }] = useUpdatePaymentDetailsMutation();
-	const isSaving =
-		creatingTransporter || updatingTransporter || creatingDevice || updatingDevice || creatingVehicle || updatingVehicle || creatingPayment || updatingPayment;
-	const [values, setValues] = useState<VehicleFormValues>({
-		timezone: "(GMT+5:30) Asia/Calcutta",
-		inactiveTime: "12",
-		language: "English",
-		accessTimezone: "(GMT+5:30) Asia/Calcutta",
-		accessInactiveTime: "12",
-		accessLanguage: "English",
-		mileage: "1",
-		vehicleType: "",
-		subscriptionStart: "2026-10-05",
-		subscriptionDue: "2027-10-05",
-		subscriptionExtend: "2027-05-10",
-		subscriptionExpiryCount: "10",
-		active: "true",
-		simOperator: SimOperator.AIRTEL_GPRS,
-		secondarySimOperator: SimOperator.AIRTEL_GPRS,
-		deviceType: "",
-		sellingPrice: "0",
-		installationDate: "2026-05-10",
-		rentalDueDate: "2026-05-10",
-		...vehicleDetailDefaults,
-		manufactureDate: "2026-10-26",
-		purchaseDate: "2026-10-26",
-	});
+export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormProps) {
+    const { theme } = useTheme();
+    const isDark = theme !== "light";
+    const isEditMode = Boolean(vehicleId);
+    const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
+    const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+    const { data: clients = [] } = useGetClientMasterQuery();
+    const {
+        data: transporterOptions = [],
+        isLoading: transporterOptionsLoading,
+        isError: transporterOptionsError,
+        refetch: refetchTransporterOptions,
+    } = useGetTransporterMasterQuery();
+    const [loadVehicle, { isFetching: loadingVehicle }] = useLazyGetVehicleByIdQuery();
+    const [loadDevice] = useLazyGetDeviceByIdQuery();
+    const languageOptions = useMemo(
+        () =>
+            languages.length > 0
+                ? languages.map((item) => ({
+                    value: String(item.externalId ?? item.id ?? item.language),
+                    label: item.language,
+                }))
+                : fallbackLanguages.map((language) => ({ value: language, label: language })),
+        [languages],
+    );
+    const languageValues = useMemo(() => languageOptions.map((item) => item.value), [languageOptions]);
+    const languageLabels = useMemo(
+        () => Object.fromEntries(languageOptions.map((item) => [item.value, item.label])),
+        [languageOptions],
+    );
+    const resolveLanguageValue = (value?: string) =>
+        languageOptions.find((option) => option.value === value || option.label === value)?.value
+        ?? languageOptions[0]?.value
+        ?? "";
+    const timezoneOptions = useMemo(
+        () =>
+            timezones.length > 0
+                ? timezones
+                    .filter((item) => item.timezone)
+                    .map((item) => ({
+                        value: String(item.externalId ?? item.id ?? item.timezone),
+                        label: item.timezone ?? "",
+                    }))
+                : fallbackTimezones.map((timezone) => ({ value: timezone, label: timezone })),
+        [timezones],
+    );
+    const timezoneValues = useMemo(() => timezoneOptions.map((item) => item.value), [timezoneOptions]);
+    const timezoneLabels = useMemo(
+        () => Object.fromEntries(timezoneOptions.map((item) => [item.value, item.label])),
+        [timezoneOptions],
+    );
+    const resolveTimezoneValue = (value?: string) =>
+        timezoneOptions.find((option) => option.value === value || option.label === value)?.value
+        ?? timezoneOptions[0]?.value
+        ?? "";
+    const fieldsByTabWithMaster = useMemo(() => {
+        const transporterFields = fieldsByTab.Transporter.map((field) => {
+            if (field.name === "language") {
+                return { ...field, options: languageValues, optionLabels: languageLabels };
+            }
+            if (field.name === "timezone") {
+                return { ...field, options: timezoneValues, optionLabels: timezoneLabels };
+            }
+            if (field.name === "client") {
+                return {
+                    ...field,
+                    options: ["Select Client", ...clients.map((client) => client.id)],
+                    optionLabels: Object.fromEntries(clients.map((client) => [client.id, client.name])),
+                };
+            }
+            return field;
+        });
+        return { ...fieldsByTab, Transporter: transporterFields };
+    }, [languageValues, languageLabels, timezoneValues, timezoneLabels, clients]);
+    const visibleTabs = useMemo(
+        () => (isEditMode ? (["Add Vehicle"] as typeof tabs) : tabs),
+        [isEditMode],
+    );
+    const [activeTab, setActiveTab] = useState(tabs[0]);
+    const [formError, setFormError] = useState("");
+    const [showTransporterForm, setShowTransporterForm] = useState(false);
+    const [selectedTransporterId, setSelectedTransporterId] = useState("");
+    const [showTransporterModal, setShowTransporterModal] = useState(false);
+    const [showDeviceModal, setShowDeviceModal] = useState(false);
+    const [showAddSensorDialog, setShowAddSensorDialog] = useState(false);
+    const [pendingConfirmation, setPendingConfirmation] = useState<FieldConfig | null>(null);
+    const [roleSearch, setRoleSearch] = useState("");
+    const [selectedDeviceId, setSelectedDeviceId] = useState("");
+    const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(
+        () => Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
+    );
+    const [savedIds, setSavedIds] = useState<Partial<Record<SaveTarget, string>>>({});
+    const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
+    const [loadTransporter, { isFetching: loadingTransporter }] = useLazyGetTransporterByIdQuery();
+    const [createVehicle, { isLoading: creatingVehicle }] = useCreateVehicleMutation();
+    const [updateVehicle, { isLoading: updatingVehicle }] = useUpdateVehicleMutation();
+    const isSaving = updatingTransporter || creatingVehicle || updatingVehicle;
+    const vehicleExternalId = savedIds.vehicle || vehicleId || "";
+    const [values, setValues] = useState<VehicleFormValues>({
+        timezone: "(GMT+5:30) Asia/Calcutta",
+        inactiveTime: "12",
+        language: "English",
+        accessTimezone: "(GMT+5:30) Asia/Calcutta",
+        accessInactiveTime: "12",
+        accessLanguage: "English",
+        mileage: "1",
+        vehicleType: "",
+        subscriptionStart: "2026-10-05",
+        subscriptionDue: "2027-10-05",
+        subscriptionExtend: "2027-05-10",
+        subscriptionExpiryCount: "10",
+        active: "true",
+        simOperator: SimOperator.AIRTEL_GPRS,
+        secondarySimOperator: SimOperator.AIRTEL_GPRS,
+        deviceType: "",
+        sellingPrice: "0",
+        installationDate: "2026-05-10",
+        rentalDueDate: "2026-05-10",
+        ...vehicleDetailDefaults,
+        manufactureDate: "2026-10-26",
+        purchaseDate: "2026-10-26",
+    });
 
-	useEffect(() => {
-		setValues((current) => ({
-			...current,
-			language: current.language || languageOptions[0] || "",
-			timezone: current.timezone || timezoneOptions[0] || "",
-			accessLanguage: current.accessLanguage || languageOptions[0] || "",
-			accessTimezone: current.accessTimezone || timezoneOptions[0] || "",
-		}));
-	}, [languageOptions, timezoneOptions]);
+    useEffect(() => {
+        setValues((current) => ({
+            ...current,
+            language: resolveLanguageValue(current.language),
+            timezone: resolveTimezoneValue(current.timezone),
+            accessLanguage: resolveLanguageValue(current.accessLanguage),
+            accessTimezone: resolveTimezoneValue(current.accessTimezone),
+        }));
+    }, [languageOptions, timezoneOptions]);
 
-	const transporterFields = fieldsByTabWithMaster.Transporter.map((field) =>
-		field.name === "password" || field.name === "confirmPassword"
-			? { ...field, required: !savedIds.transporter, optional: Boolean(savedIds.transporter) }
-			: field,
-	);
-	const visibleFields = activeTab === "Transporter" ? transporterFields : fieldsByTabWithMaster[activeTab];
-	const regularFields = visibleFields.filter((field) => field.type !== "checkbox");
-	const checkboxFields = visibleFields.filter((field) => field.type === "checkbox");
-	const activeTabIndex = tabs.indexOf(activeTab);
-	const filteredRoles = transporterRoles.filter((role) =>
-		role.toLowerCase().includes(roleSearch.trim().toLowerCase()),
-	);
-	const confirmationDescription = (() => {
-		switch (pendingConfirmation?.name) {
-			case "overwriteSubscription":
-				return "This will overwrite the current subscription settings for all vehicles assigned to this transporter. Do you want to continue?";
-			case "inactiveAfterExpiry":
-				return "Vehicles will automatically become inactive when their subscription expires. Do you want to enable this setting?";
-			case "ignitionPositive":
-				return "This setting indicates that the ignition wire is connected to positive (+). Do you want to enable it?";
-			case "ignitionDisconnected":
-				return "This setting indicates that no ignition wire is connected. Do you want to enable it?";
-			default:
-				return "";
-		}
-	})();
+    useEffect(() => {
+        if (!vehicleId) return;
 
-	const resetCurrentTab = () => {
-		if (activeTab === "Transporter") {
-			setSelectedTransporterId("");
-			setSavedIds((current) => ({ ...current, transporter: undefined }));
-			setShowTransporterForm(true);
-		}
-		if (activeTab === "Transporter Access Manage") {
-			setRoleSearch("");
-			setRolePermissions(
-				Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
-			);
-			setFormError("");
-			return;
-		}
-		const fieldsToReset = activeTab === "Add Vehicle"
-			? addVehicleFields
-			: activeTab === "Add Device"
-				? addDeviceFields
-				: visibleFields;
-		if (activeTab === "Add Device") {
-			setSelectedDeviceId("");
-			setSavedIds((current) => ({ ...current, device: undefined }));
-		}
-		setValues((current) => {
-			const nextValues = { ...current };
-			if (activeTab === "Add Vehicle") {
-				Object.assign(nextValues, vehicleDetailDefaults, {
-					manufactureDate: "2026-10-26",
-					purchaseDate: "2026-10-26",
-				});
-			}
-			fieldsToReset.forEach((field) => {
-				nextValues[field.name] =
-					field.name === "active"
-						? "true"
-						: field.name === "sellingPrice"
-							? "0"
-							: field.name === "installationDate" || field.name === "rentalDueDate"
-								? "2026-05-10"
-								: field.type === "select"
-									? field.options?.[0]?.startsWith("Select ")
-										? ""
-										: field.options?.[0] ?? ""
-									: "";
-			});
-			return nextValues;
-		});
-		setFormError("");
-	};
+        let cancelled = false;
+        const hydrate = async () => {
+            try {
+                const vehicle = await loadVehicle(vehicleId).unwrap();
+                if (cancelled) return;
+                const relations = vehicleRelationIds(vehicle);
+                setValues((current) => ({
+                    ...current,
+                    ...vehicleToFormValues(vehicle),
+                }));
+                setSavedIds((current) => ({
+                    ...current,
+                    vehicle: relations.vehicleId || vehicleId,
+                    ...(relations.deviceId ? { device: relations.deviceId } : {}),
+                    ...(relations.transporterId ? { transporter: relations.transporterId } : {}),
+                }));
+                if (relations.deviceId) setSelectedDeviceId(relations.deviceId);
+                if (relations.transporterId) {
+                    setSelectedTransporterId(relations.transporterId);
+                    setShowTransporterForm(false);
+                }
+                setFormError("");
+            } catch (loadError) {
+                if (cancelled) return;
+                console.error("Failed to load vehicle details.", loadError);
+                setFormError(apiErrorMessage(loadError, "Could not load vehicle details. Please try again."));
+            }
+        };
 
-	const handleAddNewDevice = () => {
-		setSelectedDeviceId("");
-		setSavedIds((current) => ({ ...current, device: undefined }));
-		setValues((current) => ({
-			...current,
-			...Object.fromEntries(
-				addDeviceFields.map((field) => [
-					field.name,
-					field.name === "simOperator" || field.name === "secondarySimOperator"
-						? SimOperator.AIRTEL_GPRS
-						: field.type === "checkbox"
-							? "false"
-							: "",
-				]),
-			),
-		}));
-		setFormError("");
-	};
+        void hydrate();
+        return () => {
+            cancelled = true;
+        };
+    }, [vehicleId, loadVehicle]);
 
-	const handleDeviceSelection = (device: Device) => {
-		setSelectedDeviceId(device.externalId);
-		setSavedIds((current) => ({ ...current, device: device.externalId }));
-		setFormError("");
-	};
+    const transporterFields = fieldsByTabWithMaster.Transporter.map((field) => {
+        // Selected transporters are view-only; never require password/fields for HTML validation.
+        if (selectedTransporterId) {
+            return { ...field, required: false, optional: true };
+        }
+        if (field.name === "password" || field.name === "confirmPassword") {
+            return { ...field, required: !savedIds.transporter, optional: Boolean(savedIds.transporter) };
+        }
+        return field;
+    });
+    const visibleFields = activeTab === "Transporter" ? transporterFields : fieldsByTabWithMaster[activeTab];
+    const regularFields = visibleFields.filter((field) => field.type !== "checkbox");
+    const checkboxFields = visibleFields.filter((field) => field.type === "checkbox");
+    const activeTabIndex = visibleTabs.indexOf(activeTab);
+    const filteredRoles = transporterRoles.filter((role) =>
+        role.toLowerCase().includes(roleSearch.trim().toLowerCase()),
+    );
+    const confirmationDescription = (() => {
+        switch (pendingConfirmation?.name) {
+            case "overwriteSubscription":
+                return "This will overwrite the current subscription settings for all vehicles assigned to this transporter. Do you want to continue?";
+            case "inactiveAfterExpiry":
+                return "Vehicles will automatically become inactive when their subscription expires. Do you want to enable this setting?";
+            case "ignitionPositive":
+                return "This setting indicates that the ignition wire is connected to positive (+). Do you want to enable it?";
+            case "ignitionDisconnected":
+                return "This setting indicates that no ignition wire is connected. Do you want to enable it?";
+            default:
+                return "";
+        }
+    })();
 
-	const handleTransporterSelection = async (externalId: string) => {
-		setSelectedTransporterId(externalId);
-		setFormError("");
-		if (!externalId) {
-			setSavedIds((current) => ({ ...current, transporter: undefined }));
-			setShowTransporterForm(false);
-			return;
-		}
+    const resetCurrentTab = () => {
+        if (activeTab === "Transporter") {
+            setSelectedTransporterId("");
+            setSavedIds((current) => ({ ...current, transporter: undefined }));
+            setShowTransporterForm(true);
+        }
+        if (activeTab === "Transporter Access Manage") {
+            setRoleSearch("");
+            setRolePermissions(
+                Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
+            );
+            setFormError("");
+            return;
+        }
+        const fieldsToReset = activeTab === "Add Vehicle"
+            ? addVehicleFields
+            : activeTab === "Add Device"
+                ? addDeviceFields
+                : visibleFields;
+        if (activeTab === "Add Device") {
+            setSelectedDeviceId("");
+            setSavedIds((current) => ({ ...current, device: undefined }));
+        }
+        setValues((current) => {
+            const nextValues = { ...current };
+            if (activeTab === "Add Vehicle") {
+                Object.assign(nextValues, vehicleDetailDefaults, {
+                    manufactureDate: "2026-10-26",
+                    purchaseDate: "2026-10-26",
+                });
+            }
+            fieldsToReset.forEach((field) => {
+                nextValues[field.name] =
+                    field.name === "active"
+                        ? "true"
+                        : field.name === "sellingPrice"
+                            ? "0"
+                            : field.name === "installationDate" || field.name === "rentalDueDate"
+                                ? "2026-05-10"
+                                : field.type === "select"
+                                    ? field.options?.[0]?.startsWith("Select ")
+                                        ? ""
+                                        : field.options?.[0] ?? ""
+                                    : "";
+            });
+            return nextValues;
+        });
+        setFormError("");
+    };
 
-		setSavedIds((current) => ({ ...current, transporter: undefined }));
-		setShowTransporterForm(true);
-		try {
-			const transporter = await loadTransporter(externalId).unwrap();
-			setValues((current) => ({ ...current, ...transporterToFormValues(transporter) }));
-			setSavedIds((current) => ({ ...current, transporter: transporter.externalId || externalId }));
-			setRolePermissions(
-				Object.fromEntries(transporterRoles.map((role) => [role, transporter.roles?.includes(role) ?? false])),
-			);
-			setShowTransporterForm(true);
-		} catch (loadError) {
-			setShowTransporterForm(false);
-			console.error("Failed to load transporter details.", loadError);
-			setFormError(apiErrorMessage(loadError, "Could not load transporter details. Please try again."));
-		}
-	};
+    const handleAddNewDevice = () => {
+        setShowDeviceModal(true);
+        setFormError("");
+    };
 
-	const startNewTransporter = () => {
-		setSelectedTransporterId("");
-		setSavedIds((current) => ({ ...current, transporter: undefined }));
-		setRolePermissions(
-			Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
-		);
-		setValues((current) => ({
-			...current,
-			username: "",
-			password: "",
-			confirmPassword: "",
-			company: "",
-			client: "",
-			timezone: timezoneOptions[0] ?? "",
-			inactiveTime: "12",
-			language: languageOptions[0] ?? "",
-			name: "",
-			email: "",
-			phone: "",
-			address: "",
-			subscriptionStart: "2026-10-05",
-			subscriptionDue: "2027-10-05",
-			subscriptionExtend: "",
-			subscriptionExpiryCount: "10",
-			maxPoiRadius: "",
-			minAddressDistance: "",
-			dataRestriction: "",
-			active: "true",
-			overwriteSubscription: "false",
-			inactiveAfterExpiry: "false",
-		}));
-		setShowTransporterForm(true);
-		setFormError("");
-	};
+    const handleDeviceSelection = (device: Device) => {
+        setSelectedDeviceId(device.externalId);
+        setSavedIds((current) => ({ ...current, device: device.externalId }));
+        setValues((current) => ({
+            ...current,
+            vehicleDevice: device.externalId,
+        }));
+        setFormError("");
+    };
 
-	const missingRequired = (fields: FieldConfig[]) =>
-		fields.find((field) => field.required && !values[field.name]?.trim());
+    const applySelectedDevice = async (externalId: string) => {
+        try {
+            const device = await loadDevice(externalId).unwrap();
+            const importedValues: Record<string, string> = {
+                imei: device.imei ?? "",
+                sim: device.simNumber ?? "",
+                simOperator: device.simOperator ?? "",
+                secondarySim: device.secondarySimNumber ?? "",
+                secondarySimOperator: device.secondarySimOperator ?? "",
+                deviceType:
+                    typeof device.deviceType === "string"
+                        ? device.deviceType
+                        : String((device.deviceType as { externalId?: string; id?: string | number } | undefined)?.externalId
+                            ?? (device.deviceType as { id?: string | number } | undefined)?.id
+                            ?? DEVICE_TYPE_ID),
+                deviceClient:
+                    typeof device.client === "string"
+                        ? device.client
+                        : String((device.client as { externalId?: string; id?: string | number } | undefined)?.externalId
+                            ?? (device.client as { id?: string | number } | undefined)?.id
+                            ?? ""),
+                devicePassword: device.password ?? "",
+                ignitionPositive: String(device.ignitionWireConnected ?? false),
+                ignitionDisconnected: String(device.ignitionWireNotConnected ?? false),
+                airConditionPositive: String(device.airConditionWireConnected ?? false),
+                attendance: String(device.attendance ?? false),
+                timezoneSetting: String(device.timezoneSetting ?? false),
+            };
+            setValues((current) => ({ ...current, ...importedValues, vehicleDevice: device.externalId }));
+            handleDeviceSelection(device);
+        } catch (error) {
+            console.error("Failed to load created device.", error);
+            setFormError(apiErrorMessage(error, "Device was created but could not be loaded. Select it from the dropdown."));
+        }
+    };
 
-	/** Returns an error message for the tab's data, or null when it can be saved. */
-	const validate = (target: SaveTarget): { tab: string; message: string } | null => {
-		if (target === "transporter") {
-			const missing = missingRequired(transporterFields);
-			if (missing) return { tab: "Transporter", message: `${missing.label} is required.` };
-			if (!usernamePattern.test(values.username.trim())) {
-				return { tab: "Transporter", message: "Username can only contain A-z, 0-9, _, -, *, @." };
-			}
-			if ((values.password || values.confirmPassword) && values.password !== values.confirmPassword) {
-				return { tab: "Transporter", message: "Password and Confirm Password must match." };
-			}
-		}
-		if (target === "vehicle") {
-			const missing = missingRequired(addVehicleFields);
-			if (missing) return { tab: "Add Vehicle", message: `${missing.label} is required.` };
-		}
-		if (target === "device") {
-			const missing = missingRequired(addDeviceFields);
-			if (missing) return { tab: "Add Device", message: `${missing.label} is required.` };
-		}
-		if (target === "paymentDetails") {
-			const missing = missingRequired(fieldsByTab["Payment Details (Optional)"]);
-			if (missing) return { tab: "Payment Details (Optional)", message: `${missing.label} is required.` };
-		}
-		return null;
-	};
+    const handleTransporterSelection = async (externalId: string) => {
+        setSelectedTransporterId(externalId);
+        setFormError("");
+        if (!externalId) {
+            setSavedIds((current) => ({ ...current, transporter: undefined }));
+            setShowTransporterForm(false);
+            return;
+        }
 
-	const saveTransporterRoles = async (externalId: string) => {
-		const roles = transporterRoles.filter((role) => rolePermissions[role]);
-		return updateTransporter({ externalId, body: { roles } }).unwrap();
-	};
+        setSavedIds((current) => ({ ...current, transporter: undefined }));
+        setShowTransporterForm(true);
+        try {
+            const transporter = await loadTransporter(externalId).unwrap();
+            const nextValues = transporterToFormValues(transporter);
+            setValues((current) => ({
+                ...current,
+                ...nextValues,
+                language: resolveLanguageValue(nextValues.language),
+                timezone: resolveTimezoneValue(nextValues.timezone),
+            }));
+            setSavedIds((current) => ({ ...current, transporter: transporter.externalId || externalId }));
+            setRolePermissions(
+                Object.fromEntries(transporterRoles.map((role) => [role, transporter.roles?.includes(role) ?? false])),
+            );
+            setShowTransporterForm(true);
+        } catch (loadError) {
+            setShowTransporterForm(false);
+            console.error("Failed to load transporter details.", loadError);
+            setFormError(apiErrorMessage(loadError, "Could not load transporter details. Please try again."));
+        }
+    };
 
-	const saveRecord = async (target: SaveTarget) => {
-		const externalId = savedIds[target];
-		if (target === "transporter") {
-			if (activeTab === "Transporter Access Manage") {
-				if (!externalId) {
-					throw new Error("Save or select a transporter before saving its access roles.");
-				}
-				return saveTransporterRoles(externalId);
-			}
-			const body = buildTransporterPayload(
-				values,
-				transporterRoles.filter((role) => rolePermissions[role]),
-				false,
-			);
-			if (externalId) {
-				const { password, confirmPassword, ...updateBody } = body;
-				return updateTransporter({ externalId, body: password ? body : updateBody }).unwrap();
-			}
-			return createTransporter(body).unwrap();
-		}
-		if (target === "device") {
-			const body = buildDevicePayload(values);
-			return externalId ? updateDevice({ externalId, body }).unwrap() : createDevice(body).unwrap();
-		}
-		if (target === "vehicle") {
-			const body = buildVehiclePayload(values);
-			return externalId ? updateVehicle({ externalId, body }).unwrap() : createVehicle(body).unwrap();
-		}
-		const body = buildPaymentDetailsPayload(values);
-		return externalId ? updatePaymentDetails({ externalId, body }).unwrap() : createPaymentDetails(body).unwrap();
-	};
+    const startNewTransporter = () => {
+        setShowTransporterModal(true);
+        setFormError("");
+    };
 
-	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		const target = saveTargetByTab[activeTab];
-		if (!target) {
-			toast.info(`Saving "${activeTab}" is not available yet.`);
-			return;
-		}
-		if (activeTab === "Transporter Access Manage" && !savedIds.transporter) {
-			setFormError("Save or select a transporter before saving its access roles.");
-			return;
-		}
-		const error = validate(target);
-		if (error) {
-			setActiveTab(error.tab);
-			setFormError(error.message);
-			return;
-		}
+    const handleTransporterCreated = async (externalId?: string) => {
+        setShowTransporterModal(false);
+        await refetchTransporterOptions();
+        if (externalId) {
+            await handleTransporterSelection(externalId);
+        }
+    };
 
-		const isUpdate = Boolean(savedIds[target]);
-		try {
-			const saved = await saveRecord(target);
-			setSavedIds((current) => ({ ...current, [target]: saved.externalId || current[target] }));
-			if (target === "device" && saved.externalId) {
-				setSelectedDeviceId(saved.externalId);
-			}
-			if (target === "transporter" && saved.externalId) {
-				setValues((current) => ({
-					...current,
-					vehicleTransporter: current.vehicleTransporter || saved.externalId,
-					paymentTransporter: current.paymentTransporter || saved.externalId,
-				}));
-			}
-			setFormError("");
-			toast.success(`${saveLabels[target]} ${isUpdate ? "updated" : "saved"}.`);
-			if (target === "vehicle" && !isUpdate) onSubmit(values);
-			if (activeTabIndex < tabs.length - 1) setActiveTab(tabs[activeTabIndex + 1]);
-		} catch (saveError) {
-			console.error(`Failed to save ${target}.`, saveError);
-			setFormError(apiErrorMessage(saveError, `Could not save ${saveLabels[target].toLowerCase()}. Please try again.`));
-		}
-	};
+    const missingRequired = (fields: FieldConfig[]) =>
+        fields.find((field) => field.required && !values[field.name]?.trim());
 
-	return (
-		<div
-			className={`fixed inset-0 z-[800] flex items-center justify-center p-2 backdrop-blur-sm sm:p-4 ${
-				isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
-			}`}
-			onMouseDown={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape") onClose();
-			}}
-		>
-			<form
-				onSubmit={handleSubmit}
-				noValidate
-				className={`flex max-h-[96vh] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
-					isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-				}`}
-				aria-labelledby="vehicle-add-title"
-			>
-				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${
-					isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"
-				}`}>
-					<div>
-						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id="vehicle-add-title" className="text-[15px] font-semibold">Add vehicle</h2>
-					</div>
-					<button type="button" onClick={onClose} aria-label="Close vehicle form" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
-						<X className="h-5 w-5 stroke-[3]" />
-					</button>
-				</header>
+    /** Returns an error message for the tab's data, or null when it can be saved. */
+    const validate = (target: SaveTarget): { tab: string; message: string } | null => {
+        if (target === "transporter") {
+            if (activeTab === "Transporter Access Manage") {
+                if (!savedIds.transporter && !selectedTransporterId) {
+                    return { tab: "Transporter Access Manage", message: "Select a transporter before saving access roles." };
+                }
+                return null;
+            }
+            if (!vehicleExternalId) {
+                return { tab: "Add Vehicle", message: "Save the vehicle first, then link a transporter." };
+            }
+            if (!selectedTransporterId) {
+                return { tab: "Transporter", message: "Select a transporter before saving." };
+            }
+            return null;
+        }
+        if (target === "vehicle") {
+            const missing = missingRequired(addVehicleFields);
+            if (missing) return { tab: "Add Vehicle", message: `${missing.label} is required.` };
+        }
+        if (target === "device") {
+            if (!vehicleExternalId) {
+                return { tab: "Add Vehicle", message: "Save the vehicle first, then link a device." };
+            }
+            if (!selectedDeviceId) {
+                return { tab: "Add Device", message: "Select a device before saving." };
+            }
+            return null;
+        }
+        if (target === "paymentDetails") {
+            if (!vehicleExternalId) {
+                return { tab: "Add Vehicle", message: "Save the vehicle first, then add payment details." };
+            }
+            const missing = missingRequired(fieldsByTab["Payment Details (Optional)"]);
+            if (missing) return { tab: "Payment Details (Optional)", message: `${missing.label} is required.` };
+        }
+        return null;
+    };
 
-				<nav aria-label="Vehicle setup sections" className="shrink-0 overflow-x-auto px-5 pt-4 sm:px-6">
-					<div className={`flex min-w-max border-b ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						{tabs.map((tab) => (
-							<button
-								key={tab}
-								type="button"
-								onClick={() => {
-									setActiveTab(tab);
-									setFormError("");
-								}}
-								aria-current={activeTab === tab ? "step" : undefined}
-								className={`min-h-[36px] whitespace-nowrap border-b px-4 text-[12px] transition ${
-									activeTab === tab
-										? isDark
-											? "border-cyan-300/40 bg-cyan-300/[0.08] font-semibold text-cyan-100"
-											: "border-cyan-500 bg-cyan-50 font-semibold text-cyan-800"
-										: isDark
-											? "border-transparent font-medium text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
-											: "border-transparent font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-								}`}
-							>
-								{tab}
-							</button>
-						))}
-					</div>
-				</nav>
+    const saveTransporterRoles = async (externalId: string) => {
+        const roles = transporterRoles.filter((role) => rolePermissions[role]);
+        return updateTransporter({ externalId, body: { roles } }).unwrap();
+    };
 
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
-					{formError && (
-						<p role="alert" className={`mb-5 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-							{formError}
-						</p>
-					)}
-					{activeTab === "Transporter" && (
-						<section aria-label="Select transporter" className="mb-6 w-52">
-							<div className="mb-1.5 flex items-center justify-between gap-2">
-								<label htmlFor="transporter-master-select" className={`text-[12px] font-medium underline-offset-2 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-									Transporter
-								</label>
-								<button
-									type="button"
-									onClick={startNewTransporter}
-									className={`inline-flex items-center gap-1 text-[12px] font-medium underline-offset-2 transition ${
-										isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
-									}`}
-								>
-									<Plus className="h-3.5 w-3.5" />
-									Add New
-								</button>
-							</div>
-							<select
-								id="transporter-master-select"
-								value={selectedTransporterId}
-								disabled={transporterOptionsLoading || loadingTransporter}
-								onChange={(event) => void handleTransporterSelection(event.target.value)}
-								className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
-									isDark
-										? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
-										: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
-								}`}
-							>
-								<option value="">
-									{transporterOptionsLoading ? "Loading transporters..." : "Select Transporter"}
-								</option>
-								{transporterOptions.map((transporter) => (
-									<option key={transporter.id} value={transporter.externalId ?? transporter.id}>
-										{transporter.name}
-									</option>
-								))}
-							</select>
-							{transporterOptionsError && (
-								<span role="alert" className="mt-1 block text-[11px] text-rose-500">
-									Could not load transporter options.
-								</span>
-							)}
-						</section>
-					)}
-					{activeTab === "Transporter" && loadingTransporter ? (
-						<div role="status" className={`flex min-h-32 items-center justify-center gap-2 text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-							<Loader2 className="h-4 w-4 animate-spin" />
-							Loading transporter details...
-						</div>
-					) : activeTab === "Transporter" && !showTransporterForm ? null : activeTab === "Transporter Access Manage" ? (
-						<section aria-label="Transporter role access">
-							<label className="relative mb-3 block max-w-sm">
-								<Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-								<input
-									type="search"
-									value={roleSearch}
-									onChange={(event) => setRoleSearch(event.target.value)}
-									placeholder="Search roles"
-									aria-label="Search roles"
-									className={`h-9 w-full rounded-lg border pl-9 pr-3 text-xs outline-none transition ${
-										isDark
-											? "border-white/[0.08] bg-[#03091c]/65 text-white placeholder:text-slate-600 focus:border-cyan-300/35"
-											: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400"
-									}`}
-								/>
-							</label>
-							<div className={`overflow-hidden rounded-xl border ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-								<div className={`grid grid-cols-[1fr_100px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
-									isDark ? "bg-[#08142e] text-slate-400" : "bg-slate-100 text-slate-600"
-								}`}>
-									<span>Role Name</span>
-									<span className="text-center">Assign</span>
-								</div>
-								<div className="max-h-[55vh] overflow-y-auto">
-									{filteredRoles.map((role, index) => (
-										<div
-											key={role}
-											className={`grid grid-cols-[1fr_100px] items-center px-4 py-2 text-xs ${
-												isDark
-													? index % 2 === 0 ? "bg-white/[0.035] text-slate-300" : "bg-transparent text-slate-300"
-													: index % 2 === 0 ? "bg-slate-50 text-slate-700" : "bg-white text-slate-700"
-											}`}
-										>
-											<span>{role}</span>
-											<span className="flex justify-center">
-												<button
-													type="button"
-													role="switch"
-													aria-checked={rolePermissions[role] ?? false}
-													aria-label={`Assign ${role}`}
-													onClick={() =>
-														setRolePermissions((current) => ({
-															...current,
-															[role]: !current[role],
-														}))
-													}
-													className={`relative h-[18px] w-[34px] rounded-full transition ${
-														rolePermissions[role]
-															? isDark ? "bg-cyan-400" : "bg-cyan-600"
-															: isDark ? "bg-slate-700" : "bg-slate-300"
-													}`}
-												>
-													<span className={`absolute top-[3px] h-3 w-3 rounded-full bg-white shadow transition-all ${
-														rolePermissions[role] ? "left-[18px]" : "left-[3px]"
-													}`} />
-												</button>
-											</span>
-										</div>
-									))}
-									{filteredRoles.length === 0 && (
-										<p className={`px-4 py-8 text-center text-xs ${isDark ? "text-slate-500" : "text-slate-500"}`}>
-											No roles match your search.
-										</p>
-									)}
-								</div>
-							</div>
-						</section>
-					) : activeTab === "Add Sensor Details" ? (
-						<div className="flex min-h-[220px] items-center justify-center">
-							<button
-								type="button"
-								onClick={() => setShowAddSensorDialog(true)}
-								className={`inline-flex h-11 items-center gap-2 rounded-lg border px-5 text-sm font-semibold transition ${
-									isDark
-										? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
-										: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-								}`}
-							>
-								<Plus className="h-4 w-4" />
-								Add Sensor
-							</button>
-						</div>
-					) : activeTab === "Add Device" ? (
-						<AddDevice
-							isDark={isDark}
-							values={values}
-							selectedDeviceId={selectedDeviceId}
-							onSelectDevice={handleDeviceSelection}
-							onAddNew={handleAddNewDevice}
-							onChange={(name, value) => {
-								setValues((current) => ({ ...current, [name]: value }));
-								setFormError("");
-							}}
-							onConfirm={setPendingConfirmation}
-						/>
-					) : activeTab === "Add Vehicle" ? (
-						<AddVehicle
-							isDark={isDark}
-							values={values}
-							onChange={(name, value) => {
-								setValues((current) => ({ ...current, [name]: value }));
-								setFormError("");
-							}}
-						/>
-					) : activeTab === "Payment Details (Optional)" ? (
-						<Payment
-							isDark={isDark}
-							values={values}
-							onChange={(name, value) => {
-								setValues((current) => ({ ...current, [name]: value }));
-								setFormError("");
-							}}
-						/>
-					) : (
-						<>
-							<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-								{regularFields.map((field) => (
-									<FormField
-										key={field.name}
-										field={field}
-										value={values[field.name] ?? ""}
-										isDark={isDark}
-										disabled={
-											(field.name === "language" && languagesLoading) ||
-											(field.name === "timezone" && timezonesLoading)
-										}
-										onAction={
-											field.actionLabel
-												? () => setFormError("Inventory import is not available yet.")
-												: undefined
-										}
-										onChange={(value) => {
-											setValues((current) => ({ ...current, [field.name]: value }));
-											setFormError("");
-											if (field.name === "vehicleNo") setFormError("");
-										}}
-									/>
-								))}
-							</div>
-							{checkboxFields.length > 0 && (
-						<div className="mt-6 flex flex-col items-start gap-3">
-							{checkboxFields.map((field) => (
-								<div key={field.name}>
-									<label
-										className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${
-											isDark ? "text-slate-300" : "text-slate-700"
-										}`}
-									>
-										<input
-											type="checkbox"
-											checked={values[field.name] === "true"}
-											onChange={(event) => {
-												if (
-													event.target.checked &&
-													(
-														field.name === "overwriteSubscription" ||
-														field.name === "inactiveAfterExpiry"
-													)
-												) {
-													setPendingConfirmation(field);
-													return;
-												}
-												setValues((current) => ({
-													...current,
-													[field.name]: String(event.target.checked),
-												}));
-											}}
-											className="h-4 w-4 rounded border-slate-400 accent-cyan-500"
-										/>
-										{field.label}
-									</label>
-								</div>
-							))}
-						</div>
-							)}
-						</>
-					)}
-				</div>
+    const saveRecord = async (target: SaveTarget) => {
+        if (target === "transporter") {
+            if (activeTab === "Transporter Access Manage") {
+                const transporterId = savedIds.transporter || selectedTransporterId;
+                if (!transporterId) {
+                    throw new Error("Save or select a transporter before saving its access roles.");
+                }
+                return saveTransporterRoles(transporterId);
+            }
+            if (!vehicleExternalId) {
+                throw new Error("Save the vehicle first, then link a transporter.");
+            }
+            if (!selectedTransporterId) {
+                throw new Error("Select a transporter before saving.");
+            }
+            return updateVehicle({
+                externalId: vehicleExternalId,
+                body: buildVehicleLinkPayload("transporter", selectedTransporterId),
+            }).unwrap();
+        }
+        if (target === "device") {
+            if (!vehicleExternalId) {
+                throw new Error("Save the vehicle first, then link a device.");
+            }
+            if (!selectedDeviceId) {
+                throw new Error("Select a device before saving.");
+            }
+            return updateVehicle({
+                externalId: vehicleExternalId,
+                body: buildVehicleLinkPayload("device", selectedDeviceId),
+            }).unwrap();
+        }
+        if (target === "vehicle") {
+            const body = buildVehiclePayload(values);
+            return vehicleExternalId
+                ? updateVehicle({ externalId: vehicleExternalId, body }).unwrap()
+                : createVehicle(body).unwrap();
+        }
+        if (target === "paymentDetails") {
+            if (!vehicleExternalId) {
+                throw new Error("Save the vehicle first, then add payment details.");
+            }
+            return updateVehicle({
+                externalId: vehicleExternalId,
+                body: buildPaymentDetailsPayload(values),
+            }).unwrap();
+        }
+        throw new Error("Unsupported save target.");
+    };
 
-				<footer className={`flex shrink-0 items-center justify-end gap-3 border-t px-5 py-3 ${
-					isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
-				}`}>
-					<div className="flex gap-2">
-						<button type="submit" disabled={isSaving || loadingTransporter || (activeTab === "Transporter" && !showTransporterForm)} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
-							isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-						}`}>
-							{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-							{saveTargetByTab[activeTab] && savedIds[saveTargetByTab[activeTab]] ? "Update" : "Save"}
-						</button>
-						{activeTab !== "Transporter Access Manage" && (
-							<button type="button" onClick={resetCurrentTab} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
-								isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-							}`}>
-								Reset
-							</button>
-						)}
-						<button
-							type="button"
-							onClick={() => {
-								if (activeTabIndex < tabs.length - 1) {
-									setActiveTab(tabs[activeTabIndex + 1]);
-									setFormError("");
-								}
-							}}
-							disabled={activeTabIndex === tabs.length - 1}
-							className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-								isDark
-									? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
-									: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-							}`}
-						>
-							Skip
-						</button>
-					</div>
-				</footer>
-			</form>
-			{showAddSensorDialog && (
-				<AddSensorForm
-					onClose={() => setShowAddSensorDialog(false)}
-					onSubmit={(sensorValues) => {
-						setValues((current) => ({ ...current, ...sensorValues }));
-						setFormError("");
-						setShowAddSensorDialog(false);
-					}}
-				/>
-			)}
-			{pendingConfirmation && (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4 backdrop-blur-sm"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget) setPendingConfirmation(null);
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="transporter-setting-confirm-title"
-						aria-describedby="transporter-setting-confirm-description"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3 id="transporter-setting-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
-							Confirm setting
-						</h3>
-						<p id="transporter-setting-confirm-description" className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							{confirmationDescription}
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingConfirmation(null)}
-								className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
-									isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									if (pendingConfirmation) {
-										setValues((current) => ({ ...current, [pendingConfirmation.name]: "true" }));
-									}
-									setPendingConfirmation(null);
-								}}
-								className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${
-									isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-								}`}
-							>
-								Save
-							</button>
-						</div>
-					</section>
-				</div>
-			)}
-		</div>
-	);
+    const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const target = saveTargetByTab[activeTab];
+        if (!target) {
+            toast.info(`Saving "${activeTab}" is not available yet.`);
+            return;
+        }
+        const error = validate(target);
+        if (error) {
+            setActiveTab(error.tab);
+            setFormError(error.message);
+            return;
+        }
+
+        const linkingTab = target === "transporter" || target === "device" || target === "paymentDetails";
+        const isUpdate = linkingTab || Boolean(savedIds[target] || (target === "vehicle" && vehicleExternalId));
+        try {
+            const saved = await saveRecord(target);
+            if (target === "vehicle") {
+                const nextVehicleId = saved.externalId || vehicleExternalId;
+                setSavedIds((current) => ({ ...current, vehicle: nextVehicleId }));
+            }
+            if (target === "transporter" && selectedTransporterId) {
+                setSavedIds((current) => ({ ...current, transporter: selectedTransporterId }));
+                setValues((current) => ({
+                    ...current,
+                    vehicleTransporter: selectedTransporterId,
+                    paymentTransporter: current.paymentTransporter || selectedTransporterId,
+                }));
+            }
+            if (target === "device" && selectedDeviceId) {
+                setSavedIds((current) => ({ ...current, device: selectedDeviceId }));
+                setValues((current) => ({ ...current, vehicleDevice: selectedDeviceId }));
+            }
+            if (target === "paymentDetails") {
+                setSavedIds((current) => ({ ...current, paymentDetails: vehicleExternalId }));
+            }
+            setFormError("");
+            toast.success(
+                linkingTab
+                    ? target === "paymentDetails"
+                        ? "Payment details saved to vehicle."
+                        : `${saveLabels[target]} linked to vehicle.`
+                    : `${saveLabels[target]} ${isUpdate ? "updated" : "saved"}.`,
+            );
+            // Keep the wizard open after vehicle create so transporter/device tabs can link next.
+            if (target === "vehicle" && !vehicleExternalId) onSubmit(values);
+            if (!isEditMode && activeTabIndex < visibleTabs.length - 1) {
+                setActiveTab(visibleTabs[activeTabIndex + 1]);
+            }
+        } catch (saveError) {
+            console.error(`Failed to save ${target}.`, saveError);
+            setFormError(apiErrorMessage(saveError, `Could not save ${saveLabels[target].toLowerCase()}. Please try again.`));
+        }
+    };
+
+    return (
+        <div
+            className={`fixed inset-0 z-[800] flex items-center justify-center p-2 backdrop-blur-sm sm:p-4 ${
+                isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
+            }`}
+            onMouseDown={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") onClose();
+            }}
+        >
+            <form
+                onSubmit={handleSubmit}
+                noValidate
+                className={`flex max-h-[96vh] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
+                    isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+                }`}
+                aria-labelledby="vehicle-add-title"
+            >
+                <header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${
+                    isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"
+                }`}>
+                    <div>
+                        <p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
+                        <h2 id="vehicle-add-title" className="text-[15px] font-semibold">{isEditMode ? "Edit vehicle" : "Add vehicle"}</h2>
+                    </div>
+                    <button type="button" onClick={onClose} aria-label="Close vehicle form" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
+                        <X className="h-5 w-5 stroke-[3]" />
+                    </button>
+                </header>
+
+                {loadingVehicle && (
+                    <div className={`flex items-center gap-2 border-b px-5 py-2.5 text-[12px] ${isDark ? "border-white/[0.08] bg-cyan-300/[0.06] text-cyan-100" : "border-slate-200 bg-cyan-50 text-cyan-800"}`}>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Loading vehicle details...
+                    </div>
+                )}
+
+                <nav aria-label="Vehicle setup sections" className="shrink-0 overflow-x-auto px-5 pt-4 sm:px-6">
+                    <div className={`flex min-w-max border-b ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
+                        {visibleTabs.map((tab) => (
+                            <button
+                                key={tab}
+                                type="button"
+                                onClick={() => {
+                                    setActiveTab(tab);
+                                    setFormError("");
+                                }}
+                                aria-current={activeTab === tab ? "step" : undefined}
+                                className={`min-h-[36px] whitespace-nowrap border-b px-4 text-[12px] transition ${
+                                    activeTab === tab
+                                        ? isDark
+                                            ? "border-cyan-300/40 bg-cyan-300/[0.08] font-semibold text-cyan-100"
+                                            : "border-cyan-500 bg-cyan-50 font-semibold text-cyan-800"
+                                        : isDark
+                                            ? "border-transparent font-medium text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                                            : "border-transparent font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                }`}
+                            >
+                                {tab === "Transporter" ? "Add Transporter" : isEditMode && tab === "Add Vehicle" ? "Vehicle" : tab}
+                            </button>
+                        ))}
+                    </div>
+                </nav>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+                    {formError && (
+                        <p role="alert" className={`mb-5 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                            {formError}
+                        </p>
+                    )}
+                    {activeTab === "Transporter" && (
+                        <section aria-label="Select transporter" className="mb-6 w-52">
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <label htmlFor="transporter-master-select" className={`text-[12px] font-medium underline-offset-2 ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                    Transporter
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={startNewTransporter}
+                                    className={`inline-flex items-center gap-1 text-[12px] font-medium transition ${
+                                        isDark ? "text-cyan-300 hover:text-cyan-200" : "text-cyan-700 hover:text-cyan-800"
+                                    }`}
+                                >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Add New
+                                </button>
+                            </div>
+                            <select
+                                id="transporter-master-select"
+                                value={selectedTransporterId}
+                                disabled={transporterOptionsLoading || loadingTransporter}
+                                onChange={(event) => void handleTransporterSelection(event.target.value)}
+                                className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition disabled:opacity-60 ${
+                                    isDark
+                                        ? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
+                                        : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
+                                }`}
+                            >
+                                <option value="">
+                                    {transporterOptionsLoading ? "Loading transporters..." : "Select Transporter"}
+                                </option>
+                                {transporterOptions.map((transporter) => (
+                                    <option key={transporter.id} value={transporter.externalId ?? transporter.id}>
+                                        {transporter.name}
+                                    </option>
+                                ))}
+                            </select>
+                            {transporterOptionsError && (
+                                <span role="alert" className="mt-1 block text-[11px] text-rose-500">
+                                    Could not load transporter options.
+                                </span>
+                            )}
+                        </section>
+                    )}
+                    {activeTab === "Transporter" && loadingTransporter ? (
+                        <div role="status" className={`flex min-h-32 items-center justify-center gap-2 text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading transporter details...
+                        </div>
+                    ) : activeTab === "Transporter" && !showTransporterForm ? null : activeTab === "Transporter Access Manage" ? (
+                        <section aria-label="Transporter role access">
+                            <label className="relative mb-3 block max-w-sm">
+                                <Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                                <input
+                                    type="search"
+                                    value={roleSearch}
+                                    onChange={(event) => setRoleSearch(event.target.value)}
+                                    placeholder="Search roles"
+                                    aria-label="Search roles"
+                                    className={`h-9 w-full rounded-lg border pl-9 pr-3 text-xs outline-none transition ${
+                                        isDark
+                                            ? "border-white/[0.08] bg-[#03091c]/65 text-white placeholder:text-slate-600 focus:border-cyan-300/35"
+                                            : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400"
+                                    }`}
+                                />
+                            </label>
+                            <div className={`overflow-hidden rounded-xl border ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
+                                <div className={`grid grid-cols-[1fr_100px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                                    isDark ? "bg-[#08142e] text-slate-400" : "bg-slate-100 text-slate-600"
+                                }`}>
+                                    <span>Role Name</span>
+                                    <span className="text-center">Assign</span>
+                                </div>
+                                <div className="max-h-[55vh] overflow-y-auto">
+                                    {filteredRoles.map((role, index) => (
+                                        <div
+                                            key={role}
+                                            className={`grid grid-cols-[1fr_100px] items-center px-4 py-2 text-xs ${
+                                                isDark
+                                                    ? index % 2 === 0 ? "bg-white/[0.035] text-slate-300" : "bg-transparent text-slate-300"
+                                                    : index % 2 === 0 ? "bg-slate-50 text-slate-700" : "bg-white text-slate-700"
+                                            }`}
+                                        >
+                                            <span>{role}</span>
+                                            <span className="flex justify-center">
+                                                <button
+                                                    type="button"
+                                                    role="switch"
+                                                    aria-checked={rolePermissions[role] ?? false}
+                                                    aria-label={`Assign ${role}`}
+                                                    onClick={() =>
+                                                        setRolePermissions((current) => ({
+                                                            ...current,
+                                                            [role]: !current[role],
+                                                        }))
+                                                    }
+                                                    className={`relative h-[18px] w-[34px] rounded-full transition ${
+                                                        rolePermissions[role]
+                                                            ? isDark ? "bg-cyan-400" : "bg-cyan-600"
+                                                            : isDark ? "bg-slate-700" : "bg-slate-300"
+                                                    }`}
+                                                >
+                                                    <span className={`absolute top-[3px] h-3 w-3 rounded-full bg-white shadow transition-all ${
+                                                        rolePermissions[role] ? "left-[18px]" : "left-[3px]"
+                                                    }`} />
+                                                </button>
+                                            </span>
+                                        </div>
+                                    ))}
+                                    {filteredRoles.length === 0 && (
+                                        <p className={`px-4 py-8 text-center text-xs ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+                                            No roles match your search.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+                    ) : activeTab === "Add Sensor Details" ? (
+                        <div className="flex min-h-[220px] items-center justify-center">
+                            <button
+                                type="button"
+                                onClick={() => setShowAddSensorDialog(true)}
+                                className={`inline-flex h-11 items-center gap-2 rounded-lg border px-5 text-sm font-semibold transition ${
+                                    isDark
+                                        ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
+                                        : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                                }`}
+                            >
+                                <Plus className="h-4 w-4" />
+                                Add Sensor
+                            </button>
+                        </div>
+                    ) : activeTab === "Add Device" ? (
+                        <AddDevice
+                            isDark={isDark}
+                            values={values}
+                            selectedDeviceId={selectedDeviceId}
+                            onSelectDevice={handleDeviceSelection}
+                            onAddNew={handleAddNewDevice}
+                            readOnly={Boolean(selectedDeviceId)}
+                            onChange={(name, value) => {
+                                setValues((current) => ({ ...current, [name]: value }));
+                                setFormError("");
+                            }}
+                            onConfirm={setPendingConfirmation}
+                        />
+                    ) : activeTab === "Add Vehicle" ? (
+                        <AddVehicle
+                            isDark={isDark}
+                            values={values}
+                            onChange={(name, value) => {
+                                setValues((current) => ({ ...current, [name]: value }));
+                                setFormError("");
+                            }}
+                        />
+                    ) : activeTab === "Payment Details (Optional)" ? (
+                        <Payment
+                            isDark={isDark}
+                            values={values}
+                            onChange={(name, value) => {
+                                setValues((current) => ({ ...current, [name]: value }));
+                                setFormError("");
+                            }}
+                        />
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+                                {regularFields.map((field) => (
+                                    <FormField
+                                        key={field.name}
+                                        field={field}
+                                        value={values[field.name] ?? ""}
+                                        isDark={isDark}
+                                        disabled={
+                                            (activeTab === "Transporter" && Boolean(selectedTransporterId)) ||
+                                            (field.name === "language" && languagesLoading) ||
+                                            (field.name === "timezone" && timezonesLoading)
+                                        }
+                                        onAction={
+                                            field.actionLabel
+                                                ? () => setFormError("Inventory import is not available yet.")
+                                                : undefined
+                                        }
+                                        onChange={(value) => {
+                                            setValues((current) => ({ ...current, [field.name]: value }));
+                                            setFormError("");
+                                            if (field.name === "vehicleNo") setFormError("");
+                                        }}
+                                    />
+                                ))}
+                            </div>
+                            {checkboxFields.length > 0 && (
+                        <div className="mt-6 flex flex-col items-start gap-3">
+                            {checkboxFields.map((field) => (
+                                <div key={field.name}>
+                                    <label
+                                        className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${
+                                            isDark ? "text-slate-300" : "text-slate-700"
+                                        }`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={values[field.name] === "true"}
+                                            disabled={activeTab === "Transporter" && Boolean(selectedTransporterId)}
+                                            onChange={(event) => {
+                                                if (activeTab === "Transporter" && selectedTransporterId) return;
+                                                if (
+                                                    event.target.checked &&
+                                                    (
+                                                        field.name === "overwriteSubscription" ||
+                                                        field.name === "inactiveAfterExpiry"
+                                                    )
+                                                ) {
+                                                    setPendingConfirmation(field);
+                                                    return;
+                                                }
+                                                setValues((current) => ({
+                                                    ...current,
+                                                    [field.name]: String(event.target.checked),
+                                                }));
+                                            }}
+                                            className="h-4 w-4 rounded border-slate-400 accent-cyan-500 disabled:cursor-not-allowed disabled:opacity-70"
+                                        />
+                                        {field.label}
+                                    </label>
+                                </div>
+                            ))}
+                        </div>
+                            )}
+                        </>
+                    )}
+                </div>
+
+                <footer className={`flex shrink-0 items-center justify-end gap-3 border-t px-5 py-3 ${
+                    isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
+                }`}>
+                    <div className="flex gap-2">
+                        <button type="submit" disabled={isSaving || loadingTransporter || loadingVehicle || (activeTab === "Transporter" && !showTransporterForm) || (activeTab === "Add Device" && !selectedDeviceId)} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
+                            isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                        }`}>
+                            {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                            {activeTab === "Transporter" || activeTab === "Add Device"
+                                ? "Save"
+                                : saveTargetByTab[activeTab] && (savedIds[saveTargetByTab[activeTab]] || (activeTab === "Add Vehicle" && vehicleExternalId))
+                                    ? "Update"
+                                    : "Save"}
+                        </button>
+                        {activeTab !== "Transporter Access Manage" && (
+                            <button type="button" onClick={resetCurrentTab} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
+                                isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                            }`}>
+                                Reset
+                            </button>
+                        )}
+                        {!isEditMode && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (activeTabIndex < visibleTabs.length - 1) {
+                                        setActiveTab(visibleTabs[activeTabIndex + 1]);
+                                        setFormError("");
+                                    }
+                                }}
+                                disabled={activeTabIndex === visibleTabs.length - 1}
+                                className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                    isDark
+                                        ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
+                                        : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                                }`}
+                            >
+                                Skip
+                            </button>
+                        )}
+                    </div>
+                </footer>
+            </form>
+            {showAddSensorDialog && (
+                <AddSensorForm
+                    onClose={() => setShowAddSensorDialog(false)}
+                    onSubmit={(sensorValues) => {
+                        setValues((current) => ({ ...current, ...sensorValues }));
+                        setFormError("");
+                        setShowAddSensorDialog(false);
+                    }}
+                />
+            )}
+            {showTransporterModal && (
+                <AddTransporterDialog
+                    isDark={isDark}
+                    onClose={() => setShowTransporterModal(false)}
+                    onSave={(externalId) => void handleTransporterCreated(externalId)}
+                />
+            )}
+            {showDeviceModal && (
+                <AddDeviceDialog
+                    isDark={isDark}
+                    onClose={() => setShowDeviceModal(false)}
+                    onSaved={(externalId) => void applySelectedDevice(externalId)}
+                />
+            )}
+            {pendingConfirmation && (
+                <div
+                    className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4 backdrop-blur-sm"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) setPendingConfirmation(null);
+                    }}
+                >
+                    <section
+                        role="alertdialog"
+                        aria-modal="true"
+                        aria-labelledby="transporter-setting-confirm-title"
+                        aria-describedby="transporter-setting-confirm-description"
+                        className={`w-full max-w-md rounded-2xl border p-5 shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
+                            isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+                        }`}
+                    >
+                        <h3 id="transporter-setting-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+                            Confirm setting
+                        </h3>
+                        <p id="transporter-setting-confirm-description" className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                            {confirmationDescription}
+                        </p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setPendingConfirmation(null)}
+                                className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
+                                    isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                                }`}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (pendingConfirmation) {
+                                        setValues((current) => ({ ...current, [pendingConfirmation.name]: "true" }));
+                                    }
+                                    setPendingConfirmation(null);
+                                }}
+                                className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${
+                                    isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                                }`}
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+        </div>
+    );
 }
+

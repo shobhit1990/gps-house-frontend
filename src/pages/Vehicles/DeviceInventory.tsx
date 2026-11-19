@@ -1,10 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Pencil, Plus, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
+import { UploadInventory, type UploadInventoryValues } from "@/components/DeviceInventory/UploadInventory";
 import { useAuth } from "@/contexts/AuthContext";
+import { AssignType } from "@/enums/AssignType";
+import { InventoryType } from "@/enums/InventoryType";
 import { useGetClientMasterQuery } from "@/store/services/api/Master";
 import { useCreateInventoryMutation, useDeleteInventoryMutation, useGetInventoryQuery, useUpdateInventoryMutation } from "@/store/services/api/Inventory";
 import type { CreateInventoryRequest, Inventory } from "@/interfaces/Inventory";
@@ -110,7 +113,6 @@ export default function DeviceInventory() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const fileRef = useRef<HTMLInputElement>(null);
 	const [tab, setTab] = useState<"Details" | "Summary">("Details");
 	const [uploadedRows, setUploadedRows] = useState<InventoryRecord[]>([]);
 	const [search, setSearch] = useState("");
@@ -123,6 +125,8 @@ export default function DeviceInventory() {
 	const [summaryPage, setSummaryPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [showUploadDialog, setShowUploadDialog] = useState(false);
+	const [isUploadingInventory, setIsUploadingInventory] = useState(false);
 	const [editingInventory, setEditingInventory] = useState<InventoryRecord | null>(null);
 	const [uploadError, setUploadError] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
@@ -263,35 +267,39 @@ export default function DeviceInventory() {
 		XLSX.writeFile(book, "inventory-demo.xlsx");
 	};
 
-	const uploadInventory = async (file: File) => {
+	const inventoryTypeLabel = (value: InventoryType) =>
+		value === InventoryType.SIM ? "SIM" : "Device";
+
+	const uploadInventory = async ({ assignType, assigneeId, assigneeName, inventoryType, file }: UploadInventoryValues) => {
+		setIsUploadingInventory(true);
 		try {
 			const book = XLSX.read(await file.arrayBuffer(), { type: "array" });
 			const sheet = book.Sheets[book.SheetNames[0]];
 			const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
 			const imported = parsed
 				.map((row) => ({
-					inventoryType: sheetValue(row, "Inventory Type"),
+					inventoryType: inventoryTypeLabel(inventoryType) || sheetValue(row, "Inventory Type"),
 					imei: sheetValue(row, "Imei"),
 					sim: sheetValue(row, "Sim"),
 					operator: sheetValue(row, "Operator") || "Airtel Gprs (airtelgprs.com)",
 					secondarySim: sheetValue(row, "Secondary Sim Number"),
 					secondarySimOperator: sheetValue(row, "Secondary Sim Operator"),
 					deviceType: sheetValue(row, "Device Type") || "Concox (8505)",
-					assignType: sheetValue(row, "Assigned"),
+					assignType,
 					password: sheetValue(row, "Password"),
 					active: sheetValue(row, "Status").toLowerCase() !== "inactive",
 					ignitionWire: ["yes", "y", "true", "1"].includes(sheetValue(row, "Wire+").toLowerCase()),
 					airConditionWire: false,
 					analogSensor: false,
-					client: sheetValue(row, "Client"),
-					technician: sheetValue(row, "Technician"),
-					inventoryStatus: sheetValue(row, "Inventory Status") || "In Stock",
+					client: assignType === AssignType.CLIENT ? assigneeName : sheetValue(row, "Client"),
+					clientId: assignType === AssignType.CLIENT ? assigneeId : undefined,
+					technician: assignType === AssignType.TECHNICIAN ? assigneeName : sheetValue(row, "Technician"),
+					inventoryStatus: sheetValue(row, "Inventory Status") || "Used",
 					added: sheetValue(row, "Added") || currentMonth(),
 				}))
-				.filter((row) => row.inventoryType || row.imei);
+				.filter((row) => row.imei || row.sim || row.inventoryType);
 			if (imported.length === 0) {
-				setUploadError("The file has no inventory rows.");
-				return;
+				throw new Error("The file has no inventory rows.");
 			}
 			setUploadedRows((current) => {
 				let id = nextId(current);
@@ -310,8 +318,13 @@ export default function DeviceInventory() {
 			});
 			setUploadError("");
 			setPage(0);
-		} catch {
-			setUploadError("That file could not be read. Use the demo workbook.");
+			setShowUploadDialog(false);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "That file could not be read. Use the demo workbook.";
+			setUploadError(message);
+			throw error instanceof Error ? error : new Error(message);
+		} finally {
+			setIsUploadingInventory(false);
 		}
 	};
 
@@ -420,8 +433,7 @@ export default function DeviceInventory() {
 								</label>
 								<div className="flex flex-wrap items-center gap-2">
 									<button type="button" onClick={downloadDemo} className={quietButton}><Download className="h-3.5 w-3.5" /> Download Demo Inventory</button>
-									<button type="button" onClick={() => fileRef.current?.click()} className={cyanButton}><Upload className="h-3.5 w-3.5" /> Upload Inventory</button>
-									<input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" aria-label="Upload inventory file" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadInventory(file); event.target.value = ""; }} />
+									<button type="button" onClick={() => { setUploadError(""); setShowUploadDialog(true); }} className={cyanButton}><Upload className="h-3.5 w-3.5" /> Upload Inventory</button>
 									<div className="relative">
 										<select aria-label="Rows per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); setSummaryPage(0); }} className={`h-9 appearance-none rounded-lg border pl-3 pr-8 text-[11px] outline-none ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 [color-scheme:dark]" : "border-slate-200 bg-white text-slate-700"}`}>
 											{[10, 25, 50].map((size) => <option key={size} value={size}>{size} rows</option>)}
@@ -591,6 +603,14 @@ export default function DeviceInventory() {
 						client: editingInventory.clientId ?? editingInventory.client,
 						deviceType: editingInventory.deviceTypeId ?? editingInventory.deviceType,
 					} : undefined}
+				/>
+			)}
+
+			{showUploadDialog && (
+				<UploadInventory
+					onClose={() => setShowUploadDialog(false)}
+					onSubmit={uploadInventory}
+					isSaving={isUploadingInventory}
 				/>
 			)}
 		</div>

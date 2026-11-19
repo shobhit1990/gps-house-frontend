@@ -50,6 +50,13 @@ export interface ExpenseTypeMaster extends MasterRecordBase {
   expenseName?: string;
 }
 
+export interface GeofTypeMaster extends MasterRecordBase {
+  geofType?: string;
+  geofTypeName?: string;
+  typeName?: string;
+  geofenceTypeName?: string;
+}
+
 export interface MasterOption {
   id: string;
   externalId?: string;

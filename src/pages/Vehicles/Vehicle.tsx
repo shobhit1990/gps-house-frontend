@@ -26,19 +26,30 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  FileBadge,
+  ScrollText,
+  Terminal,
+  Trash2,
   X,
   Loader2,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleForm } from "@/components/VehicleForm/AddVehicleForm";
+import { ChangeVehicleClientDialog } from "@/components/VehicleForm/ChangeVehicleClientDialog";
+import { AddDeviceDialog } from "@/components/VehicleForm/AddDeviceDialog";
+import { VehicleCertificateDialog } from "@/components/VehicleForm/VehicleCertificateDialog";
+import { VehicleCommandDialog } from "@/components/VehicleForm/VehicleCommandDialog";
+import { VehicleLogDialog } from "@/components/VehicleForm/VehicleLogDialog";
+import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
 import type { Vehicle } from "@/interfaces/Vehicle";
-import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-import { useUpdateDeviceMutation } from "@/store/services/api/AddDevice";
-import { useGetVehiclesQuery, useUpdateVehicleMutation } from "@/store/services/api/Vehicle";
-import type { UpdateVehicleRequest } from "@/interfaces/Vehicle";
+import { useDeleteVehicleMutation, useGetVehiclesQuery } from "@/store/services/api/Vehicle";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+
+const isInactiveVehicleStatus = (status: string) =>
+  status.trim().toLowerCase() === Status.INACTIVE;
 
 type VehicleState =
   | "Running"
@@ -52,6 +63,7 @@ type VehicleState =
 
 type VehicleRecord = Record<string, string> & {
   vehicleId: string;
+  lifecycleStatus: string;
   deviceId: string;
   clientId: string;
   transporterId: string;
@@ -59,17 +71,10 @@ type VehicleRecord = Record<string, string> & {
   month: string;
 };
 
-type EditableVehicleField = "vehicleNo" | "client" | "transporter" | "imei" | "address" | "vehicleLog" | "certificate" | "command";
+type EditableVehicleField = "address";
 
 const editableFields: Record<EditableVehicleField, { label: string; placeholder: string }> = {
-  vehicleNo: { label: "Vehicle No.", placeholder: "Enter vehicle number" },
-  client: { label: "Client", placeholder: "Select client" },
-  transporter: { label: "Transporter", placeholder: "Select transporter" },
-  imei: { label: "IMEI", placeholder: "Enter IMEI" },
   address: { label: "Address", placeholder: "Enter address" },
-  vehicleLog: { label: "Vehicle Log", placeholder: "Enter vehicle log" },
-  certificate: { label: "Certificate", placeholder: "Enter certificate" },
-  command: { label: "Command", placeholder: "Enter command" },
 };
 
 const columns: { key: string; label: string }[] = [
@@ -105,6 +110,7 @@ const columns: { key: string; label: string }[] = [
   { key: "loadingStatus", label: "Loading Status" },
   { key: "address", label: "Address" },
   { key: "vehicleLog", label: "Vehicle Log" },
+  { key: "delete", label: "Delete" },
   { key: "certificate", label: "Certificate" },
   { key: "command", label: "Command" },
   { key: "technician", label: "Assign To Technician" },
@@ -199,8 +205,11 @@ const displayValue = (value: unknown, fallback = "—"): string => {
     return displayValue(
       relation.name ??
         relation.companyName ??
+        relation.deviceName ??
         relation.vehicleTypeName ??
         relation.deviceTypeName ??
+        relation.ownerName ??
+        relation.userName ??
         relation.imei ??
         relation.externalId ??
         relation.id,
@@ -254,9 +263,22 @@ const getVehicleMonth = (value: string): string => {
 
 const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
   const record = vehicle as Vehicle & Record<string, unknown>;
-  const device = record.device && typeof record.device === "object"
-    ? record.device as Record<string, unknown>
-    : undefined;
+  const client =
+    record.client && typeof record.client === "object"
+      ? (record.client as Record<string, unknown>)
+      : undefined;
+  const transporter =
+    record.transporter && typeof record.transporter === "object"
+      ? (record.transporter as Record<string, unknown>)
+      : undefined;
+  const device =
+    record.device && typeof record.device === "object"
+      ? (record.device as Record<string, unknown>)
+      : undefined;
+  const deviceType =
+    device?.deviceType && typeof device.deviceType === "object"
+      ? (device.deviceType as Record<string, unknown>)
+      : undefined;
   const lastUpdated = formatVehicleDate(
     record.lastUpdated ?? vehicle.updatedAt,
     true,
@@ -270,26 +292,44 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
       (option) => option.toLowerCase() === status.toLowerCase(),
     ) ?? "Unreported";
 
+  const ignitionWireConnected = device?.ignitionWireConnected;
+  const ignitionWire =
+    typeof ignitionWireConnected === "boolean"
+      ? ignitionWireConnected
+        ? "Connected"
+        : "Not Connected"
+      : displayValue(record.ignitionWire);
+
   return {
     vehicleId: vehicle.externalId,
+    lifecycleStatus: displayValue(vehicle.status, ""),
     deviceId: referenceId(record.device),
     clientId: referenceId(vehicle.client),
     transporterId: referenceId(vehicle.transporter),
     sn: String(index + 1),
     vehicleNo: displayValue(vehicle.vehicle),
     imei: displayValue(record.imei ?? device?.imei),
-    sim: displayValue(record.simNumber ?? record.sim),
+    sim: displayValue(record.simNumber ?? record.sim ?? device?.simNumber),
     client: displayValue(vehicle.client, "Unassigned"),
     transporter: displayValue(vehicle.transporter, "Unassigned"),
-    company: displayValue(record.company ?? record.companyName),
-    deviceType: displayValue(record.deviceType ?? vehicle.device),
+    company: displayValue(
+      record.company ??
+        record.companyName ??
+        client?.companyName ??
+        transporter?.companyName,
+    ),
+    deviceType: displayValue(
+      record.deviceType ?? deviceType ?? device?.deviceTypeName ?? device?.deviceName,
+    ),
     state: displayValue(record.state),
     vehicleType: displayValue(vehicle.vehicleType),
     fuelType: displayValue(vehicle.fuelType),
-    operator: displayValue(record.operator ?? record.simOperator),
+    operator: displayValue(
+      record.operator ?? record.simOperator ?? device?.simOperator,
+    ),
     lastUpdated,
     vehicleStatus: displayValue(record.vehicleStatus ?? vehicle.status),
-    deviceStatus: displayValue(record.deviceStatus),
+    deviceStatus: displayValue(record.deviceStatus ?? device?.status),
     sensors: displayValue(record.sensors),
     added: formatVehicleDate(vehicle.createdAt),
     subscriptionStart: formatVehicleDate(vehicle.subscriptionStartDate),
@@ -303,9 +343,11 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
     nickname: displayValue(record.vehicleNickname ?? vehicle.vehicleNickname),
     remark: displayValue(vehicle.remark),
     driverAssigned: displayValue(record.driverAssigned),
-    ignitionWire: displayValue(record.ignitionWire),
+    ignitionWire,
     loadingStatus: displayValue(record.loadingStatus),
-    address: displayValue(record.address),
+    address: displayValue(
+      record.address ?? client?.address ?? transporter?.address,
+    ),
     vehicleLog: displayValue(record.vehicleLog),
     certificate: displayValue(record.certificate),
     command: displayValue(record.command),
@@ -353,14 +395,17 @@ export default function Vehicle() {
     () => vehicleData.map(toVehicleRow).map((row) => ({ ...row, ...localEdits[row.vehicleId] })),
     [vehicleData, localEdits],
   );
-  const { data: clients = [] } = useGetClientMasterQuery();
-  const { data: transporters = [] } = useGetTransporterMasterQuery();
-  const { data: devices = [] } = useGetDeviceMasterQuery();
-  const [updateVehicle, { isLoading: isSavingVehicle }] = useUpdateVehicleMutation();
-  const [updateDevice, { isLoading: isSavingDevice }] = useUpdateDeviceMutation();
+  const [deleteVehicle, { isLoading: isDeletingVehicle }] = useDeleteVehicleMutation();
   const [editTarget, setEditTarget] = useState<{ row: VehicleRecord; field: EditableVehicleField } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editError, setEditError] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<VehicleRecord | null>(null);
+  const [commandVehicle, setCommandVehicle] = useState<VehicleRecord | null>(null);
+  const [certificateVehicle, setCertificateVehicle] = useState<VehicleRecord | null>(null);
+  const [logVehicle, setLogVehicle] = useState<VehicleRecord | null>(null);
+  const [editingTransporterId, setEditingTransporterId] = useState<string | null>(null);
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
+  const [changeClientVehicle, setChangeClientVehicle] = useState<VehicleRecord | null>(null);
   const [assignVehicleId, setAssignVehicleId] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -375,18 +420,43 @@ export default function Vehicle() {
   const [page, setPage] = useState(0);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const isSavingEdit = isSavingVehicle || isSavingDevice;
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
+  const isSavingEdit = false;
+
+  const openVehicleEditor = (row: VehicleRecord) => {
+    if (!row.vehicleId) {
+      toast.error("This vehicle does not have a valid ID.");
+      return;
+    }
+    setEditingVehicleId(row.vehicleId);
+    setShowAddDialog(true);
+  };
+
+  const closeVehicleForm = () => {
+    setShowAddDialog(false);
+    setEditingVehicleId(null);
+  };
 
   const openFieldEditor = (row: VehicleRecord, field: EditableVehicleField) => {
     setEditTarget({ row, field });
-    const optionValue =
-      field === "client"
-        ? clients.find((option) => option.id === row.clientId || option.name === row.client)?.id
-        : field === "transporter"
-          ? transporters.find((option) => option.id === row.transporterId || option.name === row.transporter)?.id
-          : undefined;
-    setEditValue(optionValue ?? (row[field] === "—" ? "" : row[field]));
+    setEditValue(row[field] === "—" ? "" : row[field]);
     setEditError("");
+  };
+
+  const openTransporterEditor = (row: VehicleRecord) => {
+    if (!row.transporterId || row.transporter === "Unassigned" || row.transporter === "—") {
+      toast.info("No transporter is linked to this vehicle.");
+      return;
+    }
+    setEditingTransporterId(row.transporterId);
+  };
+
+  const openDeviceEditor = (row: VehicleRecord) => {
+    if (!row.deviceId || row.imei === "—") {
+      toast.info("No device is linked to this vehicle.");
+      return;
+    }
+    setEditingDeviceId(row.deviceId);
   };
 
   const saveFieldEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -396,40 +466,31 @@ export default function Vehicle() {
     const value = editValue.trim();
 
     try {
-      if (field === "vehicleNo" || field === "client" || field === "transporter") {
-        const body: UpdateVehicleRequest =
-          field === "vehicleNo"
-            ? { vehicle: value }
-            : field === "client"
-              ? { client: value }
-              : { transporter: value };
-        await updateVehicle({ externalId: row.vehicleId, body }).unwrap();
-      } else if (field === "imei") {
-        const device = devices.find((item) =>
-          item.externalId === row.deviceId ||
-          item.id === row.deviceId ||
-          item.name === row.imei,
-        );
-        if (!device) {
-          setEditError("Could not find the device linked to this vehicle.");
-          return;
-        }
-        await updateDevice({ externalId: device.id, body: { imei: value } }).unwrap();
-      } else {
-        setLocalEdits((current) => ({
-          ...current,
-          [row.vehicleId]: { ...current[row.vehicleId], [field]: value || "—" },
-        }));
-        toast.info(`${editableFields[field].label} updated in this view only; backend save is not connected yet.`);
-      }
-
-      if (field === "vehicleNo" || field === "client" || field === "transporter" || field === "imei") {
-        toast.success(`${editableFields[field].label} updated.`);
-      }
+      setLocalEdits((current) => ({
+        ...current,
+        [row.vehicleId]: { ...current[row.vehicleId], [field]: value || "—" },
+      }));
+      toast.info(`${editableFields[field].label} updated in this view only; backend save is not connected yet.`);
       setEditTarget(null);
     } catch (error) {
       console.error(`Failed to update vehicle ${field}.`, error);
       setEditError(apiErrorMessage(error, `Could not update ${editableFields[field].label}. Please try again.`));
+    }
+  };
+
+  const confirmDeleteVehicle = async () => {
+    if (!pendingDelete || !isInactiveVehicleStatus(pendingDelete.lifecycleStatus) || !pendingDelete.vehicleId) {
+      toast.error("Only inactive vehicles can be deleted.");
+      return;
+    }
+
+    try {
+      await deleteVehicle(pendingDelete.vehicleId).unwrap();
+      toast.success(`${pendingDelete.vehicleNo} deleted.`);
+      setPendingDelete(null);
+    } catch (error) {
+      console.error("Failed to delete vehicle.", error);
+      toast.error(apiErrorMessage(error, `Could not delete ${pendingDelete.vehicleNo}.`));
     }
   };
 
@@ -543,6 +604,7 @@ export default function Vehicle() {
   const visibleColumns = columns.filter(
     (column) => !hiddenColumns.includes(column.key),
   );
+  const exportColumns = visibleColumns.filter((column) => column.key !== "delete");
 
   const pageCount = Math.max(
     1,
@@ -556,7 +618,7 @@ export default function Vehicle() {
 
   const exportRows = filteredRows.map((row, index) => ({
     row,
-    values: visibleColumns.map((column) =>
+    values: exportColumns.map((column) =>
       column.key === "sn"
         ? String(index + 1).padStart(2, "0")
         : column.key === "vehicleStatus"
@@ -570,7 +632,7 @@ export default function Vehicle() {
       const pdf = new jsPDF({ orientation: "landscape" });
 
       autoTable(pdf, {
-        head: [visibleColumns.map((column) => column.label)],
+        head: [exportColumns.map((column) => column.label)],
         body: exportRows.map(({ values }) => values),
         styles: { fontSize: 7 },
         headStyles: { fillColor: [74, 32, 99] },
@@ -587,7 +649,7 @@ export default function Vehicle() {
     try {
       const data = exportRows.map(({ values }) =>
         Object.fromEntries(
-          visibleColumns.map((column, index) => [
+          exportColumns.map((column, index) => [
             column.label,
             values[index],
           ]),
@@ -616,8 +678,10 @@ export default function Vehicle() {
   };
 
   const handleAddVehicle = () => {
+    // Vehicle was created inside the wizard — keep the form open for transporter/device tabs.
     setStatusFilter("All");
     setPage(0);
+    void refetchVehicles();
   };
 
   const toggleColumn = (key: string) => {
@@ -1321,7 +1385,10 @@ export default function Vehicle() {
 
               <button
                 type="button"
-                onClick={() => setShowAddDialog(true)}
+                onClick={() => {
+                  setEditingVehicleId(null);
+                  setShowAddDialog(true);
+                }}
                 className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${
                   isDark
                     ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
@@ -1407,6 +1474,8 @@ export default function Vehicle() {
                     {visibleColumns.map((column) => {
                       const value = row[column.key] || "—";
                       const isStatus = column.key === "vehicleStatus";
+                      const canDelete =
+                        isInactiveVehicleStatus(row.lifecycleStatus) && Boolean(row.vehicleId);
                       const editableField = column.key in editableFields
                         ? column.key as EditableVehicleField
                         : null;
@@ -1416,20 +1485,123 @@ export default function Vehicle() {
                           key={column.key}
                           className="max-w-[280px] whitespace-nowrap px-3 py-3 first:px-4"
                         >
-                          {editableField ? (
+                          {column.key === "vehicleNo" ? (
+                            <button
+                              type="button"
+                              onClick={() => openVehicleEditor(row)}
+                              title={`Edit vehicle ${row.vehicleNo}`}
+                              className={`text-left font-semibold transition hover:underline ${isDark ? "text-cyan-200" : "text-cyan-700"}`}
+                            >
+                              {value}
+                            </button>
+                          ) : column.key === "transporter" ? (
+                            row.transporterId && value !== "—" && value !== "Unassigned" ? (
+                              <button
+                                type="button"
+                                onClick={() => openTransporterEditor(row)}
+                                title={`Edit transporter ${value}`}
+                                className={`text-left font-semibold transition hover:underline ${isDark ? "text-cyan-200" : "text-cyan-700"}`}
+                              >
+                                {value}
+                              </button>
+                            ) : (
+                              value
+                            )
+                          ) : column.key === "client" ? (
+                            <button
+                              type="button"
+                              onClick={() => setChangeClientVehicle(row)}
+                              title={`Change client for ${row.vehicleNo}`}
+                              className={`text-left font-semibold transition hover:underline ${isDark ? "text-cyan-200" : "text-cyan-700"}`}
+                            >
+                              {value}
+                            </button>
+                          ) : column.key === "imei" ? (
+                            row.deviceId && value !== "—" ? (
+                              <button
+                                type="button"
+                                onClick={() => openDeviceEditor(row)}
+                                title={`Edit device ${value}`}
+                                className={`text-left font-semibold transition hover:underline ${isDark ? "text-cyan-200" : "text-cyan-700"}`}
+                              >
+                                {value}
+                              </button>
+                            ) : (
+                              value
+                            )
+                          ) : editableField ? (
                             <button
                               type="button"
                               onClick={() => openFieldEditor(row, editableField)}
                               title={`Edit ${editableFields[editableField].label}`}
                               className={`text-left transition hover:underline ${
-                                column.key === "vehicleNo"
-                                  ? `font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`
-                                  : isDark
-                                    ? "text-slate-300 hover:text-cyan-200"
-                                    : "text-slate-700 hover:text-cyan-700"
+                                isDark
+                                  ? "text-slate-300 hover:text-cyan-200"
+                                  : "text-slate-700 hover:text-cyan-700"
                               } ${column.key === "address" ? "block max-w-[250px] truncate" : ""}`}
                             >
                               {value}
+                            </button>
+                          ) : column.key === "delete" ? (
+                            canDelete ? (
+                              <button
+                                type="button"
+                                onClick={() => setPendingDelete(row)}
+                                disabled={isDeletingVehicle}
+                                aria-label={`Delete vehicle ${row.vehicleNo}`}
+                                title={`Delete vehicle ${row.vehicleNo}`}
+                                className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  isDark
+                                    ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+                                    : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                }`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            ) : (
+                              "—"
+                            )
+                          ) : column.key === "command" ? (
+                            <button
+                              type="button"
+                              onClick={() => setCommandVehicle(row)}
+                              aria-label={`Send command to ${row.vehicleNo}`}
+                              title={`Send command to ${row.vehicleNo}`}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                                isDark
+                                  ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200 hover:bg-cyan-300/[0.14]"
+                                  : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                              }`}
+                            >
+                              <Terminal className="h-3.5 w-3.5" />
+                            </button>
+                          ) : column.key === "certificate" ? (
+                            <button
+                              type="button"
+                              onClick={() => setCertificateVehicle(row)}
+                              aria-label={`Add certificate for ${row.vehicleNo}`}
+                              title={`Add certificate for ${row.vehicleNo}`}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                                isDark
+                                  ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200 hover:bg-cyan-300/[0.14]"
+                                  : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                              }`}
+                            >
+                              <FileBadge className="h-3.5 w-3.5" />
+                            </button>
+                          ) : column.key === "vehicleLog" ? (
+                            <button
+                              type="button"
+                              onClick={() => setLogVehicle(row)}
+                              aria-label={`View vehicle log for ${row.vehicleNo}`}
+                              title={`View vehicle log for ${row.vehicleNo}`}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
+                                isDark
+                                  ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200 hover:bg-cyan-300/[0.14]"
+                                  : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                              }`}
+                            >
+                              <ScrollText className="h-3.5 w-3.5" />
                             </button>
                           ) : column.key === "technician" ? (
                             <button
@@ -1622,27 +1794,7 @@ export default function Vehicle() {
             <div className="space-y-4 px-5 py-5">
               <label className={`block text-xs font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                 <span className="mb-1.5 block">{editableFields[editTarget.field].label}</span>
-                {editTarget.field === "client" || editTarget.field === "transporter" ? (
-                  <select
-                    autoFocus
-                    required
-                    value={editValue}
-                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
-                    className={`h-10 w-full rounded-lg border px-3 text-xs outline-none focus:ring-2 ${
-                      isDark
-                        ? "border-white/[0.09] bg-[#03091c]/70 text-white focus:border-cyan-300/35 focus:ring-cyan-300/10"
-                        : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400 focus:ring-cyan-100"
-                    }`}
-                  >
-                    <option value="">{editableFields[editTarget.field].placeholder}</option>
-                    {(editTarget.field === "client" ? clients : transporters).map((option) => (
-                      <option key={option.id} value={option.id}>{option.name}</option>
-                    ))}
-                  </select>
-                ) : editTarget.field === "address" ||
-                  editTarget.field === "vehicleLog" ||
-                  editTarget.field === "certificate" ||
-                  editTarget.field === "command" ? (
+                {editTarget.field === "address" ? (
                   <textarea
                     autoFocus
                     rows={4}
@@ -1670,10 +1822,7 @@ export default function Vehicle() {
                   />
                 )}
               </label>
-              {editTarget.field === "address" ||
-              editTarget.field === "vehicleLog" ||
-              editTarget.field === "certificate" ||
-              editTarget.field === "command" ? (
+              {editTarget.field === "address" ? (
                 <p className={`text-[11px] ${isDark ? "text-amber-200/80" : "text-amber-700"}`}>
                   This value updates in the current table view only; backend saving is not connected yet.
                 </p>
@@ -1722,9 +1871,125 @@ export default function Vehicle() {
       {/* Add Vehicle Dialog */}
       {showAddDialog && (
         <AddVehicleForm
-          onClose={() => setShowAddDialog(false)}
+          vehicleId={editingVehicleId ?? undefined}
+          onClose={closeVehicleForm}
           onSubmit={handleAddVehicle}
         />
+      )}
+
+      {commandVehicle && (
+        <VehicleCommandDialog
+          vehicleNo={commandVehicle.vehicleNo}
+          onClose={() => setCommandVehicle(null)}
+        />
+      )}
+
+      {certificateVehicle && (
+        <VehicleCertificateDialog
+          vehicleNo={certificateVehicle.vehicleNo}
+          imei={certificateVehicle.imei}
+          deviceType={certificateVehicle.deviceType}
+          onClose={() => setCertificateVehicle(null)}
+        />
+      )}
+
+      {logVehicle && (
+        <VehicleLogDialog
+          vehicleNo={logVehicle.vehicleNo}
+          onClose={() => setLogVehicle(null)}
+        />
+      )}
+
+      {editingTransporterId && (
+        <AddTransporterDialog
+          isDark={isDark}
+          transporterId={editingTransporterId}
+          onClose={() => setEditingTransporterId(null)}
+          onSave={() => {
+            setEditingTransporterId(null);
+            void refetchVehicles();
+          }}
+        />
+      )}
+
+      {editingDeviceId && (
+        <AddDeviceDialog
+          isDark={isDark}
+          deviceId={editingDeviceId}
+          onClose={() => setEditingDeviceId(null)}
+          onSaved={() => {
+            setEditingDeviceId(null);
+            void refetchVehicles();
+          }}
+        />
+      )}
+
+      {changeClientVehicle && (
+        <ChangeVehicleClientDialog
+          vehicleNo={changeClientVehicle.vehicleNo}
+          clientId={changeClientVehicle.clientId}
+          transporterId={changeClientVehicle.transporterId}
+          onClose={() => setChangeClientVehicle(null)}
+        />
+      )}
+
+      {pendingDelete && (
+        <div
+          className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
+            isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
+          }`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isDeletingVehicle) setPendingDelete(null);
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="vehicle-delete-title"
+            className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
+              isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+            }`}
+          >
+            <h3
+              id="vehicle-delete-title"
+              className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
+            >
+              Delete vehicle?
+            </h3>
+            <p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+              This will permanently remove{" "}
+              <strong className={isDark ? "text-white" : "text-slate-900"}>
+                {pendingDelete.vehicleNo || "this vehicle"}
+              </strong>
+              .
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={isDeletingVehicle}
+                className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+                  isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteVehicle()}
+                disabled={isDeletingVehicle}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+                  isDark
+                    ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
+                    : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                }`}
+              >
+                {isDeletingVehicle && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

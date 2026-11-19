@@ -3,10 +3,15 @@ import { toast } from "sonner";
 import { buildTransporterPayload } from "@/components/VehicleForm/vehiclePayloads";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import type { Transporter } from "@/interfaces/Transporter";
 import { useCreateBillingDetailsMutation } from "@/store/services/api/BillingDetails";
 import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
-import { useCreateTransporterMutation, useUpdateTransporterMutation } from "@/store/services/api/Transporter";
-import { CalendarDays, Eye, EyeOff, Info, Search, X } from "lucide-react";
+import {
+    useCreateTransporterMutation,
+    useLazyGetTransporterByIdQuery,
+    useUpdateTransporterMutation,
+} from "@/store/services/api/Transporter";
+import { CalendarDays, Eye, EyeOff, Info, Loader2, Search, X } from "lucide-react";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
@@ -15,617 +20,764 @@ const tabs = ["Add Transporter", "Access Management", "Billing Detail"] as const
 type TransporterTab = (typeof tabs)[number];
 
 const transporterRoles = [
-	"Basic reports",
-	"Geofence Access Full",
-	"Geofence reports",
-	"Schedule Parking",
-	"Sim Tracking",
-	"Tickets",
-	"User Change Password",
-	"Vehicle Lock",
-	"Users & group access",
-	"Analytics dashboard Access",
-	"No Dashboard Access",
-	"History No Access",
-	"Live_Trip_Dashboard_Only",
-	"No Driver Access",
-	"No History Access",
-	"No Notification Access",
-	"No Parking Access",
-	"No Service Reminder Access",
-	"No Setting Access",
-	"No Share Access",
+    "Basic reports",
+    "Geofence Access Full",
+    "Geofence reports",
+    "Schedule Parking",
+    "Sim Tracking",
+    "Tickets",
+    "User Change Password",
+    "Vehicle Lock",
+    "Users & group access",
+    "Analytics dashboard Access",
+    "No Dashboard Access",
+    "History No Access",
+    "Live_Trip_Dashboard_Only",
+    "No Driver Access",
+    "No History Access",
+    "No Notification Access",
+    "No Parking Access",
+    "No Service Reminder Access",
+    "No Setting Access",
+    "No Share Access",
 ];
 
 const defaultRolePermissions: Record<string, boolean> = {
-	"Basic reports": true,
-	Tickets: true,
-	"User Change Password": true,
-	"Vehicle Lock": true,
-	"Users & group access": true,
-	"Analytics dashboard Access": true,
+    "Basic reports": true,
+    Tickets: true,
+    "User Change Password": true,
+    "Vehicle Lock": true,
+    "Users & group access": true,
+    "Analytics dashboard Access": true,
 };
 
 const usernamePattern = /^[A-Za-z0-9_\-*@]+$/;
 
 type FormState = {
-	userName: string;
-	password: string;
-	confirmPassword: string;
-	companyName: string;
-	client: string;
-	timezone: string;
-	inactiveTime: string;
-	language: string;
-	name: string;
-	email: string;
-	phone: string;
-	address: string;
-	subscriptionStartDate: string;
-	subscriptionDueDate: string;
-	subscriptionExtend: string;
-	subscriptionExpiryCount: string;
-	maxPoiRadius: string;
-	minAddressDistance: string;
-	dataRestriction: string;
-	active: string;
-	overwriteSubscription: string;
-	inactiveAfterExpiry: string;
-	billingCompanyName: string;
-	gstNumber: string;
-	billingEmail: string;
-	billingPhone: string;
-	website: string;
-	billingAddress: string;
-	paymentMode: string;
+    userName: string;
+    password: string;
+    confirmPassword: string;
+    companyName: string;
+    client: string;
+    timezone: string;
+    inactiveTime: string;
+    language: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+    subscriptionStartDate: string;
+    subscriptionDueDate: string;
+    subscriptionExtendDate: string;
+    subscriptionExpiryCount: string;
+    maxPoiRadius: string;
+    minAddressDistance: string;
+    dataRestriction: string;
+    active: string;
+    overwriteSubscription: string;
+    inactiveAfterExpiry: string;
+    billingCompanyName: string;
+    gstNumber: string;
+    billingEmail: string;
+    billingPhone: string;
+    website: string;
+    billingAddress: string;
+    paymentMode: string;
 };
 
 function localDate(yearsAhead = 0) {
-	const date = new Date();
-	date.setFullYear(date.getFullYear() + yearsAhead);
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	const day = String(date.getDate()).padStart(2, "0");
-	return `${date.getFullYear()}-${month}-${day}`;
+    const date = new Date();
+    date.setFullYear(date.getFullYear() + yearsAhead);
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${date.getFullYear()}-${month}-${day}`;
 }
 
 function createEmptyForm(timezone: string, language: string): FormState {
-	return {
-		userName: "",
-		password: "",
-		confirmPassword: "",
-		companyName: "",
-		client: "",
-		timezone,
-		inactiveTime: "12",
-		language,
-		name: "",
-		email: "",
-		phone: "",
-		address: "",
-		subscriptionStartDate: localDate(),
-		subscriptionDueDate: localDate(1),
-		subscriptionExtend: localDate(1),
-		subscriptionExpiryCount: "10",
-		maxPoiRadius: "",
-		minAddressDistance: "",
-		dataRestriction: "",
-		active: "true",
-		overwriteSubscription: "false",
-		inactiveAfterExpiry: "false",
-		billingCompanyName: "",
-		gstNumber: "",
-		billingEmail: "",
-		billingPhone: "",
-		billingAddress: "",
-		website: "",
-		paymentMode: "",
-	};
+    return {
+        userName: "",
+        password: "",
+        confirmPassword: "",
+        companyName: "",
+        client: "",
+        timezone,
+        inactiveTime: "12",
+        language,
+        name: "",
+        email: "",
+        phone: "",
+        address: "",
+        subscriptionStartDate: localDate(),
+        subscriptionDueDate: localDate(1),
+        subscriptionExtendDate: localDate(1),
+        subscriptionExpiryCount: "10",
+        maxPoiRadius: "",
+        minAddressDistance: "",
+        dataRestriction: "",
+        active: "true",
+        overwriteSubscription: "false",
+        inactiveAfterExpiry: "false",
+        billingCompanyName: "",
+        gstNumber: "",
+        billingEmail: "",
+        billingPhone: "",
+        billingAddress: "",
+        website: "",
+        paymentMode: "",
+    };
 }
 
+const toDateInputValue = (value?: string) => value?.slice(0, 10) ?? "";
+
+const clientRefId = (client: unknown): string => {
+    if (typeof client === "string" || typeof client === "number") return String(client);
+    if (client && typeof client === "object") {
+        const record = client as Record<string, unknown>;
+        const id = record.externalId ?? record.id;
+        if (typeof id === "string" || typeof id === "number") return String(id);
+    }
+    return "";
+};
+
+const transporterToFormState = (transporter: Transporter, timezone: string, language: string): FormState => ({
+    ...createEmptyForm(timezone, language),
+    userName: transporter.userName ?? "",
+    password: "",
+    confirmPassword: "",
+    companyName: transporter.companyName ?? "",
+    client: clientRefId(transporter.client),
+    timezone: transporter.timezone || timezone,
+    inactiveTime: String(transporter.inactiveTime ?? "12"),
+    language: transporter.language || language,
+    name: transporter.name ?? "",
+    email: transporter.email ?? "",
+    phone: transporter.phone ?? "",
+    address: transporter.address ?? "",
+    subscriptionStartDate: toDateInputValue(transporter.subscriptionStartDate) || localDate(),
+    subscriptionDueDate: toDateInputValue(transporter.subscriptionDueDate) || localDate(1),
+    subscriptionExtendDate: toDateInputValue(transporter.subscriptionExtendDate) || localDate(1),
+    subscriptionExpiryCount: String(transporter.subscriptionExpiryCount ?? "10"),
+    maxPoiRadius: transporter.maximumRadiusForNearestPOI ?? "",
+    minAddressDistance: transporter.minimumDistanceForAddress ?? "",
+    dataRestriction: transporter.dataRestriction === "disabled" ? "" : String(transporter.dataRestriction ?? ""),
+    active: String(transporter.active ?? true),
+    overwriteSubscription: String(transporter.overwriteSubscription ?? false),
+    inactiveAfterExpiry: String(transporter.inactiveAfterExpiry ?? false),
+});
+
 function FieldLabel({
-	label,
-	required,
-	optional,
-	info,
-	isDark,
+    label,
+    required,
+    optional,
+    info,
+    isDark,
 }: {
-	label: string;
-	required?: boolean;
-	optional?: boolean;
-	info?: string;
-	isDark: boolean;
+    label: string;
+    required?: boolean;
+    optional?: boolean;
+    info?: string;
+    isDark: boolean;
 }) {
-	return (
-		<span className={`mb-1.5 flex items-center justify-between gap-2 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-			<span>
-				{label}
-				{required ? <span className="text-rose-400"> *</span> : null}
-				{optional ? <span className={`font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}> (Optional)</span> : null}
-			</span>
-			{info ? <span title={info} className="inline-flex"><Info aria-label={info} className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`} /></span> : null}
-		</span>
-	);
+    return (
+        <span className={`mb-1.5 flex items-center justify-between gap-2 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+            <span>
+                {label}
+                {required ? <span className="text-rose-400"> *</span> : null}
+                {optional ? <span className={`font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}> (Optional)</span> : null}
+            </span>
+            {info ? <span title={info} className="inline-flex"><Info aria-label={info} className={`h-3.5 w-3.5 shrink-0 ${isDark ? "text-slate-500" : "text-slate-400"}`} /></span> : null}
+        </span>
+    );
 }
 
 export function AddTransporterDialog({
-	isDark,
-	onClose,
-	onSave,
+    isDark,
+    onClose,
+    onSave,
+    transporterId,
 }: {
-	isDark: boolean;
-	onClose: () => void;
-	onSave: () => void;
+    isDark: boolean;
+    onClose: () => void;
+    /** Called after transporter setup finishes. Receives the created/updated transporter id when available. */
+    onSave: (externalId?: string) => void;
+    /** When set, dialog opens in edit mode and loads `/transporter/getById/:id`. */
+    transporterId?: string;
 }) {
-	const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
-	const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
-	const [createBillingDetails, { isLoading: creatingBilling }] = useCreateBillingDetailsMutation();
-	const isSaving = creatingTransporter || updatingTransporter || creatingBilling;
-	const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
-	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
-	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
-	const languageOptions = useMemo(
-		() => (languages.length > 0 ? languages.map((item) => item.language).filter(Boolean) : fallbackLanguages),
-		[languages],
-	);
-	const timezoneOptions = useMemo(
-		() => (timezones.length > 0 ? timezones.map((item) => item.timezone ?? "").filter(Boolean) : fallbackTimezones),
-		[timezones],
-	);
-	const [activeTab, setActiveTab] = useState<TransporterTab>("Add Transporter");
-	const [savedTransporterId, setSavedTransporterId] = useState("");
-	const [formError, setFormError] = useState("");
-	const [showPassword, setShowPassword] = useState(false);
-	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-	const [pendingSetting, setPendingSetting] = useState<"overwriteSubscription" | "inactiveAfterExpiry" | null>(null);
-	const [roleSearch, setRoleSearch] = useState("");
-	const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(() =>
-		Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
-	);
-	const [values, setValues] = useState<FormState>(() => createEmptyForm(fallbackTimezones[0], fallbackLanguages[0]));
+    const isEditMode = Boolean(transporterId);
+    const [createTransporter, { isLoading: creatingTransporter }] = useCreateTransporterMutation();
+    const [updateTransporter, { isLoading: updatingTransporter }] = useUpdateTransporterMutation();
+    const [createBillingDetails, { isLoading: creatingBilling }] = useCreateBillingDetailsMutation();
+    const [loadTransporter, { isFetching: loadingTransporter }] = useLazyGetTransporterByIdQuery();
+    const isSaving = creatingTransporter || updatingTransporter || creatingBilling;
+    const { data: languages = [], isLoading: languagesLoading } = useGetLanguagesQuery();
+    const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+    const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+    const languageOptions = useMemo(
+        () =>
+            languages.length > 0
+                ? languages.map((item) => ({
+                    value: String(item.externalId ?? item.id ?? item.language),
+                    label: item.language,
+                }))
+                : fallbackLanguages.map((language) => ({ value: language, label: language })),
+        [languages],
+    );
+    const timezoneOptions = useMemo(
+        () =>
+            timezones.length > 0
+                ? timezones
+                    .filter((item) => item.timezone)
+                    .map((item) => ({
+                        value: String(item.externalId ?? item.id ?? item.timezone),
+                        label: item.timezone ?? "",
+                    }))
+                : fallbackTimezones.map((timezone) => ({ value: timezone, label: timezone })),
+        [timezones],
+    );
+    const resolveLanguageValue = (value?: string) =>
+        languageOptions.find((option) => option.value === value || option.label === value)?.value
+        ?? languageOptions[0]?.value
+        ?? "";
+    const resolveTimezoneValue = (value?: string) =>
+        timezoneOptions.find((option) => option.value === value || option.label === value)?.value
+        ?? timezoneOptions[0]?.value
+        ?? "";
+    const [activeTab, setActiveTab] = useState<TransporterTab>("Add Transporter");
+    const [savedTransporterId, setSavedTransporterId] = useState(transporterId ?? "");
+    const [formError, setFormError] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [pendingSetting, setPendingSetting] = useState<"overwriteSubscription" | "inactiveAfterExpiry" | null>(null);
+    const [roleSearch, setRoleSearch] = useState("");
+    const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(() =>
+        Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
+    );
+    const [values, setValues] = useState<FormState>(() => createEmptyForm(fallbackTimezones[0], fallbackLanguages[0]));
 
-	useEffect(() => {
-		setValues((current) => ({
-			...current,
-			timezone: current.timezone || timezoneOptions[0] || "",
-			language: current.language || languageOptions[0] || "",
-		}));
-	}, [languageOptions, timezoneOptions]);
+    useEffect(() => {
+        setValues((current) => ({
+            ...current,
+            timezone: resolveTimezoneValue(current.timezone),
+            language: resolveLanguageValue(current.language),
+        }));
+    }, [languageOptions, timezoneOptions]);
 
-	const inputClass = `h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition focus:ring-2 ${
-		isDark
-			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08] [color-scheme:dark]"
-			: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100 [color-scheme:light]"
-	}`;
-	const filteredRoles = transporterRoles.filter((role) => role.toLowerCase().includes(roleSearch.trim().toLowerCase()));
+    useEffect(() => {
+        if (!transporterId) return;
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const transporter = await loadTransporter(transporterId).unwrap();
+                if (cancelled) return;
+                const nextTimezone = resolveTimezoneValue(transporter.timezone);
+                const nextLanguage = resolveLanguageValue(transporter.language);
+                setValues({
+                    ...transporterToFormState(transporter, nextTimezone, nextLanguage),
+                    timezone: nextTimezone,
+                    language: nextLanguage,
+                });
+                setSavedTransporterId(transporter.externalId || transporterId);
+                const roles = Array.isArray((transporter as Transporter & { roles?: string[] }).roles)
+                    ? (transporter as Transporter & { roles?: string[] }).roles!
+                    : [];
+                if (roles.length > 0) {
+                    setRolePermissions(
+                        Object.fromEntries(transporterRoles.map((role) => [role, roles.includes(role)])),
+                    );
+                }
+            } catch (error) {
+                console.error("Failed to load transporter.", error);
+                if (!cancelled) {
+                    setFormError(apiErrorMessage(error, "Could not load transporter details."));
+                }
+            }
+        };
+        void load();
+        return () => {
+            cancelled = true;
+        };
+    }, [transporterId, loadTransporter, languageOptions, timezoneOptions]);
 
-	const update = (name: keyof FormState, value: string) => {
-		setValues((current) => ({ ...current, [name]: value }));
-		setFormError("");
-	};
+    const inputClass = `h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none transition focus:ring-2 ${
+        isDark
+            ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08] [color-scheme:dark]"
+            : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100 [color-scheme:light]"
+    }`;
+    const filteredRoles = transporterRoles.filter((role) => role.toLowerCase().includes(roleSearch.trim().toLowerCase()));
 
-	const resetForm = () => {
-		if (activeTab === "Access Management") {
-			setRoleSearch("");
-			setRolePermissions(Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])));
-			return;
-		}
-		if (activeTab === "Billing Detail") {
-			setValues((current) => ({
-				...current,
-				billingCompanyName: "",
-				gstNumber: "",
-				billingEmail: "",
-				billingPhone: "",
-				billingAddress: "",
-				website: "",
-				paymentMode: "",
-			}));
-			setFormError("");
-			return;
-		}
-		setValues(createEmptyForm(timezoneOptions[0] || fallbackTimezones[0], languageOptions[0] || fallbackLanguages[0]));
-		setShowPassword(false);
-		setShowConfirmPassword(false);
-		setFormError("");
-	};
+    const update = (name: keyof FormState, value: string) => {
+        setValues((current) => ({ ...current, [name]: value }));
+        setFormError("");
+    };
 
-	const save = async (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		setFormError("");
+    const resetForm = () => {
+        if (activeTab === "Access Management") {
+            setRoleSearch("");
+            setRolePermissions(Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])));
+            return;
+        }
+        if (activeTab === "Billing Detail") {
+            setValues((current) => ({
+                ...current,
+                billingCompanyName: "",
+                gstNumber: "",
+                billingEmail: "",
+                billingPhone: "",
+                billingAddress: "",
+                website: "",
+                paymentMode: "",
+            }));
+            setFormError("");
+            return;
+        }
+        setValues(createEmptyForm(resolveTimezoneValue(), resolveLanguageValue()));
+        setShowPassword(false);
+        setShowConfirmPassword(false);
+        setFormError("");
+    };
 
-		if (activeTab === "Add Transporter") {
-			if (!values.userName.trim() || !values.password || !values.confirmPassword || !values.companyName.trim() || !values.client || !values.timezone || !values.inactiveTime || !values.language || !values.subscriptionStartDate || !values.subscriptionDueDate) {
-				setFormError("Fill the required transporter fields before saving.");
-				return;
-			}
-			if (!usernamePattern.test(values.userName.trim())) {
-				setFormError("Username can only contain A-z, 0-9, _, -, *, @.");
-				return;
-			}
-			if (values.password !== values.confirmPassword) {
-				setFormError("Password and Confirm Password must match.");
-				return;
-			}
-			try {
-				const saved = await createTransporter(buildTransporterPayload(values, [], false)).unwrap();
-				setSavedTransporterId(saved.externalId);
-				setActiveTab("Access Management");
-				toast.success("Transporter saved. Set access roles and save to continue.");
-			} catch (error) {
-				console.error("Failed to create transporter.", error);
-				setFormError(apiErrorMessage(error, "Could not save the transporter. Please try again."));
-			}
-			return;
-		}
+    const save = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setFormError("");
 
-		if (!savedTransporterId) {
-			setFormError("Save the transporter details before saving access or billing information.");
-			return;
-		}
+        if (activeTab === "Add Transporter") {
+            const passwordRequired = !isEditMode;
+            if (
+                !values.userName.trim() ||
+                (passwordRequired && (!values.password || !values.confirmPassword)) ||
+                !values.companyName.trim() ||
+                !values.client ||
+                !values.timezone ||
+                !values.inactiveTime ||
+                !values.language ||
+                !values.subscriptionStartDate ||
+                !values.subscriptionDueDate
+            ) {
+                setFormError("Fill the required transporter fields before saving.");
+                return;
+            }
+            if (!usernamePattern.test(values.userName.trim())) {
+                setFormError("Username can only contain A-z, 0-9, _, -, *, @.");
+                return;
+            }
+            if (values.password || values.confirmPassword) {
+                if (values.password !== values.confirmPassword) {
+                    setFormError("Password and Confirm Password must match.");
+                    return;
+                }
+            }
+            try {
+                const payload = buildTransporterPayload(values, [], false);
+                if (isEditMode && savedTransporterId) {
+                    const { password, confirmPassword, ...rest } = payload;
+                    const body = values.password ? payload : rest;
+                    await updateTransporter({ externalId: savedTransporterId, body }).unwrap();
+                    toast.success("Transporter updated.");
+                    setActiveTab("Access Management");
+                } else {
+                    const saved = await createTransporter(payload).unwrap();
+                    const nextId = String(saved?.externalId || saved?.id || "").trim();
+                    if (!nextId) {
+                        setFormError("Transporter was created, but the server did not return an id. Refresh the list and edit it to continue.");
+                        return;
+                    }
+                    setSavedTransporterId(nextId);
+                    setActiveTab("Access Management");
+                    toast.success("Transporter saved. Set access roles and save to continue.");
+                }
+            } catch (error) {
+                console.error(`Failed to ${isEditMode ? "update" : "create"} transporter.`, error);
+                setFormError(apiErrorMessage(error, `Could not ${isEditMode ? "update" : "save"} the transporter. Please try again.`));
+            }
+            return;
+        }
 
-		if (activeTab === "Access Management") {
-			try {
-				await updateTransporter({
-					externalId: savedTransporterId,
-					body: { roles: transporterRoles.filter((role) => rolePermissions[role]) },
-				}).unwrap();
-				setActiveTab("Billing Detail");
-				toast.success("Transporter access roles saved.");
-			} catch (error) {
-				console.error("Failed to update transporter access roles.", error);
-				setFormError(apiErrorMessage(error, "Could not save transporter access roles. Please try again."));
-			}
-			return;
-		}
+        if (!savedTransporterId) {
+            setFormError("Save the transporter details before saving access or billing information.");
+            return;
+        }
 
-		const hasBilling = [
-			values.billingCompanyName,
-			values.gstNumber,
-			values.billingEmail,
-			values.billingPhone,
-			values.billingAddress,
-			values.website,
-			values.paymentMode,
-		].some((value) => Boolean(value?.trim()));
-		if (hasBilling && (!values.billingCompanyName.trim() || !values.billingAddress.trim())) {
-			setFormError("Company Name and Address are required to save billing details.");
-			return;
-		}
-		if (hasBilling) {
-			try {
-				await createBillingDetails({
-					transporter: savedTransporterId,
-					companyName: values.billingCompanyName.trim(),
-					gstNumber: values.gstNumber.trim() || undefined,
-					billingEmail: values.billingEmail.trim() || undefined,
-					billingPhone: values.billingPhone.trim() || undefined,
-					billingAddress: values.billingAddress.trim() || undefined,
-					website: values.website.trim() || undefined,
-					paymentMode: values.paymentMode || undefined,
-					status: Status.ACTIVE,
-				}).unwrap();
-			} catch (error) {
-				console.error("Failed to create billing details.", error);
-				setFormError(apiErrorMessage(error, "Transporter and access roles were saved, but billing details could not be saved."));
-				return;
-			}
-		}
+        if (activeTab === "Access Management") {
+            try {
+                await updateTransporter({
+                    externalId: savedTransporterId,
+                    body: { roles: transporterRoles.filter((role) => rolePermissions[role]) },
+                }).unwrap();
+                setActiveTab("Billing Detail");
+                toast.success("Transporter access roles saved.");
+            } catch (error) {
+                console.error("Failed to update transporter access roles.", error);
+                setFormError(apiErrorMessage(error, "Could not save transporter access roles. Please try again."));
+            }
+            return;
+        }
 
-		toast.success(hasBilling ? "Billing details saved." : "Transporter setup completed.");
-		onSave();
-	};
+        const hasBilling = [
+            values.billingCompanyName,
+            values.gstNumber,
+            values.billingEmail,
+            values.billingPhone,
+            values.billingAddress,
+            values.website,
+            values.paymentMode,
+        ].some((value) => Boolean(value?.trim()));
+        if (hasBilling && (!values.billingCompanyName.trim() || !values.billingAddress.trim())) {
+            setFormError("Company Name and Address are required to save billing details.");
+            return;
+        }
+        if (hasBilling) {
+            try {
+                await createBillingDetails({
+                    transporter: savedTransporterId,
+                    companyName: values.billingCompanyName.trim(),
+                    gstNumber: values.gstNumber.trim() || undefined,
+                    billingEmail: values.billingEmail.trim() || undefined,
+                    billingPhone: values.billingPhone.trim() || undefined,
+                    billingAddress: values.billingAddress.trim() || undefined,
+                    website: values.website.trim() || undefined,
+                    paymentMode: values.paymentMode || undefined,
+                    status: Status.ACTIVE,
+                }).unwrap();
+            } catch (error) {
+                console.error("Failed to create billing details.", error);
+                setFormError(apiErrorMessage(error, "Transporter and access roles were saved, but billing details could not be saved."));
+                return;
+            }
+        }
 
-	const control = (node: ReactNode, hint?: string) => (
-		<label className="block min-w-0">
-			{node}
-			{hint ? <span className={`mt-1 block text-[11px] font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>{hint}</span> : null}
-		</label>
-	);
+        toast.success(hasBilling ? "Billing details saved." : "Transporter setup completed.");
+        onSave(savedTransporterId || undefined);
+        onClose();
+    };
 
-	return (
-		<div
-			className={`fixed inset-0 z-[800] flex items-center justify-center p-2 backdrop-blur-sm sm:p-4 ${isDark ? "bg-[#020718]/80" : "bg-slate-900/50"}`}
-			onMouseDown={(event) => {
-				if (event.target === event.currentTarget) onClose();
-			}}
-			onKeyDown={(event) => {
-				if (event.key === "Escape") onClose();
-			}}
-		>
-			<form
-				onSubmit={save}
-				noValidate
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="transporter-add-title"
-				className={`flex max-h-[96vh] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
-			>
-				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
-					<h2 id="transporter-add-title" className="text-[15px] font-semibold">Transporter Add</h2>
-					<button type="button" onClick={onClose} aria-label="Close dialog" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
-						<X className="h-5 w-5" />
-					</button>
-				</header>
+    const control = (node: ReactNode, hint?: string) => (
+        <label className="block min-w-0">
+            {node}
+            {hint ? <span className={`mt-1 block text-[11px] font-normal ${isDark ? "text-slate-500" : "text-slate-500"}`}>{hint}</span> : null}
+        </label>
+    );
 
-				<div className={`grid shrink-0 grid-cols-3 border-b text-center text-[12px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-					{tabs.map((tab) => (
-						<button
-							key={tab}
-							type="button"
-							onClick={() => {
-								setActiveTab(tab);
-								setFormError("");
-							}}
-							aria-current={activeTab === tab ? "page" : undefined}
-							className={`min-h-10 px-2 transition ${
-								activeTab === tab
-									? isDark
-										? "bg-cyan-300/[0.12] font-semibold text-cyan-50"
-										: "bg-cyan-50 font-semibold text-cyan-800"
-									: isDark
-										? "font-medium text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
-										: "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-							}`}
-						>
-							{tab}
-						</button>
-					))}
-				</div>
+    return (
+        <div
+            className={`fixed inset-0 z-[860] flex items-center justify-center p-2 backdrop-blur-sm sm:p-4 ${isDark ? "bg-[#020718]/80" : "bg-slate-900/50"}`}
+            onMouseDown={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") onClose();
+            }}
+        >
+            <form
+                onSubmit={save}
+                noValidate
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="transporter-add-title"
+                className={`flex max-h-[96vh] w-full max-w-[1160px] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+            >
+                <header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                    <h2 id="transporter-add-title" className="text-[15px] font-semibold">
+                        {isEditMode ? "Edit Transporter" : "Transporter Add"}
+                    </h2>
+                    <button type="button" onClick={onClose} aria-label="Close dialog" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
+                        <X className="h-5 w-5" />
+                    </button>
+                </header>
 
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-					{formError ? (
-						<p role="alert" className={`mb-4 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-							{formError}
-						</p>
-					) : null}
+                {loadingTransporter ? (
+                    <div className={`flex items-center gap-2 border-b px-5 py-2.5 text-[12px] ${isDark ? "border-white/[0.08] bg-cyan-300/[0.06] text-cyan-100" : "border-slate-200 bg-cyan-50 text-cyan-800"}`}>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Loading transporter details...
+                    </div>
+                ) : null}
 
-					{activeTab === "Add Transporter" ? (
-						<>
-							<div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-								{control(
-									<>
-										<FieldLabel label="Username" required isDark={isDark} />
-										<input value={values.userName} onChange={(event) => update("userName", event.target.value)} placeholder="" className={inputClass} />
-									</>,
-									"Only contains [ A-z, 0-9, _, -, *, @ ]",
-								)}
-								{control(
-									<>
-										<FieldLabel label="Password" required isDark={isDark} />
-										<span className="relative block">
-											<input type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => update("password", event.target.value)} placeholder="" className={`${inputClass} pr-11`} />
-											<button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
-												{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-											</button>
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Confirm Password" required isDark={isDark} />
-										<span className="relative block">
-											<input type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} placeholder="" className={`${inputClass} pr-11`} />
-											<button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
-												{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-											</button>
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Company Name" required isDark={isDark} />
-										<input value={values.companyName} onChange={(event) => update("companyName", event.target.value)} placeholder="" className={inputClass} />
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Client" required isDark={isDark} />
-										<span className="relative block">
-											<select value={values.client} disabled={clientsLoading} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-												<option value="">{clientsLoading ? "Loading clients…" : "Select Client"}</option>
-												{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-											</select>
-											<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Timezone" required isDark={isDark} />
-										<span className="relative block">
-											<select value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-												{timezoneOptions.map((timezone) => <option key={timezone}>{timezone}</option>)}
-											</select>
-											<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Inactive Time" required isDark={isDark} />
-										<span className="relative block">
-											<select value={values.inactiveTime} onChange={(event) => update("inactiveTime", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-												{inactiveTimes.map((hours) => <option key={hours} value={hours}>{hours}</option>)}
-											</select>
-											<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Language" required isDark={isDark} />
-										<span className="relative block">
-											<select value={values.language} disabled={languagesLoading} onChange={(event) => update("language", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
-												{languageOptions.map((language) => <option key={language}>{language}</option>)}
-											</select>
-											<span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
-										</span>
-									</>,
-								)}
-								{control(<><FieldLabel label="Name" optional isDark={isDark} /><input value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} placeholder="" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" value={values.phone} onChange={(event) => update("phone", event.target.value)} placeholder="" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Address" optional isDark={isDark} /><input value={values.address} onChange={(event) => update("address", event.target.value)} placeholder="" className={inputClass} /></>)}
-								{control(
-									<>
-										<FieldLabel label="Subscription Start Date" required isDark={isDark} />
-										<span className="relative block">
-											<input type="date" value={values.subscriptionStartDate} onChange={(event) => update("subscriptionStartDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
-											<CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Subscription Due Date" required isDark={isDark} />
-										<span className="relative block">
-											<input type="date" value={values.subscriptionDueDate} onChange={(event) => update("subscriptionDueDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
-											<CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-										</span>
-									</>,
-								)}
-								{control(
-									<>
-										<FieldLabel label="Subscription Extend Date" optional isDark={isDark} />
-										<span className="relative block">
-											<input type="date" value={values.subscriptionExtend} onChange={(event) => update("subscriptionExtend", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
-											<CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-										</span>
-									</>,
-								)}
-								{control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="number" min="0" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", event.target.value)} placeholder="" className={inputClass} /></>)}
-								{control(<><FieldLabel label="Maximum Radius For Nearest POI (in Km)" info="Radius used to match the nearest point of interest." isDark={isDark} /><input type="number" min="0" value={values.maxPoiRadius} onChange={(event) => update("maxPoiRadius", event.target.value)} className={inputClass} /></>)}
-								{control(<><FieldLabel label="Minimum Distance For Address (in Km)" info="Minimum distance before an address is resolved." isDark={isDark} /><input type="number" min="0" value={values.minAddressDistance} onChange={(event) => update("minAddressDistance", event.target.value)} className={inputClass} /></>)}
-								{control(<><FieldLabel label="Data Restriction (in Days)" optional info="How many days of history this transporter can view." isDark={isDark} /><input type="number" min="0" value={values.dataRestriction} onChange={(event) => update("dataRestriction", event.target.value)} className={inputClass} /></>)}
-							</div>
-							<div className="mt-5 flex flex-col items-start gap-3">
-								<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-									<input type="checkbox" checked={values.active === "true"} onChange={(event) => update("active", String(event.target.checked))} className="h-4 w-4 accent-cyan-500" />
-									Active
-								</label>
-								<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-									<input
-										type="checkbox"
-										checked={values.overwriteSubscription === "true"}
-										onChange={(event) => {
-											if (event.target.checked) {
-												setPendingSetting("overwriteSubscription");
-												return;
-											}
-											update("overwriteSubscription", "false");
-										}}
-										className="h-4 w-4 accent-cyan-500"
-									/>
-									Overwrite Subscription for all vehicles
-								</label>
-								<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-									<input
-										type="checkbox"
-										checked={values.inactiveAfterExpiry === "true"}
-										onChange={(event) => {
-											if (event.target.checked) {
-												setPendingSetting("inactiveAfterExpiry");
-												return;
-											}
-											update("inactiveAfterExpiry", "false");
-										}}
-										className="h-4 w-4 accent-cyan-500"
-									/>
-									Should vehicle inactive after subscription expire
-								</label>
-							</div>
-						</>
-					) : null}
+                <div className={`grid shrink-0 grid-cols-3 border-b text-center text-[12px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab}
+                            type="button"
+                            onClick={() => {
+                                setActiveTab(tab);
+                                setFormError("");
+                            }}
+                            aria-current={activeTab === tab ? "page" : undefined}
+                            className={`min-h-10 px-2 transition ${
+                                activeTab === tab
+                                    ? isDark
+                                        ? "bg-cyan-300/[0.12] font-semibold text-cyan-50"
+                                        : "bg-cyan-50 font-semibold text-cyan-800"
+                                    : isDark
+                                        ? "font-medium text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                                        : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                            }`}
+                        >
+                            {isEditMode && tab === "Add Transporter" ? "Transporter" : tab}
+                        </button>
+                    ))}
+                </div>
 
-					{activeTab === "Access Management" ? (
-						<section aria-label="Transporter role access">
-							<label className="relative mb-3 block max-w-sm">
-								<Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-								<input type="search" value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} placeholder="" aria-label="Search roles" className={`${inputClass} pl-9`} />
-							</label>
-							<div className={`overflow-hidden rounded-xl border ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-								<div className={`grid grid-cols-[1fr_100px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${isDark ? "bg-[#08142e] text-slate-400" : "bg-slate-100 text-slate-600"}`}>
-									<span>Role Name</span>
-									<span className="text-center">Assign</span>
-								</div>
-								<div className="max-h-[50vh] overflow-y-auto">
-									{filteredRoles.map((role, index) => (
-										<div key={role} className={`grid grid-cols-[1fr_100px] items-center px-4 py-2 text-xs ${isDark ? (index % 2 === 0 ? "bg-white/[0.035] text-slate-300" : "text-slate-300") : index % 2 === 0 ? "bg-slate-50 text-slate-700" : "bg-white text-slate-700"}`}>
-											<span>{role}</span>
-											<span className="flex justify-center">
-												<button
-													type="button"
-													role="switch"
-													aria-checked={rolePermissions[role] ?? false}
-													aria-label={`Assign ${role}`}
-													onClick={() => setRolePermissions((current) => ({ ...current, [role]: !current[role] }))}
-													className={`relative h-[18px] w-[34px] rounded-full transition ${rolePermissions[role] ? (isDark ? "bg-cyan-400" : "bg-cyan-600") : isDark ? "bg-slate-700" : "bg-slate-300"}`}
-												>
-													<span className={`absolute top-[3px] h-3 w-3 rounded-full bg-white shadow transition-all ${rolePermissions[role] ? "left-[18px]" : "left-[3px]"}`} />
-												</button>
-											</span>
-										</div>
-									))}
-								</div>
-							</div>
-						</section>
-					) : null}
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                    {formError ? (
+                        <p role="alert" className={`mb-4 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                            {formError}
+                        </p>
+                    ) : null}
 
-					{activeTab === "Billing Detail" ? (
-						<div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-							{control(
-								<>
-									<FieldLabel label="Company Name" required isDark={isDark} />
-									<input value={values.billingCompanyName} onChange={(event) => update("billingCompanyName", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} />
-								</>,
-								"Only contains [ A-z, 0-9, ., _, -, *, @ ]",
-							)}
-							{control(<><FieldLabel label="Contact" optional isDark={isDark} /><input type="tel" value={values.billingPhone} onChange={(event) => update("billingPhone", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-							{control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-							{control(<><FieldLabel label="Website" optional isDark={isDark} /><input type="url" value={values.website} onChange={(event) => update("website", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-							{control(<><FieldLabel label="GSTIN" optional isDark={isDark} /><input value={values.gstNumber} onChange={(event) => update("gstNumber", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-							<div className="sm:col-span-2">
-								{control(<><FieldLabel label="Address" required isDark={isDark} /><input value={values.billingAddress} onChange={(event) => update("billingAddress", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-							</div>
-						</div>
-					) : null}
-				</div>
+                    {activeTab === "Add Transporter" ? (
+                        <>
+                            <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+                                {control(
+                                    <>
+                                        <FieldLabel label="Username" required isDark={isDark} />
+                                        <input value={values.userName} onChange={(event) => update("userName", event.target.value)} placeholder="" className={inputClass} />
+                                    </>,
+                                    "Only contains [ A-z, 0-9, _, -, *, @ ]",
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Password" required={!isEditMode} optional={isEditMode} isDark={isDark} />
+                                        <span className="relative block">
+                                            <input type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => update("password", event.target.value)} placeholder={isEditMode ? "Leave blank to keep current" : ""} className={`${inputClass} pr-11`} />
+                                            <button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
+                                                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                            </button>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Confirm Password" required={!isEditMode} optional={isEditMode} isDark={isDark} />
+                                        <span className="relative block">
+                                            <input type={showConfirmPassword ? "text" : "password"} value={values.confirmPassword} onChange={(event) => update("confirmPassword", event.target.value)} placeholder={isEditMode ? "Leave blank to keep current" : ""} className={`${inputClass} pr-11`} />
+                                            <button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}>
+                                                {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                            </button>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Company Name" required isDark={isDark} />
+                                        <input value={values.companyName} onChange={(event) => update("companyName", event.target.value)} placeholder="" className={inputClass} />
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Client" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <select value={values.client} disabled={clientsLoading} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                <option value="">{clientsLoading ? "Loading clients…" : "Select Client"}</option>
+                                                {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                                            </select>
+                                            <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Timezone" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <select value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                {timezoneOptions.map((timezone) => (
+                                                    <option key={timezone.value} value={timezone.value}>
+                                                        {timezone.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Inactive Time" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <select value={values.inactiveTime} onChange={(event) => update("inactiveTime", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                {inactiveTimes.map((hours) => <option key={hours} value={hours}>{hours}</option>)}
+                                            </select>
+                                            <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Language" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <select value={values.language} disabled={languagesLoading} onChange={(event) => update("language", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                {languageOptions.map((language) => (
+                                                    <option key={language.value} value={language.value}>
+                                                        {language.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
+                                        </span>
+                                    </>,
+                                )}
+                                {control(<><FieldLabel label="Name" optional isDark={isDark} /><input value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" value={values.phone} onChange={(event) => update("phone", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Address" optional isDark={isDark} /><input value={values.address} onChange={(event) => update("address", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Subscription Start Date" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <input type="date" value={values.subscriptionStartDate} onChange={(event) => update("subscriptionStartDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
+                                            <CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Subscription Due Date" required isDark={isDark} />
+                                        <span className="relative block">
+                                            <input type="date" value={values.subscriptionDueDate} onChange={(event) => update("subscriptionDueDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
+                                            <CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                                        </span>
+                                    </>,
+                                )}
+                                {control(
+                                    <>
+                                        <FieldLabel label="Subscription Extend Date" optional isDark={isDark} />
+                                        <span className="relative block">
+                                            <input type="date" value={values.subscriptionExtendDate} onChange={(event) => update("subscriptionExtendDate", event.target.value)} className={`${inputClass} pr-9 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0`} />
+                                            <CalendarDays className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                                        </span>
+                                    </>,
+                                )}
+                                {control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="number" min="0" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Maximum Radius For Nearest POI (in Km)" info="Radius used to match the nearest point of interest." isDark={isDark} /><input type="number" min="0" value={values.maxPoiRadius} onChange={(event) => update("maxPoiRadius", event.target.value)} className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Minimum Distance For Address (in Km)" info="Minimum distance before an address is resolved." isDark={isDark} /><input type="number" min="0" value={values.minAddressDistance} onChange={(event) => update("minAddressDistance", event.target.value)} className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Data Restriction (in Days)" optional info="How many days of history this transporter can view." isDark={isDark} /><input type="number" min="0" value={values.dataRestriction} onChange={(event) => update("dataRestriction", event.target.value)} className={inputClass} /></>)}
+                            </div>
+                            <div className="mt-5 flex flex-col items-start gap-3">
+                                <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                    <input type="checkbox" checked={values.active === "true"} onChange={(event) => update("active", String(event.target.checked))} className="h-4 w-4 accent-cyan-500" />
+                                    Active
+                                </label>
+                                <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={values.overwriteSubscription === "true"}
+                                        onChange={(event) => {
+                                            if (event.target.checked) {
+                                                setPendingSetting("overwriteSubscription");
+                                                return;
+                                            }
+                                            update("overwriteSubscription", "false");
+                                        }}
+                                        className="h-4 w-4 accent-cyan-500"
+                                    />
+                                    Overwrite Subscription for all vehicles
+                                </label>
+                                <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={values.inactiveAfterExpiry === "true"}
+                                        onChange={(event) => {
+                                            if (event.target.checked) {
+                                                setPendingSetting("inactiveAfterExpiry");
+                                                return;
+                                            }
+                                            update("inactiveAfterExpiry", "false");
+                                        }}
+                                        className="h-4 w-4 accent-cyan-500"
+                                    />
+                                    Should vehicle inactive after subscription expire
+                                </label>
+                            </div>
+                        </>
+                    ) : null}
 
-				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="button" onClick={resetForm} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.10] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
-						Reset
-					</button>
-					<button type="submit" disabled={isSaving} className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
-						{isSaving ? "Saving…" : activeTab === "Billing Detail" ? "Finish" : "Save & Continue"}
-					</button>
-				</footer>
-			</form>
+                    {activeTab === "Access Management" ? (
+                        <section aria-label="Transporter role access">
+                            <label className="relative mb-3 block max-w-sm">
+                                <Search className={`pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
+                                <input type="search" value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} placeholder="" aria-label="Search roles" className={`${inputClass} pl-9`} />
+                            </label>
+                            <div className={`overflow-hidden rounded-xl border ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
+                                <div className={`grid grid-cols-[1fr_100px] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${isDark ? "bg-[#08142e] text-slate-400" : "bg-slate-100 text-slate-600"}`}>
+                                    <span>Role Name</span>
+                                    <span className="text-center">Assign</span>
+                                </div>
+                                <div className="max-h-[50vh] overflow-y-auto">
+                                    {filteredRoles.map((role, index) => (
+                                        <div key={role} className={`grid grid-cols-[1fr_100px] items-center px-4 py-2 text-xs ${isDark ? (index % 2 === 0 ? "bg-white/[0.035] text-slate-300" : "text-slate-300") : index % 2 === 0 ? "bg-slate-50 text-slate-700" : "bg-white text-slate-700"}`}>
+                                            <span>{role}</span>
+                                            <span className="flex justify-center">
+                                                <button
+                                                    type="button"
+                                                    role="switch"
+                                                    aria-checked={rolePermissions[role] ?? false}
+                                                    aria-label={`Assign ${role}`}
+                                                    onClick={() => setRolePermissions((current) => ({ ...current, [role]: !current[role] }))}
+                                                    className={`relative h-[18px] w-[34px] rounded-full transition ${rolePermissions[role] ? (isDark ? "bg-cyan-400" : "bg-cyan-600") : isDark ? "bg-slate-700" : "bg-slate-300"}`}
+                                                >
+                                                    <span className={`absolute top-[3px] h-3 w-3 rounded-full bg-white shadow transition-all ${rolePermissions[role] ? "left-[18px]" : "left-[3px]"}`} />
+                                                </button>
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </section>
+                    ) : null}
 
-			{pendingSetting ? (
-				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingSetting(null); }}>
-					<section role="alertdialog" aria-modal="true" aria-labelledby="transporter-setting-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-						<h3 id="transporter-setting-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Confirm setting</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							{pendingSetting === "overwriteSubscription"
-								? "This will overwrite the current subscription settings for all vehicles assigned to this transporter."
-								: "Vehicles will become inactive when their subscription expires."}
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button type="button" onClick={() => setPendingSetting(null)} className={`h-9 rounded-lg border px-4 text-[12px] ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button
-								type="button"
-								onClick={() => {
-									update(pendingSetting, "true");
-									setPendingSetting(null);
-								}}
-								className={`h-9 rounded-lg border px-4 text-[12px] font-semibold ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50" : "border-cyan-300 bg-cyan-50 text-cyan-800"}`}
-							>
-								Save
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
-		</div>
-	);
+                    {activeTab === "Billing Detail" ? (
+                        <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+                            {control(
+                                <>
+                                    <FieldLabel label="Company Name" required isDark={isDark} />
+                                    <input value={values.billingCompanyName} onChange={(event) => update("billingCompanyName", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} />
+                                </>,
+                                "Only contains [ A-z, 0-9, ., _, -, *, @ ]",
+                            )}
+                            {control(<><FieldLabel label="Contact" optional isDark={isDark} /><input type="tel" value={values.billingPhone} onChange={(event) => update("billingPhone", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            {control(<><FieldLabel label="Website" optional isDark={isDark} /><input type="url" value={values.website} onChange={(event) => update("website", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            {control(<><FieldLabel label="GSTIN" optional isDark={isDark} /><input value={values.gstNumber} onChange={(event) => update("gstNumber", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            <div className="sm:col-span-2">
+                                {control(<><FieldLabel label="Address" required isDark={isDark} /><input value={values.billingAddress} onChange={(event) => update("billingAddress", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            </div>
+                        </div>
+                    ) : null}
+                </div>
+
+                <footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
+                    <button type="button" onClick={resetForm} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.10] text-slate-300 hover:bg-white/[0.04]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                        Reset
+                    </button>
+                    <button type="submit" disabled={isSaving || loadingTransporter} className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
+                        {isSaving ? "Saving…" : loadingTransporter ? "Loading…" : activeTab === "Billing Detail" ? "Finish" : isEditMode ? "Update & Continue" : "Save & Continue"}
+                    </button>
+                </footer>
+            </form>
+
+            {pendingSetting ? (
+                <div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingSetting(null); }}>
+                    <section role="alertdialog" aria-modal="true" aria-labelledby="transporter-setting-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
+                        <h3 id="transporter-setting-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Confirm setting</h3>
+                        <p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                            {pendingSetting === "overwriteSubscription"
+                                ? "This will overwrite the current subscription settings for all vehicles assigned to this transporter."
+                                : "Vehicles will become inactive when their subscription expires."}
+                        </p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button type="button" onClick={() => setPendingSetting(null)} className={`h-9 rounded-lg border px-4 text-[12px] ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    update(pendingSetting, "true");
+                                    setPendingSetting(null);
+                                }}
+                                className={`h-9 rounded-lg border px-4 text-[12px] font-semibold ${isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50" : "border-cyan-300 bg-cyan-50 text-cyan-800"}`}
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            ) : null}
+        </div>
+    );
 }

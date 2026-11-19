@@ -39,48 +39,55 @@ type DetailTab = "overview" | "track" | "history" | "more";
 
 const STATUS_META: Record<
   StatusFilter,
-  { label: string; dot: string; active: string; idle: string }
+  { label: string; dot: string; active: string; activeLight: string; idle: string }
 > = {
   all: {
     label: "All",
     dot: "bg-sky-400",
     active: "border-sky-300/40 bg-sky-400/15 text-sky-100",
+    activeLight: "border-sky-200 bg-sky-50 text-sky-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-sky-300/25 hover:text-sky-200",
   },
   running: {
     label: "Running",
     dot: "bg-emerald-400",
     active: "border-emerald-300/40 bg-emerald-400/15 text-emerald-100",
+    activeLight: "border-emerald-200 bg-emerald-50 text-emerald-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-emerald-300/25 hover:text-emerald-200",
   },
   stopped: {
     label: "Stopped",
     dot: "bg-rose-400",
     active: "border-rose-300/40 bg-rose-400/15 text-rose-100",
+    activeLight: "border-rose-200 bg-rose-50 text-rose-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-rose-300/25 hover:text-rose-200",
   },
   overspeed: {
     label: "Overspeed",
     dot: "bg-orange-400",
     active: "border-orange-300/40 bg-orange-400/15 text-orange-100",
+    activeLight: "border-orange-200 bg-orange-50 text-orange-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-orange-300/25 hover:text-orange-200",
   },
   idle: {
     label: "Idle",
     dot: "bg-amber-400",
     active: "border-amber-300/40 bg-amber-400/15 text-amber-100",
+    activeLight: "border-amber-200 bg-amber-50 text-amber-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-amber-300/25 hover:text-amber-200",
   },
   unreachable: {
     label: "Unreachable",
     dot: "bg-cyan-400",
     active: "border-cyan-300/40 bg-cyan-400/15 text-cyan-100",
+    activeLight: "border-cyan-200 bg-cyan-50 text-cyan-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-cyan-300/25 hover:text-cyan-200",
   },
   new: {
     label: "New",
     dot: "bg-slate-400",
     active: "border-slate-300/40 bg-slate-400/15 text-slate-100",
+    activeLight: "border-slate-200 bg-slate-100 text-slate-700",
     idle: "border-white/[0.08] text-slate-400 hover:border-slate-300/25 hover:text-slate-200",
   },
 };
@@ -636,7 +643,13 @@ export default function AdvanceDashboard() {
                     onClick={() => setStatusFilter(key)}
                     aria-pressed={active}
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] transition ${
-                      active ? meta.active : isDark ? meta.idle : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                      active
+                        ? isDark
+                          ? meta.active
+                          : meta.activeLight
+                        : isDark
+                          ? meta.idle
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                     }`}
                   >
                     <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />

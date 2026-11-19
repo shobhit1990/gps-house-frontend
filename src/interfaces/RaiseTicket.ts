@@ -1,6 +1,7 @@
 import type { Status } from "@/enums/Status";
+import { TicketType } from "@/enums/TicketType";
 
-export const ticketTypes = ["Bug", "Feature Request", "General Inquiry", "Service Request", "Vehicle Offline"];
+export const ticketTypes = Object.values(TicketType);
 
 export interface CreateRaiseTicketRequest {
   /** Client externalId. */
@@ -9,7 +10,7 @@ export interface CreateRaiseTicketRequest {
   transporter?: string;
   /** Vehicle externalId. */
   vehicle?: string;
-  ticketType: string;
+  ticketType: TicketType | string;
   description: string;
   status: Status;
   reason?: string;

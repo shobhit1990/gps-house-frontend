@@ -9,6 +9,7 @@ import type {
   AlertTypeMaster,
   ClientMaster,
   ExpenseTypeMaster,
+  GeofTypeMaster,
   MasterOption,
   StateMaster,
   TechnicianMaster,
@@ -145,6 +146,15 @@ export const masterApi = api.injectEndpoints({
         toMasterOptions(response, (item) => item.expenseType ?? item.expenseName ?? item.name),
       providesTags: [{ type: "Master", id: "EXPENSE_TYPE" }],
     }),
+    getGeofTypeMaster: builder.query<MasterOption[], void>({
+      query: () => "/master/geofType",
+      transformResponse: (response: MasterListResponse<GeofTypeMaster>) =>
+        toMasterOptions(
+          response,
+          (item) => item.geofType ?? item.name ?? item.geofTypeName ?? item.typeName ?? item.geofenceTypeName,
+        ),
+      providesTags: [{ type: "Master", id: "GEOF_TYPE" }, { type: "GeoTypes", id: "LIST" }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -163,4 +173,5 @@ export const {
   useGetStateMasterQuery,
   useGetAlertTypeMasterQuery,
   useGetExpenseTypeMasterQuery,
+  useGetGeofTypeMasterQuery,
 } = masterApi;
