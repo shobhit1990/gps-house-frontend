@@ -8,7 +8,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetJobSheetsQuery, useUpdateJobSheetMutation } from "@/store/services/api/JobSheet";
-import { useGetTechnicianMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useGetTechnicianMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useGetVehiclesQuery } from "@/store/services/api/Vehicle";
 
 type JobStatus = "Pending" | "Completed";
 
@@ -22,14 +23,14 @@ type JobSheetRecord = {
 	instruction: string;
 	task: string;
 	remark: string;
+	orderNo: string;
 	assignOn: string;
 	doneOn: string;
-	document: string;
 	status: JobStatus;
 	closedBy: string;
 };
 
-type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "assignOn" | "doneOn" | "document" | "status" | "closedBy" | "action";
+type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "orderNo" | "assignOn" | "doneOn" | "status" | "closedBy" | "action";
 type StatusFilter = "All" | JobStatus;
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -41,9 +42,9 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "instruction", label: "Instruction" },
 	{ key: "task", label: "Task" },
 	{ key: "remark", label: "Remark" },
+	{ key: "orderNo", label: "Order No." },
 	{ key: "assignOn", label: "Assign On" },
 	{ key: "doneOn", label: "Done On" },
-	{ key: "document", label: "Document" },
 	{ key: "status", label: "Status" },
 	{ key: "closedBy", label: "Closed By" },
 	{ key: "action", label: "Action" },
@@ -66,34 +67,85 @@ export default function JobSheet() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: jobSheets = [], isLoading, isFetching, isError, refetch } = useGetJobSheetsQuery();
-	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: vehicleOptions = [] } = useGetVehicleMasterQuery();
 	const { data: technicians = [] } = useGetTechnicianMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	const { data: vehicles = [] } = useGetVehiclesQuery();
 	const [updateJobSheet] = useUpdateJobSheetMutation();
 	const [completingId, setCompletingId] = useState<string | null>(null);
 	const rows = useMemo<JobSheetRecord[]>(() => {
-		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
-		const technicianNames = new Map(technicians.map((technician) => [technician.id, technician.name]));
+		const vehicleNames = new Map(
+			vehicleOptions.flatMap((vehicle) => {
+				const entries: [string, string][] = [[vehicle.id, vehicle.name]];
+				if (vehicle.externalId) entries.push([vehicle.externalId, vehicle.name]);
+				return entries;
+			}),
+		);
+		const technicianNames = new Map(
+			technicians.flatMap((technician) => {
+				const entries: [string, string][] = [[technician.id, technician.name]];
+				if (technician.externalId) entries.push([technician.externalId, technician.name]);
+				return entries;
+			}),
+		);
+		const transporterNames = new Map(
+			transporters.flatMap((transporter) => {
+				const entries: [string, string][] = [[transporter.id, transporter.name]];
+				if (transporter.externalId) entries.push([transporter.externalId, transporter.name]);
+				return entries;
+			}),
+		);
+		const vehicleTransporterIds = new Map(
+			vehicles.flatMap((vehicle) => {
+				const vehicleId = String(vehicle.externalId || vehicle.id || "");
+				const transporterRef = vehicle.transporter as unknown;
+				let transporterId = "";
+				if (typeof transporterRef === "string" || typeof transporterRef === "number") {
+					transporterId = String(transporterRef);
+				} else if (transporterRef && typeof transporterRef === "object") {
+					const ref = transporterRef as { externalId?: string; id?: string | number; name?: string; userName?: string; companyName?: string };
+					transporterId = String(ref.externalId ?? ref.id ?? "");
+					const nestedName = ref.name?.trim() || ref.userName?.trim() || ref.companyName?.trim() || "";
+					if (transporterId && nestedName) transporterNames.set(transporterId, nestedName);
+				}
+				return vehicleId && transporterId ? [[vehicleId, transporterId] as [string, string]] : [];
+			}),
+		);
 		return jobSheets.map((job) => {
 			const completed = job.status !== Status.ACTIVE;
-			const technicianName = technicianNames.get(job.technician) ?? job.technician ?? "";
+			const technicianName =
+				job.technicianName?.trim() ||
+				technicianNames.get(job.technician) ||
+				job.technician ||
+				"";
+			const vehicleNo =
+				job.vehicleNo?.trim() ||
+				vehicleNames.get(job.vehicle) ||
+				job.vehicle ||
+				"";
+			const transporterId = vehicleTransporterIds.get(job.vehicle) ?? "";
+			const transporter =
+				job.transporterName?.trim() ||
+				(transporterId ? transporterNames.get(transporterId) : "") ||
+				"";
 			return {
-				id: job.externalId,
+				id: job.externalId || String(job.id),
 				technicianName,
-				vehicle: vehicleNames.get(job.vehicle) ?? job.vehicle ?? "",
-				transporter: "",
+				vehicle: vehicleNo,
+				transporter,
 				contactPerson: job.contactPersonName ?? "",
 				phone: job.phone ?? "",
 				instruction: job.instruction ?? "",
 				task: "",
-				remark: job.reason ?? "",
+				remark: job.reason && job.reason !== "New jobsheet created" && job.reason !== "Job completed" ? job.reason : "",
+				orderNo: job.orderNo ?? "",
 				assignOn: dateLabel(job.createdAt),
 				doneOn: completed ? dateLabel(job.updatedAt) : "",
-				document: "",
 				status: completed ? "Completed" : "Pending",
 				closedBy: completed ? technicianName : "",
 			};
 		});
-	}, [jobSheets, vehicles, technicians]);
+	}, [jobSheets, vehicleOptions, technicians, transporters, vehicles]);
 	const [search, setSearch] = useState("");
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
 	const [pageSize, setPageSize] = useState(10);
@@ -109,7 +161,7 @@ export default function JobSheet() {
 		return rows.filter((row) => {
 			if (statusFilter !== "All" && row.status !== statusFilter) return false;
 			if (!query) return true;
-			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.status].join(" ").toLowerCase().includes(query);
+			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.orderNo, row.status].join(" ").toLowerCase().includes(query);
 		});
 	}, [rows, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
@@ -121,6 +173,7 @@ export default function JobSheet() {
 		setStatusFilter("All");
 		setPage(0);
 		setShowAddDialog(false);
+		void refetch();
 	};
 
 	const completeJob = async (id: string) => {

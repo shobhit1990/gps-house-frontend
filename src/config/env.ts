@@ -1,11 +1,11 @@
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api/v1",
+  BASE_URL: import.meta.env.VITE_API_BASE_URL || "https://apiqa.gpshouse.in/api/v1",
   TIMEOUT: 30000,
   RETRY_ATTEMPTS: 3,
 } as const;
 
 export const SOCKET_CONFIG = {
-  URL: import.meta.env.VITE_SOCKET_URL || "http://localhost:3000",
+  URL: import.meta.env.VITE_SOCKET_URL || "https://apiqa.gpshouse.in",
 } as const;
 
 /** Set VITE_AUTH_ENABLED=false to skip the login screen and 401 logout until the login API is ready. */

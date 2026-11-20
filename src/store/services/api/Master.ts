@@ -92,16 +92,37 @@ export const masterApi = api.injectEndpoints({
         toMasterOptions(response, (item) => item.clientName ?? item.company ?? item.name ?? item.username),
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
-    getTransporterMaster: builder.query<MasterOption[], void>({
-      query: () => "/master/transporter",
+    getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({
+      query: (params) => ({
+        url: "/master/transporter",
+        params: params?.client ? { client: params.client } : undefined,
+      }),
       transformResponse: (response: MasterListResponse<TransporterMaster>) =>
         toMasterOptions(response, (item) => item.transporterName ?? item.company ?? item.name ?? item.username),
-      providesTags: [{ type: "Master", id: "TRANSPORTER" }, { type: "Transporters", id: "LIST" }],
+      providesTags: (_result, _error, params) => [
+        { type: "Master", id: params?.client ? `TRANSPORTER-${params.client}` : "TRANSPORTER" },
+        { type: "Transporters", id: "LIST" },
+      ],
     }),
     getTechnicianMaster: builder.query<MasterOption[], void>({
       query: () => "/master/technician",
-      transformResponse: (response: MasterListResponse<TechnicianMaster>) =>
-        toMasterOptions(response, (item) => item.technicianName ?? item.name ?? item.userName ?? item.username),
+      transformResponse: (response: MasterListResponse<TechnicianMaster>) => {
+        // Keep inactive technicians too — QA/create often saves status "inactive",
+        // and JobSheet / Payment dropdowns would otherwise stay empty.
+        const seen = new Set<string>();
+        return unwrapMasterList(response).flatMap((item) => {
+          const name = (
+            item.technicianName ??
+            item.name ??
+            item.userName ??
+            item.username ??
+            item.companyName
+          )?.trim();
+          if (!name || seen.has(name)) return [];
+          seen.add(name);
+          return [{ id: String(item.externalId ?? item.id ?? name), externalId: item.externalId, name }];
+        });
+      },
       providesTags: [{ type: "Master", id: "TECHNICIAN" }, { type: "Technicians", id: "LIST" }],
     }),
     getVehicleMaster: builder.query<MasterOption[], void>({
@@ -143,8 +164,8 @@ export const masterApi = api.injectEndpoints({
     getExpenseTypeMaster: builder.query<MasterOption[], void>({
       query: () => "/master/expenseType",
       transformResponse: (response: MasterListResponse<ExpenseTypeMaster>) =>
-        toMasterOptions(response, (item) => item.expenseType ?? item.expenseName ?? item.name),
-      providesTags: [{ type: "Master", id: "EXPENSE_TYPE" }],
+        toMasterOptions(response, (item) => item.expenseName ?? item.expenseType ?? item.name),
+      providesTags: [{ type: "Master", id: "EXPENSE_TYPE" }, { type: "ExpenseTypes", id: "LIST" }],
     }),
     getGeofTypeMaster: builder.query<MasterOption[], void>({
       query: () => "/master/geofType",

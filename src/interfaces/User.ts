@@ -6,6 +6,8 @@ export interface CreateUserRequest {
   confirmPassword: string;
   /** Group externalId. */
   group: string;
+  /** Role externalId. */
+  role: string;
   /** Timezone externalId. */
   timezone: string;
   companyName: string;

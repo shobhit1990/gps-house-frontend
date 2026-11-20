@@ -97,14 +97,12 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 				technician: values.technician,
 				contactPersonName: values.contactPerson.trim(),
 				phone: values.phone.trim(),
+				orderNo: values.orderNo.trim() || undefined,
 				instruction: values.instruction.trim() || undefined,
 				status: Status.ACTIVE,
 				reason: "New jobsheet created",
 			}).unwrap();
 			toast.success("Job sheet added.");
-			if (values.orderNo.trim()) {
-				toast.info("Order No is shown in this form but is not saved by the backend yet.");
-			}
 			onSaved();
 		} catch (error) {
 			console.error("Failed to create job sheet.", error);

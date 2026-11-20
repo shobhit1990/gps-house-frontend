@@ -1,24 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
+import { toast } from "sonner";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useLazyGetSubscriptionExpiredVehiclesQuery,
+	type SubscriptionExpiredVehicle,
+} from "@/store/services/api/Vehicle";
 
-type ExpiredRow = {
-	id: string;
-	client: string;
-	vehicleNo: string;
-	active: "Yes" | "No";
-	transporter: string;
-	subscriptionStart: string;
-	subscriptionDue: string;
-};
+type ExpiredRow = SubscriptionExpiredVehicle;
 
 type ColumnKey = "sn" | "vehicleNo" | "active" | "transporter" | "subscriptionStart" | "subscriptionDue";
-type MenuKind = "client" | "transporter";
-type AppliedFilters = { clients: string[]; transporters: string[] };
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -30,20 +25,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const knownVehicles = new Set(vehicles.map((vehicle) => vehicle.vehicle));
-
-const dummyExpiredSubscriptions: ExpiredRow[] = [
-	{ id: "exp-1", client: "tushar.shukla", transporter: "rahul.sharma", vehicleNo: "UP32ER2711", active: "No", subscriptionStart: "05/08/2024", subscriptionDue: "05/08/2025" },
-	{ id: "exp-2", client: "gpshouse", transporter: "Aviator", vehicleNo: "UP32HN8013", active: "Yes", subscriptionStart: "05/08/2024", subscriptionDue: "05/08/2025" },
-	{ id: "exp-3", client: "gpshouse", transporter: "Aviator", vehicleNo: "UP45AC5536", active: "Yes", subscriptionStart: "18/08/2024", subscriptionDue: "18/08/2025" },
-	{ id: "exp-4", client: "gpshouse", transporter: "vicky.9", vehicleNo: "UP32LU6158", active: "No", subscriptionStart: "12/03/2023", subscriptionDue: "12/03/2024" },
-	{ id: "exp-5", client: "arun.singh", transporter: "vga", vehicleNo: "UP45AC6533", active: "No", subscriptionStart: "02/01/2022", subscriptionDue: "02/01/2023" },
-	{ id: "exp-6", client: "arun.singh", transporter: "vga", vehicleNo: "UPHK8143", active: "Yes", subscriptionStart: "22/11/2024", subscriptionDue: "22/11/2025" },
-	{ id: "exp-7", client: "gpshouse", transporter: "rahul.sharma", vehicleNo: "UP32HN8013", active: "Yes", subscriptionStart: "09/06/2025", subscriptionDue: "09/06/2026" },
-	{ id: "exp-8", client: "tushar.shukla", transporter: "Aviator", vehicleNo: "UP45AC5536", active: "No", subscriptionStart: "14/02/2021", subscriptionDue: "14/02/2022" },
-];
-
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 const dueParts = (value: string) => {
 	const match = value.match(/(\d{2})\/(\d{2})\/(\d{4})/);
@@ -115,139 +96,73 @@ function ExpiredRings({ rows }: { rows: ExpiredRow[] }) {
 }
 
 export default function SubscriptionExpiredDate() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [] } = useGetClientMasterQuery();
+	const [selectedClient, setSelectedClient] = useState("");
+	const [selectedTransporter, setSelectedTransporter] = useState("");
+	const { data: transporters = [], isFetching: transportersLoading } = useGetTransporterMasterQuery(
+		selectedClient ? { client: selectedClient } : undefined,
+		{ skip: !selectedClient },
+	);
+	const [fetchExpired, { isFetching }] = useLazyGetSubscriptionExpiredVehiclesQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const clientRef = useRef<HTMLDivElement>(null);
-	const transporterRef = useRef<HTMLDivElement>(null);
 	const [rows, setRows] = useState<ExpiredRow[]>([]);
 	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClients, setSelectedClients] = useState<string[]>([]);
-	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [] });
-	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
-	const [clientQuery, setClientQuery] = useState("");
-	const [transporterQuery, setTransporterQuery] = useState("");
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
-		return rows.filter((row) => {
-			if (applied.clients.length > 0 && !applied.clients.includes(row.client)) return false;
-			if (applied.transporters.length > 0 && !applied.transporters.includes(row.transporter)) return false;
-			if (!query) return true;
-			return [row.vehicleNo, row.active, row.transporter, row.subscriptionStart, row.subscriptionDue, row.client].join(" ").toLowerCase().includes(query);
-		});
-	}, [applied, rows, search]);
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[row.vehicleNo, row.active, row.transporter, row.subscriptionStart, row.subscriptionDue, row.client]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
 
-	useEffect(() => {
-		if (!openMenu) return;
-		const onPointer = (event: MouseEvent) => {
-			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : transporterRef;
-			if (!menuRef.current?.contains(target)) setOpenMenu(null);
-		};
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setOpenMenu(null);
-		};
-		document.addEventListener("mousedown", onPointer);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onPointer);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [openMenu]);
-
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
-	};
-
-	const applyFilters = () => {
-		const ready = selectedClients.length > 0 || selectedTransporters.length > 0;
-		const matched = ready
-			? dummyExpiredSubscriptions.filter((row) => knownVehicles.has(row.vehicleNo) && (selectedClients.length === 0 || selectedClients.includes(row.client)) && (selectedTransporters.length === 0 || selectedTransporters.includes(row.transporter)))
-			: [];
-		setRows(matched);
-		setApplied({ clients: selectedClients, transporters: selectedTransporters });
-		setSearched(true);
-		setOpenMenu(null);
-		setPage(0);
+	const applyFilters = async () => {
+		if (!selectedClient || !selectedTransporter) {
+			toast.error("Select Client and Transporter to search.");
+			return;
+		}
+		try {
+			const matched = await fetchExpired({
+				client: selectedClient,
+				transporter: selectedTransporter,
+			}).unwrap();
+			setRows(matched);
+			setSearched(true);
+			setPage(0);
+		} catch (error) {
+			console.error("Failed to load subscription expired report.", error);
+			toast.error(apiErrorMessage(error, "Could not load subscription expired report."));
+			setRows([]);
+			setSearched(true);
+		}
 	};
 
 	const refresh = () => {
 		setRows([]);
 		setSearched(false);
 		setSearch("");
-		setSelectedClients([]);
-		setSelectedTransporters([]);
-		setApplied({ clients: [], transporters: [] });
-		setClientQuery("");
-		setTransporterQuery("");
+		setSelectedClient("");
+		setSelectedTransporter("");
 		setHiddenColumns([]);
-		setOpenMenu(null);
 		setPage(0);
 		setPageSize(10);
 	};
 
-	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[200px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
-	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
-
-	const multiSelect = (
-		kind: MenuKind,
-		ref: RefObject<HTMLDivElement | null>,
-		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
-		options: string[],
-		query: string,
-		setQuery: (value: string) => void,
-	) => (
-		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[220px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
-				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
-			</button>
-			{openMenu === kind && (
-				<div className={menuClass}>
-					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
-					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
-								</label>
-							</li>
-						))}
-						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
-					</ul>
-				</div>
-			)}
-		</div>
-	);
+	const labelClass = `mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`;
+	const selectClass = `h-10 w-full appearance-none rounded-lg border px-3 pr-8 text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35 [color-scheme:dark]" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
 
 	const cell = (key: ColumnKey, row: ExpiredRow, serial: number) => {
 		if (key === "sn") return String(serial);
@@ -282,10 +197,39 @@ export default function SubscriptionExpiredDate() {
 				</section>
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
-					<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-						{multiSelect("client", clientRef, "Select Client", selectedClients, setSelectedClients, visibleClients, clientQuery, setClientQuery)}
-						{multiSelect("transporter", transporterRef, "Select Transporter", selectedTransporters, setSelectedTransporters, visibleTransporters, transporterQuery, setTransporterQuery)}
-						<button type="button" onClick={applyFilters} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+						<label className="relative block min-w-0 flex-1 sm:max-w-[220px]">
+							<span className={labelClass}>Client</span>
+							<select
+								aria-label="Select Client"
+								value={selectedClient}
+								onChange={(event) => {
+									setSelectedClient(event.target.value);
+									setSelectedTransporter("");
+								}}
+								className={selectClass}
+							>
+								<option value="">Select Client</option>
+								{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+							</select>
+							<ChevronDown className="pointer-events-none absolute bottom-3 right-3 h-3.5 w-3.5 text-slate-500" />
+						</label>
+						<label className="relative block min-w-0 flex-1 sm:max-w-[220px]">
+							<span className={labelClass}>Transporter</span>
+							<select
+								aria-label="Select Transporter"
+								value={selectedTransporter}
+								onChange={(event) => setSelectedTransporter(event.target.value)}
+								disabled={!selectedClient || transportersLoading}
+								className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
+							>
+								<option value="">{!selectedClient ? "Select Client first" : transportersLoading ? "Loading…" : "Select Transporter"}</option>
+								{transporters.map((transporter) => <option key={transporter.id} value={transporter.id}>{transporter.name}</option>)}
+							</select>
+							<ChevronDown className="pointer-events-none absolute bottom-3 right-3 h-3.5 w-3.5 text-slate-500" />
+						</label>
+						<button type="button" onClick={() => void applyFilters()} disabled={isFetching} className={`flex h-10 items-center gap-2 rounded-lg border px-5 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							{isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 							Search
 						</button>
 					</div>
@@ -350,7 +294,9 @@ export default function SubscriptionExpiredDate() {
 								))}
 								{pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">No data available</td>
+										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">
+											{isFetching ? "Loading…" : searched ? "No data available" : "Select Client and Transporter, then Search"}
+										</td>
 									</tr>
 								)}
 							</tbody>

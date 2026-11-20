@@ -6,7 +6,7 @@ import { groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
-import { useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetRoleMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
 import { useCreateUserMutation } from "@/store/services/api/User";
 
 export type UserGroupValues = {
@@ -20,6 +20,7 @@ export type UserFormValues = {
 	confirmPassword: string;
 	contactPerson: string;
 	group: string;
+	role: string;
 	timezone: string;
 	company: string;
 	companyAddress: string;
@@ -47,6 +48,7 @@ const emptyUser = (): UserFormValues => ({
 	confirmPassword: "",
 	contactPerson: "",
 	group: "",
+	role: "",
 	timezone: "",
 	company: "",
 	companyAddress: "",
@@ -65,6 +67,7 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 	const [values, setValues] = useState<UserFormValues>(emptyUser);
 	const [formError, setFormError] = useState("");
 	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
+	const { data: roles = [], isLoading: rolesLoading } = useGetRoleMasterQuery();
 	const { data: timezoneMaster = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 	const timezones = timezoneMaster
 		.map((timezone) => ({ value: timezone.externalId ?? String(timezone.id ?? ""), label: timezone.timezone ?? "" }))
@@ -136,8 +139,8 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 
 	const submitUser = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.group || !values.timezone || !values.company.trim()) {
-			setFormError("Username, Password, Confirm Password, Group, Timezone, and Company Name are required.");
+		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.group || !values.role || !values.timezone || !values.company.trim()) {
+			setFormError("Username, Password, Confirm Password, Group, Role, Timezone, and Company Name are required.");
 			return;
 		}
 		if (!usernamePattern.test(values.username.trim())) {
@@ -155,6 +158,7 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 				password: values.password,
 				confirmPassword: values.confirmPassword,
 				group: values.group,
+				role: values.role,
 				timezone: values.timezone,
 				companyName: values.company.trim(),
 				contactPersonName: text(values.contactPerson),
@@ -256,6 +260,16 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 										<select required value={values.group} disabled={groupsLoading} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 											<option value="">{groupsLoading ? "Loading groups…" : "Select Group"}</option>
 											{groups.map((group) => <option key={group.externalId} value={group.externalId}>{group.groupName}</option>)}
+										</select>
+										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+									</span>
+								</label>
+								<label className="block min-w-0">
+									<span className={labelClass}>Role <span className="text-rose-400">*</span></span>
+									<span className="relative block">
+										<select required value={values.role} disabled={rolesLoading} onChange={(event) => update("role", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">{rolesLoading ? "Loading roles…" : "Select Role"}</option>
+											{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</span>

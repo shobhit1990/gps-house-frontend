@@ -1,13 +1,23 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ChevronDown, X } from "lucide-react";
 import { nowDateTimeInput } from "@/components/Reports/expenseDate";
-import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { ExpenseFor, expenseForOptions } from "@/enums/ExpenseFor";
 import type { MasterOption } from "@/interfaces/EntityMaster";
+import {
+	useGetClientMasterQuery,
+	useGetExpenseTypeMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
+import { useGetDriverDetailsQuery } from "@/store/services/api/DriverDetails";
 
 export type ExpenseFormValues = {
 	client: string;
 	transporter: string;
+	expenseFor: ExpenseFor | "";
+	vehicle: string;
+	driver: string;
 	expenseName: string;
 	expenseType: string;
 	amount: string;
@@ -30,6 +40,9 @@ type AddExpenseProps = {
 const emptyValues = (): ExpenseFormValues => ({
 	client: "",
 	transporter: "",
+	expenseFor: "",
+	vehicle: "",
+	driver: "",
 	expenseName: "",
 	expenseType: "",
 	amount: "",
@@ -46,11 +59,38 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: driverDetails = [] } = useGetDriverDetailsQuery();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const [values, setValues] = useState<ExpenseFormValues>(initial ?? emptyValues);
 	const [formError, setFormError] = useState("");
+
+	const canSelectExpenseFor = Boolean(values.client && values.transporter);
+	const showVehicle = values.expenseFor === ExpenseFor.VEHICLE_WISE;
+	const showDriver = values.expenseFor === ExpenseFor.DRIVER_WISE;
+
+	const driverOptions = useMemo<MasterOption[]>(
+		() =>
+			driverDetails
+				.filter((driver) => {
+					if (values.client && driver.client && driver.client !== values.client) return false;
+					if (values.transporter && driver.transporter && driver.transporter !== values.transporter) return false;
+					return true;
+				})
+				.map((driver) => ({
+					id: driver.externalId,
+					externalId: driver.externalId,
+					name: `${driver.firstName} ${driver.lastName}`.trim() || driver.externalId,
+				})),
+		[driverDetails, values.client, values.transporter],
+	);
+
+	useEffect(() => {
+		setValues(initial ?? emptyValues());
+		setFormError("");
+	}, [initial]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -60,7 +100,7 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
 
-	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] outline-none transition focus:ring-2 ${
+	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] outline-none transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50 ${
 		isDark
 			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10 [color-scheme:dark]"
 			: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
@@ -68,7 +108,19 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 	const labelClass = `mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`;
 
 	const update = <K extends keyof ExpenseFormValues>(key: K, value: ExpenseFormValues[K]) => {
-		setValues((current) => ({ ...current, [key]: value }));
+		setValues((current) => {
+			const next = { ...current, [key]: value };
+			if (key === "client" || key === "transporter") {
+				next.expenseFor = "";
+				next.vehicle = "";
+				next.driver = "";
+			}
+			if (key === "expenseFor") {
+				next.vehicle = "";
+				next.driver = "";
+			}
+			return next;
+		});
 		setFormError("");
 	};
 
@@ -83,11 +135,24 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 		</label>
 	);
 
-	const select = (key: "client" | "transporter" | "expenseType", placeholder: string, options: MasterOption[]) => (
+	const select = (
+		key: "client" | "transporter" | "expenseType" | "vehicle" | "driver",
+		placeholder: string,
+		options: MasterOption[],
+		disabled = false,
+	) => (
 		<span className="relative block">
-			<select required value={values[key]} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+			<select
+				required={!disabled}
+				disabled={disabled}
+				value={values[key]}
+				onChange={(event) => update(key, event.target.value)}
+				className={`${inputClass} appearance-none pr-8`}
+			>
 				<option value="">{placeholder}</option>
-				{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+				{options.map((option) => (
+					<option key={option.id} value={option.id}>{option.name}</option>
+				))}
 			</select>
 			<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 		</span>
@@ -98,6 +163,18 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 		const amount = Number(values.amount);
 		if (!values.client || !values.transporter || !values.expenseType || !values.amount.trim() || !values.expenseDate) {
 			setFormError("Client, Transporter, Expense Type, Amount, and Expense Date are required.");
+			return;
+		}
+		if (!values.expenseFor) {
+			setFormError("Expense For is required after selecting Client and Transporter.");
+			return;
+		}
+		if (values.expenseFor === ExpenseFor.VEHICLE_WISE && !values.vehicle) {
+			setFormError("Select a vehicle for Vehicle Wise expense.");
+			return;
+		}
+		if (values.expenseFor === ExpenseFor.DRIVER_WISE && !values.driver) {
+			setFormError("Select a driver for Driver Wise expense.");
 			return;
 		}
 		if (Number.isNaN(amount) || amount < 0) {
@@ -136,6 +213,34 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 						{field("Client", select("client", "Client", clientMaster), true)}
 						{field("Transporter", select("transporter", "Transporter", transporterMaster), true)}
+						{field(
+							"Expense For",
+							<span className="relative block">
+								<select
+									required
+									disabled={!canSelectExpenseFor}
+									value={values.expenseFor}
+									onChange={(event) => update("expenseFor", event.target.value as ExpenseFor | "")}
+									className={`${inputClass} appearance-none pr-8`}
+								>
+									<option value="">{canSelectExpenseFor ? "Select Expense For" : "Select Client & Transporter first"}</option>
+									{expenseForOptions.map((option) => (
+										<option key={option.value} value={option.value}>{option.label}</option>
+									))}
+								</select>
+								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+							</span>,
+							true,
+						)}
+						{showVehicle
+							? field("Vehicle", select("vehicle", "Select Vehicle", vehicleMaster), true)
+							: showDriver
+								? field("Driver", select("driver", "Select Driver", driverOptions), true)
+								: field(
+									"Vehicle",
+									select("vehicle", "Select Expense For first", [], true),
+									false,
+								)}
 						{field("Expense Name", <input value={values.expenseName} placeholder="Expense Name" onChange={(event) => update("expenseName", event.target.value)} className={inputClass} />, false, true)}
 						{field("Expense Type", select("expenseType", "Select Expense Type", expenseTypeMaster), true)}
 						{field("Amount", <input required inputMode="decimal" value={values.amount} placeholder="Amount" onChange={(event) => update("amount", event.target.value.replace(/[^\d.]/g, ""))} className={inputClass} />, true)}
