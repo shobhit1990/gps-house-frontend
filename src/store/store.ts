@@ -7,6 +7,7 @@ import "./services/api/CoinBanking";
 import "./services/api/ExpenseReport";
 import "./services/api/Group";
 import "./services/api/JobSheet";
+import "./services/api/License";
 import "./services/api/Master";
 import "./services/api/Menu";
 import "./services/api/Owner";
@@ -16,6 +17,8 @@ import "./services/api/Technician";
 import "./services/api/Transporter";
 import "./services/api/User";
 import "./services/api/Vehicle";
+import "./services/api/VehicleHistoryTracking";
+import "./services/api/VehicleLiveTracking";
 import authReducer from "./slices/authSlice";
 import globalLoaderReducer from "./slices/globalLoaderSlice";
 

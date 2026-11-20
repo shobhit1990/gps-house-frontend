@@ -29,6 +29,9 @@ export type UpdateTransporterRequest = Partial<CreateTransporterRequest>;
 export interface Transporter extends Omit<CreateTransporterRequest, "password" | "confirmPassword"> {
   id: string | number;
   externalId: string;
+  password?: string;
+  suspended?: boolean;
+  inactiveDate?: string;
   createdAt?: string;
   updatedAt?: string;
 }

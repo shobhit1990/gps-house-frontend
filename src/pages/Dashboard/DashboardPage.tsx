@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import {
-  Activity,
   CarFront,
   ChevronDown,
   CircleHelp,
@@ -17,9 +16,11 @@ import {
 } from "lucide-react";
 import { Sidebar } from "../../components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
-import { vehicles, type VehicleKind } from "@/components/data/vehicles";
+import type { VehicleKind } from "@/components/data/vehicles";
+import { VehicleHistoryPanel } from "@/components/Dashboard/VehicleHistoryPanel";
 import { VehicleMap } from "@/pages/Dashboard/VehicleMap";
 import { VehicleGlyph } from "@/pages/Dashboard/VehicleGlyph";
+import { useGetVehicleLiveTrackingQuery } from "@/store/services/api/VehicleLiveTracking";
 
 type VehicleFilter = "all" | VehicleKind;
 type TelemetryValue = string | number | boolean | undefined;
@@ -28,14 +29,6 @@ const displayTelemetry = (value: TelemetryValue) => {
   if (value === undefined || value === null || value === "") return "—";
   if (typeof value === "boolean") return value ? "On" : "Off";
   return value;
-};
-
-const vehicleCounts = {
-  car: vehicles.filter((vehicle) => vehicle.kind === "car").length,
-  bike: vehicles.filter((vehicle) => vehicle.kind === "bike").length,
-  mapped: vehicles.filter(
-    (vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng),
-  ).length,
 };
 
 function Metric({
@@ -88,10 +81,45 @@ export default function DashboardPage() {
   const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme !== "light";
+  const { data: vehicles = [], isLoading, isError } = useGetVehicleLiveTrackingQuery(undefined, {
+    pollingInterval: 15000,
+  });
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<VehicleFilter>("all");
-  const [selectedVehicleSn, setSelectedVehicleSn] = useState<number | null>(
-    vehicles[0]?.sn ?? null,
+  const [selectedVehicleSn, setSelectedVehicleSn] = useState<number | null>(null);
+  const [historyVehicleId, setHistoryVehicleId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (vehicles.length === 0) {
+      setSelectedVehicleSn(null);
+      setHistoryVehicleId(null);
+      return;
+    }
+    setSelectedVehicleSn((current) =>
+      current != null && vehicles.some((vehicle) => vehicle.sn === current)
+        ? current
+        : vehicles[0].sn,
+    );
+    setHistoryVehicleId((current) =>
+      current && vehicles.some((vehicle) => vehicle.id === current) ? current : null,
+    );
+  }, [vehicles]);
+
+  const selectVehicle = (sn: number) => {
+    setSelectedVehicleSn(sn);
+    const vehicle = vehicles.find((item) => item.sn === sn);
+    if (vehicle?.id) setHistoryVehicleId(vehicle.id);
+  };
+
+  const vehicleCounts = useMemo(
+    () => ({
+      car: vehicles.filter((vehicle) => vehicle.kind === "car").length,
+      bike: vehicles.filter((vehicle) => vehicle.kind === "bike").length,
+      mapped: vehicles.filter(
+        (vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng),
+      ).length,
+    }),
+    [vehicles],
   );
 
   const filteredVehicles = useMemo(() => {
@@ -115,12 +143,24 @@ export default function DashboardPage() {
 
       return matchesType && matchesSearch;
     });
-  }, [filter, search]);
+  }, [filter, search, vehicles]);
 
   const selectedVehicle =
     filteredVehicles.find((vehicle) => vehicle.sn === selectedVehicleSn) ??
     filteredVehicles[0] ??
     null;
+
+  const historyVehicle = historyVehicleId
+    ? vehicles.find((vehicle) => vehicle.id === historyVehicleId) ?? null
+    : null;
+
+  const mappedVehicles = useMemo(
+    () =>
+      filteredVehicles.filter(
+        (vehicle) => Number.isFinite(vehicle.lat) && Number.isFinite(vehicle.lng),
+      ),
+    [filteredVehicles],
+  );
 
   const filterOptions = [
     ["all", "All", vehicles.length],
@@ -286,11 +326,16 @@ export default function DashboardPage() {
                       {filteredVehicles.map((vehicle) => {
                         const isSelected = selectedVehicle?.sn === vehicle.sn;
                         const [date, time] = vehicle.updatedAt.split(" ");
+                        const typeLabel = vehicle.vehicleType
+                          ? vehicle.vehicleType
+                          : vehicle.kind === "bike"
+                            ? "Two-wheeler"
+                            : "Four-wheeler";
 
                         return (
                           <tr
-                            key={vehicle.sn}
-                            onClick={() => setSelectedVehicleSn(vehicle.sn)}
+                            key={vehicle.id ?? vehicle.sn}
+                            onClick={() => selectVehicle(vehicle.sn)}
                             aria-selected={isSelected}
                             className={`group cursor-pointer border-b border-white/[0.055] transition last:border-0 ${
                               isSelected
@@ -306,7 +351,7 @@ export default function DashboardPage() {
                                     {vehicle.vehicle}
                                   </p>
                                   <p className="mt-1 text-[9px] capitalize text-black-900">
-                                    {vehicle.kind === "car" ? "Four-wheeler" : "Two-wheeler"}
+                                    {typeLabel}
                                   </p>
                                 </div>
                               </div>
@@ -347,8 +392,12 @@ export default function DashboardPage() {
                         <tr>
                           <td colSpan={18} className="px-5 py-16 text-center">
                             <Search className="mx-auto h-5 w-5 text-slate-600" />
-                            <p className="mt-3 text-sm font-medium text-slate-300">No vehicles found</p>
-                            <p className="mt-1 text-xs text-slate-500">Change your search or filter and try again.</p>
+                            <p className="mt-3 text-sm font-medium text-slate-300">
+                              {isLoading ? "Loading vehicles…" : isError ? "Could not load live tracking" : "No vehicles found"}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {isLoading ? "Fetching live vehicle data." : isError ? "Check your connection and try again." : "Change your search or filter and try again."}
+                            </p>
                           </td>
                         </tr>
                       )}
@@ -373,7 +422,7 @@ export default function DashboardPage() {
                       <MapPin className="h-3.5 w-3.5 text-cyan-200" />
                       <h2 className="text-xs font-semibold text-white">Fleet map</h2>
                       <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.08] px-2 py-0.5 text-[9px] text-cyan-100">
-                        {filteredVehicles.length} locations
+                        {mappedVehicles.length} locations
                       </span>
                     </div>
                     <p className="mt-1 pl-5 text-[10px] text-slate-500">Lucknow &amp; surrounding region</p>
@@ -388,11 +437,11 @@ export default function DashboardPage() {
                 </div>
                 <div className="relative h-[350px] sm:h-[420px] xl:h-[calc(100%-57px)] xl:min-h-[495px]">
                   <VehicleMap
-                    vehicles={filteredVehicles}
+                    vehicles={mappedVehicles}
                     selectedVehicleSn={selectedVehicle?.sn ?? null}
-                    onVehicleSelect={setSelectedVehicleSn}
+                    onVehicleSelect={selectVehicle}
                   />
-                  {selectedVehicle && (
+                  {selectedVehicle && Number.isFinite(selectedVehicle.lat) && Number.isFinite(selectedVehicle.lng) && (
                     <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-[500] rounded-xl border border-white/15 bg-[#07142f]/90 p-3 shadow-[0_12px_35px_rgba(0,0,0,0.35)] backdrop-blur-xl">
                       <div className="flex items-center gap-2.5">
                         <VehicleGlyph kind={selectedVehicle.kind} color={selectedVehicle.color} size="sm" />
@@ -410,6 +459,15 @@ export default function DashboardPage() {
               </section>
             </div>
           </section>
+
+          {historyVehicleId && historyVehicle && (
+            <VehicleHistoryPanel
+              vehicleId={historyVehicleId}
+              vehicleName={historyVehicle.vehicle || "Selected vehicle"}
+              isDark={isDark}
+              onClose={() => setHistoryVehicleId(null)}
+            />
+          )}
 
           <footer className="mt-4 flex flex-col items-center justify-between gap-2 px-1 text-[9px] text-slate-600 sm:flex-row">
             <span className="flex items-center gap-1.5">

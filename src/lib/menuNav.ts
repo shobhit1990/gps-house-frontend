@@ -31,9 +31,11 @@ function isAllowedLabel(label: string, matchers: { labels: Set<string>; urls: Se
 }
 
 /**
- * When the backend returns sidebar menus, keep only hardcoded nav entries that
- * match by label/url. If menus are empty, keep the full hardcoded nav so QA
- * still works before master data is seeded.
+ * Hardcoded nav is the source of truth for labels/routes.
+ * When `/menu/sidebar` returns menus, keep matching hardcoded entries.
+ * If a parent (e.g. Master) is allowed, keep all its hardcoded children
+ * so new pages like Driver License stay visible before backend menu seeding.
+ * If menus are empty, keep the full hardcoded nav.
  */
 export function filterNavMenusByPermissions<T extends NavMenu>(
   navMenus: T[],
@@ -50,25 +52,24 @@ export function filterNavMenusByPermissions<T extends NavMenu>(
         return isAllowedLabel(menu.label, matchers, menu.to) ? menu : null;
       }
 
+      // Parent allowed → keep every hardcoded child.
+      if (isAllowedLabel(menu.label, matchers)) {
+        return menu;
+      }
+
       const children = menu.children
         .map((child) => {
           if (typeof child === "string") {
             const route = routeFor(menu.label, child);
-            return isAllowedLabel(child, matchers, route) || isAllowedLabel(menu.label, matchers)
-              ? child
-              : null;
+            return isAllowedLabel(child, matchers, route) ? child : null;
           }
 
           const nested = child.children.filter((subChild) => {
             const route = routeFor(menu.label, child.label, subChild);
-            return (
-              isAllowedLabel(subChild, matchers, route) ||
-              isAllowedLabel(child.label, matchers) ||
-              isAllowedLabel(menu.label, matchers)
-            );
+            return isAllowedLabel(subChild, matchers, route) || isAllowedLabel(child.label, matchers);
           });
 
-          if (!nested.length && !isAllowedLabel(child.label, matchers) && !isAllowedLabel(menu.label, matchers)) {
+          if (!nested.length && !isAllowedLabel(child.label, matchers)) {
             return null;
           }
 
@@ -76,8 +77,10 @@ export function filterNavMenusByPermissions<T extends NavMenu>(
         })
         .filter((child): child is NavChild => child !== null);
 
-      if (!children.length && !isAllowedLabel(menu.label, matchers)) return null;
-      return { ...menu, children };
+      // Some children matched → keep parent with those children, and also
+      // keep unmatched siblings so newly added hardcoded pages remain visible.
+      if (!children.length) return null;
+      return { ...menu, children: menu.children };
     })
     .filter((menu): menu is T => menu !== null);
 

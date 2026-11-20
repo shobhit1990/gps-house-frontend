@@ -99,7 +99,7 @@ const ageFromDob = (value: string) => {
 const toDriverRecord = (driver: DriverDetail, transporterName: string): DriverRecord => ({
 	id: driver.externalId,
 	name: `${driver.firstName} ${driver.lastName}`.trim(),
-	transporter: transporterName || driver.transporter,
+	transporter: transporterName || driver.transporterName || driver.transporter,
 	vehicle: driver.deviceId ?? "",
 	active: driver.status === Status.ACTIVE,
 	assigned: false,
@@ -146,7 +146,12 @@ export default function DriverDetails() {
 		[transporterOptions],
 	);
 	const rows = useMemo(
-		() => [...driverDetails.map((detail) => toDriverRecord(detail, transporterNames.get(detail.transporter) ?? "")), ...uploadedRows],
+		() => [
+			...driverDetails.map((detail) =>
+				toDriverRecord(detail, transporterNames.get(detail.transporter) ?? detail.transporterName ?? ""),
+			),
+			...uploadedRows,
+		],
 		[driverDetails, transporterNames, uploadedRows],
 	);
 
@@ -202,14 +207,17 @@ export default function DriverDetails() {
 			reason: values.reason,
 		};
 		if (externalId) {
-			await updateDriverDetail({ externalId, body }).unwrap();
+			const updated = await updateDriverDetail({ externalId, body }).unwrap();
 			toast.success("Driver details updated.");
-		} else {
-			await createDriverDetail(body).unwrap();
-			toast.success("Driver details saved.");
+			setSearch("");
+			setPage(0);
+			return updated.externalId;
 		}
+		const created = await createDriverDetail(body).unwrap();
+		toast.success("Driver details saved.");
 		setSearch("");
 		setPage(0);
+		return created.externalId;
 	};
 
 	const uploadDrivers = (values: UploadDriverValues) => {

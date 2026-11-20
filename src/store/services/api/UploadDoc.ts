@@ -1,6 +1,7 @@
 import { api } from "../api";
 
 type UploadDocumentRequest = {
+	id: string;
 	file: File;
 	documentName: string;
 };
@@ -19,13 +20,13 @@ export const uploadDocApi = api.injectEndpoints({
 			query: (externalId) => `/uploadDocument/getById/${encodeURIComponent(externalId)}`,
 		}),
 		uploadDocument: builder.mutation<unknown, UploadDocumentRequest>({
-			query: ({ file, documentName }) => {
+			query: ({ id, file, documentName }) => {
 				const body = new FormData();
 				body.append("file", file);
 				body.append("documentName", documentName);
 
 				return {
-					url: "/uploadDocument/",
+					url: `/uploadDocument/${encodeURIComponent(id)}`,
 					method: "POST",
 					body,
 				};

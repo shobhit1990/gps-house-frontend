@@ -36,6 +36,8 @@ export type UpdateDriverDetailRequest = Partial<CreateDriverDetailRequest>;
 export interface DriverDetail extends CreateDriverDetailRequest {
 	id: string | number;
 	externalId: string;
+	clientName?: string;
+	transporterName?: string;
 	createdAt?: string;
 	updatedAt?: string;
 	dateOfLeaving?: string;

@@ -4,15 +4,17 @@ import { autoTable } from "jspdf-autotable";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery } from "@/store/services/api/Master";
-import { useGetTransportersQuery } from "@/store/services/api/Transporter";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetClientMasterQuery, useGetLanguagesQuery } from "@/store/services/api/Master";
+import { useDeleteTransporterMutation, useGetTransportersQuery } from "@/store/services/api/Transporter";
 
 type TransporterRecord = {
-	id: number;
+	id: string;
+	sn: number;
 	username: string;
 	client: string;
 	vehicleCount: number;
@@ -23,12 +25,47 @@ type TransporterRecord = {
 	company: string;
 	inactiveTime: string;
 	timezone: string;
+	status: string;
+	autoExp: string;
+	subStart: string;
+	subDue: string;
+	subExtended: string;
+	inactiveDate: string;
+	language: string;
+	subOverride: string;
+	suspension: string;
+	password: string;
+	address: string;
 };
 
-type ColumnKey = keyof TransporterRecord;
+type ColumnKey =
+	| "sn"
+	| "username"
+	| "client"
+	| "vehicleCount"
+	| "payment"
+	| "contactPerson"
+	| "phone"
+	| "email"
+	| "company"
+	| "inactiveTime"
+	| "timezone"
+	| "status"
+	| "autoExp"
+	| "subStart"
+	| "subDue"
+	| "subExtended"
+	| "inactiveDate"
+	| "language"
+	| "subOverride"
+	| "suspension"
+	| "showPassword"
+	| "resetPassword"
+	| "address"
+	| "delete";
 
 const columns: { key: ColumnKey; label: string }[] = [
-	{ key: "id", label: "SN" },
+	{ key: "sn", label: "SN" },
 	{ key: "username", label: "Username" },
 	{ key: "client", label: "Client" },
 	{ key: "vehicleCount", label: "No. of vehicles" },
@@ -39,7 +76,24 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "company", label: "Company" },
 	{ key: "inactiveTime", label: "Inactive Time" },
 	{ key: "timezone", label: "Timezone" },
+	{ key: "status", label: "Status" },
+	{ key: "autoExp", label: "Auto_EXP" },
+	{ key: "subStart", label: "Sub_Start" },
+	{ key: "subDue", label: "Sub_Due" },
+	{ key: "subExtended", label: "Sub_Extended" },
+	{ key: "inactiveDate", label: "Inactive Date" },
+	{ key: "language", label: "Language" },
+	{ key: "subOverride", label: "Sub_Override" },
+	{ key: "suspension", label: "Suspension" },
+	{ key: "showPassword", label: "Show Password" },
+	{ key: "resetPassword", label: "Reset Password" },
+	{ key: "address", label: "Address" },
+	{ key: "delete", label: "Delete" },
 ];
+
+const exportKeys: ColumnKey[] = columns
+	.map((column) => column.key)
+	.filter((key) => key !== "showPassword" && key !== "resetPassword" && key !== "delete");
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -55,28 +109,66 @@ const actionButtonClass = (isDark: boolean) =>
 			: "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
 	}`;
 
+const formatDate = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) {
+		const [year, month, day] = value.slice(0, 10).split("-");
+		if (year && month && day) return `${day}/${month}/${year}`;
+		return value;
+	}
+	const dd = String(date.getDate()).padStart(2, "0");
+	const mm = String(date.getMonth() + 1).padStart(2, "0");
+	return `${dd}/${mm}/${date.getFullYear()}`;
+};
+
+const yesNo = (value?: boolean) => (value ? "Yes" : "No");
+
 export default function Transporter() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: transporterList = [], isFetching, refetch } = useGetTransportersQuery();
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const { data: languages = [] } = useGetLanguagesQuery();
+	const [deleteTransporter, { isLoading: isDeleting }] = useDeleteTransporterMutation();
 	const rows = useMemo<TransporterRecord[]>(() => {
 		const clientNames = new Map(clientMaster.map((client) => [client.id, client.name]));
-		return transporterList.map((transporter, index) => ({
-			id: index + 1,
-			username: transporter.userName ?? "",
-			client: clientNames.get(transporter.client) ?? transporter.client ?? "",
-			vehicleCount: 0,
-			payment: "",
-			contactPerson: transporter.name ?? "",
-			phone: transporter.phone ?? "",
-			email: transporter.email ?? "",
-			company: transporter.companyName ?? "",
-			inactiveTime: transporter.inactiveTime == null ? "" : String(transporter.inactiveTime),
-			timezone: transporter.timezone ?? "",
-		}));
-	}, [transporterList, clientMaster]);
+		const languageNames = new Map(
+			languages.map((language) => [
+				String(language.externalId ?? language.id ?? language.language),
+				language.language,
+			]),
+		);
+		return transporterList.map((transporter, index) => {
+			const languageId = transporter.language != null ? String(transporter.language) : "";
+			return {
+				id: transporter.externalId || String(transporter.id || index),
+				sn: index + 1,
+				username: transporter.userName ?? "",
+				client: clientNames.get(transporter.client) ?? transporter.client ?? "",
+				vehicleCount: 0,
+				payment: "",
+				contactPerson: transporter.name ?? "",
+				phone: transporter.phone ?? "",
+				email: transporter.email ?? "",
+				company: transporter.companyName ?? "",
+				inactiveTime: transporter.inactiveTime == null ? "" : String(transporter.inactiveTime),
+				timezone: transporter.timezone ?? "",
+				status: transporter.active === false ? "Inactive" : "Active",
+				autoExp: yesNo(transporter.inactiveAfterExpiry),
+				subStart: formatDate(transporter.subscriptionStartDate),
+				subDue: formatDate(transporter.subscriptionDueDate),
+				subExtended: formatDate(transporter.subscriptionExtendDate),
+				inactiveDate: formatDate(transporter.inactiveDate),
+				language: languageNames.get(languageId) ?? languageId,
+				subOverride: yesNo(transporter.overwriteSubscription),
+				suspension: transporter.suspended ? "Suspended" : "Active",
+				password: transporter.password ?? "",
+				address: transporter.address ?? "",
+			};
+		});
+	}, [transporterList, clientMaster, languages]);
 	const [clientFilter, setClientFilter] = useState("");
 	const [transporterFilter, setTransporterFilter] = useState("");
 	const [activeFilters, setActiveFilters] = useState({ client: "", transporter: "" });
@@ -86,6 +178,7 @@ export default function Transporter() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [visiblePasswords, setVisiblePasswords] = useState<string[]>([]);
 
 	const clients = [...new Set(rows.map((row) => row.client).filter(Boolean))];
 	const transporters = [...new Set(rows.map((row) => row.username).filter(Boolean))];
@@ -112,13 +205,80 @@ export default function Transporter() {
 		);
 	};
 
+	const removeTransporter = async (row: TransporterRecord) => {
+		try {
+			await deleteTransporter(row.id).unwrap();
+			toast.success(`${row.username || "Transporter"} deleted.`);
+		} catch (error) {
+			console.error("Failed to delete transporter.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the transporter."));
+		}
+	};
+
+	const exportValue = (row: TransporterRecord, key: ColumnKey) => {
+		if (key === "sn") return String(row.sn);
+		if (key === "showPassword" || key === "resetPassword" || key === "delete") return "";
+		return String(row[key as keyof TransporterRecord] ?? "");
+	};
+
+	const cell = (key: ColumnKey, row: TransporterRecord) => {
+		if (key === "status") {
+			const active = row.status === "Active";
+			return (
+				<span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${active ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-white/[0.06] text-slate-400" : "bg-slate-100 text-slate-600")}`}>
+					{row.status}
+				</span>
+			);
+		}
+		if (key === "showPassword") {
+			const visible = visiblePasswords.includes(row.id);
+			return (
+				<button
+					type="button"
+					onClick={() => setVisiblePasswords((current) => (current.includes(row.id) ? current.filter((id) => id !== row.id) : [...current, row.id]))}
+					className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+				>
+					{visible ? row.password || "—" : "Show"}
+				</button>
+			);
+		}
+		if (key === "resetPassword") {
+			return (
+				<button
+					type="button"
+					onClick={() => toast.info("Reset password is not available yet.")}
+					className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+				>
+					Reset
+				</button>
+			);
+		}
+		if (key === "delete") {
+			return (
+				<button
+					type="button"
+					aria-label={`Delete ${row.username}`}
+					onClick={() => void removeTransporter(row)}
+					disabled={isDeleting}
+					className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-rose-300/20 bg-rose-400/[0.06] text-rose-300 hover:bg-rose-400/[0.15]" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}
+				>
+					<Trash2 className="h-3.5 w-3.5" />
+				</button>
+			);
+		}
+		if (key === "sn") return String(row.sn);
+		const value = row[key as keyof TransporterRecord];
+		return value === "" || value == null ? "—" : String(value);
+	};
+
 	const downloadPdf = () => {
 		try {
+			const exportColumns = columns.filter((column) => exportKeys.includes(column.key) && !hiddenColumns.includes(column.key));
 			const pdf = new jsPDF({ orientation: "landscape" });
 			autoTable(pdf, {
-				head: [visibleColumns.map((column) => column.label)],
+				head: [exportColumns.map((column) => column.label)],
 				body: filteredRows.map((row) =>
-					visibleColumns.map((column) => String(row[column.key] ?? "")),
+					exportColumns.map((column) => exportValue(row, column.key)),
 				),
 				styles: { fontSize: 8 },
 				headStyles: { fillColor: [74, 32, 99] },
@@ -132,9 +292,10 @@ export default function Transporter() {
 
 	const downloadExcel = () => {
 		try {
+			const exportColumns = columns.filter((column) => exportKeys.includes(column.key) && !hiddenColumns.includes(column.key));
 			const data = filteredRows.map((row) =>
 				Object.fromEntries(
-					visibleColumns.map((column) => [column.label, row[column.key]]),
+					exportColumns.map((column) => [column.label, exportValue(row, column.key)]),
 				),
 			);
 			const worksheet = XLSX.utils.json_to_sheet(data);
@@ -228,7 +389,7 @@ export default function Transporter() {
 					</div>
 
 					<div className="overflow-x-auto">
-						<table className="w-full min-w-[1100px] border-collapse text-left">
+						<table className="w-full min-w-[2200px] border-collapse text-left">
 							<thead>
 								<tr className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-400" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
 									{visibleColumns.map((column) => <th key={column.key} scope="col" className="whitespace-nowrap px-4 py-3 font-medium">{column.label}</th>)}
@@ -237,7 +398,7 @@ export default function Transporter() {
 							<tbody>
 								{pageRows.map((row) => (
 									<tr key={row.id} className={`border-b ${isDark ? "border-white/[0.06] text-slate-300 hover:bg-white/[0.025]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
-										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-4 py-3 text-xs">{String(row[column.key] || "—")}</td>)}
+										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-4 py-3 text-xs">{cell(column.key, row)}</td>)}
 									</tr>
 								))}
 								{pageRows.length === 0 && <tr><td colSpan={visibleColumns.length} className={`h-11 ${isDark ? "bg-white/[0.025]" : "bg-slate-50"}`} /></tr>}

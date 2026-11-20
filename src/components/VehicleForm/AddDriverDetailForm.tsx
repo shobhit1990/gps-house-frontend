@@ -7,6 +7,7 @@ import type { DriverDetail } from "@/interfaces/DriverDetail";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { Status } from "@/enums/Status";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetLicensesQuery } from "@/store/services/api/License";
 import { useUploadDocumentMutation } from "@/store/services/api/UploadDoc";
 
 export type DriverDocumentValues = {
@@ -51,7 +52,7 @@ export type DriverDetailFormValues = {
 
 type AddDriverDetailFormProps = {
 	onClose: () => void;
-	onSubmit: (values: DriverDetailFormValues, externalId?: string) => Promise<void>;
+	onSubmit: (values: DriverDetailFormValues, externalId?: string) => Promise<string>;
 	driver?: DriverDetail;
 };
 
@@ -111,7 +112,7 @@ const detailDefaults = () => ({
 	geoAttendance: false,
 	licenseToDrive: "",
 	geofences: "",
-	reason: "New driver joining",
+	reason: "",
 });
 
 const toFormValues = (driver: DriverDetail): ReturnType<typeof detailDefaults> => ({
@@ -142,7 +143,7 @@ const toFormValues = (driver: DriverDetail): ReturnType<typeof detailDefaults> =
 	licenseAvailable: driver.licenseAvailable ?? false,
 	licenseVerified: driver.licenseVerified ?? false,
 	geoAttendance: driver.enableGeoVerifiedAttendance ?? false,
-	licenseToDrive: driver.licenseToDrive?.join(", ") ?? "",
+	licenseToDrive: driver.licenseToDrive?.[0] ?? "",
 	geofences: driver.geofences?.join(", ") ?? "",
 	reason: driver.reason ?? "",
 });
@@ -152,6 +153,11 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 	const clients = clientMaster;
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const transporters = transporterMaster;
+	const { data: licenses = [], isLoading: licensesLoading } = useGetLicensesQuery();
+	const licenseOptions: MasterOption[] = licenses.map((item) => ({
+		id: item.externalId,
+		name: item.license,
+	}));
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -161,6 +167,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 	const [documents, setDocuments] = useState<DriverDocumentValues[]>([]);
 	const [formError, setFormError] = useState("");
 	const [detailsSaved, setDetailsSaved] = useState(false);
+	const [savedDriverId, setSavedDriverId] = useState(driver?.externalId ?? "");
 	const [isSavingDetails, setIsSavingDetails] = useState(false);
 	const [uploadDocument, { isLoading: isUploading }] = useUploadDocumentMutation();
 
@@ -213,14 +220,15 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 		if (!detailsSaved) {
 			setIsSavingDetails(true);
 			try {
-				await onSubmit({
+				const driverId = await onSubmit({
 					...values,
 					firstName: values.firstName.trim(),
 					lastName: values.lastName.trim(),
 					experience: values.experience.trim() || "0",
 					salary: values.salary.trim() || "0",
 					documents: [],
-				}, driver?.externalId);
+				}, driver?.externalId || savedDriverId || undefined);
+				setSavedDriverId(driverId);
 				setDetailsSaved(true);
 			} catch (error) {
 				setFormError(apiErrorMessage(error, "Unable to save driver details."));
@@ -242,6 +250,11 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 			await saveDetailsAndContinue();
 			return;
 		}
+		if (!savedDriverId) {
+			setFormError("Save driver details before uploading documents.");
+			setActiveTab("Add Driver Detail");
+			return;
+		}
 		if (documents.some((document) => !document.name.trim() || !document.fileName)) {
 			setFormError("Each document needs a name and a file.");
 			return;
@@ -255,6 +268,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 			for (const document of documents) {
 				if (!document.file) continue;
 				await uploadDocument({
+					id: savedDriverId,
 					file: document.file,
 					documentName: document.name.trim(),
 				}).unwrap();
@@ -380,7 +394,20 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							{field("Salary", <input type="number" min={0} value={values.salary} onChange={(event) => update("salary", event.target.value)} className={inputClass} />)}
 							{field("Phone No.", text("phone", "Phone No."))}
 							{field("License Number", text("licenseNumber", "License Number"))}
-							{field("License to Drive IDs (comma-separated)", text("licenseToDrive", "License IDs"))}
+							{field(
+								"License to Drive",
+								<select
+									value={values.licenseToDrive}
+									disabled={licensesLoading}
+									onChange={(event) => update("licenseToDrive", event.target.value)}
+									className={inputClass}
+								>
+									<option value="">{licensesLoading ? "Loading licenses…" : "Select License"}</option>
+									{licenseOptions.map((option) => (
+										<option key={option.id} value={option.id}>{option.name}</option>
+									))}
+								</select>,
+							)}
 							{field("License issue date", date("licenseIssue"))}
 							{field("License expiry date", date("licenseExpiry"))}
 							{field("Life insurance No.", text("insuranceNo", "Life insurance No."))}

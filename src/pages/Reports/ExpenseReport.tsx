@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { AddExpense, type ExpenseFormValues } from "@/components/Reports/AddExpense";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status } from "@/enums/Status";
 import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 import {
 	useCreateExpenseMutation,
@@ -14,7 +15,7 @@ import {
 	useLazyGetExpenseByIdQuery,
 	useUpdateExpenseMutation,
 } from "@/store/services/api/ExpenseReport";
-import type { Expense } from "@/interfaces/Expense";
+import type { CreateExpenseRequest, Expense } from "@/interfaces/Expense";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
@@ -25,7 +26,6 @@ type ExpenseRecord = ExpenseFormValues & Pick<Expense, "id" | "externalId"> & {
 	tripName: string;
 	added: string;
 	createdBy: string;
-	role: string;
 	updated: string;
 	documents: string;
 };
@@ -34,7 +34,6 @@ type ColumnKey =
 	| "sn"
 	| "vehicleNo"
 	| "driverName"
-	| "tripName"
 	| "expenseType"
 	| "expenseDate"
 	| "expenseName"
@@ -47,7 +46,6 @@ type ColumnKey =
 	| "description"
 	| "added"
 	| "createdBy"
-	| "role"
 	| "updated"
 	| "edit"
 	| "delete"
@@ -66,7 +64,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
 	{ key: "vehicleNo", label: "Vehicle No." },
 	{ key: "driverName", label: "Driver Name" },
-	{ key: "tripName", label: "Trip Name" },
 	{ key: "expenseType", label: "Expense Type" },
 	{ key: "expenseDate", label: "Expense Date" },
 	{ key: "expenseName", label: "Expense Name" },
@@ -79,7 +76,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "description", label: "Description" },
 	{ key: "added", label: "Added" },
 	{ key: "createdBy", label: "Created By" },
-	{ key: "role", label: "Role" },
 	{ key: "updated", label: "Updated" },
 	{ key: "edit", label: "Edit" },
 	{ key: "delete", label: "Delete" },
@@ -122,6 +118,29 @@ const dateTimeInputValue = (value: string) => {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
+/** datetime-local → ISO UTC, e.g. 2026-11-20T15:36:00.000Z */
+const toIsoExpenseDate = (value: string) => {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return date.toISOString();
+};
+
+const buildExpensePayload = (values: ExpenseFormValues): CreateExpenseRequest => ({
+	client: values.client,
+	transporter: values.transporter,
+	expenseName: values.expenseName.trim() || undefined,
+	expenseType: values.expenseType,
+	amount: Number(values.amount),
+	expenseDate: toIsoExpenseDate(values.expenseDate),
+	odometer: optionalNumber(values.odometer),
+	engineHours: optionalNumber(values.engineHours),
+	description: values.description.trim() || undefined,
+	quantity: optionalNumber(values.quantity),
+	supplier: values.supplier.trim() || undefined,
+	buyer: values.buyer.trim() || undefined,
+	status: Status.ACTIVE,
+});
+
 export default function ExpenseReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
@@ -157,9 +176,9 @@ export default function ExpenseReport() {
 			expenseData.map((expense) => ({
 				client: masterId(expense.client, clientMaster),
 				transporter: masterId(expense.transporter, transporterMaster),
-				expenseFor: "" as ExpenseFormValues["expenseFor"],
-				vehicle: "",
-				driver: "",
+				expenseFor: (expense.expenseFor as ExpenseFormValues["expenseFor"]) || "",
+				vehicle: expense.vehicle ?? "",
+				driver: expense.driver ?? "",
 				expenseName: expense.expenseName ?? "",
 				expenseType: masterId(expense.expenseType, expenseTypeMaster),
 				expenseTypeName: expense.expenseTypeName || expenseTypeMaster.find((option) => option.id === expense.expenseType)?.name || "",
@@ -178,7 +197,6 @@ export default function ExpenseReport() {
 				tripName: expense.tripName ?? "",
 				added: expense.createdAt ?? "",
 				createdBy: expense.createdBy ?? "",
-				role: expense.role ?? "",
 				updated: expense.updatedAt ?? "",
 				documents: "",
 			})),
@@ -196,7 +214,6 @@ export default function ExpenseReport() {
 			const expenseTime = new Date(row.expenseDate).getTime();
 			if (!Number.isNaN(expenseTime) && (expenseTime < fromTime || expenseTime > toTime)) return false;
 			if (!query) return true;
-			return [String(index + 1), row.vehicleNo, row.driverName, row.tripName, row.expenseType, row.expenseName, row.quantity, row.amount, row.odometer, row.engineHours, row.supplier, row.buyer, row.description, row.createdBy, row.role].join(" ").toLowerCase().includes(query);
 		});
 	}, [applied, rows, search]);
 	const totalExpense = filteredRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
@@ -237,20 +254,7 @@ export default function ExpenseReport() {
 	};
 
 	const saveExpense = async (values: ExpenseFormValues) => {
-		const body = {
-			client: values.client,
-			transporter: values.transporter,
-			expenseName: values.expenseName.trim() || undefined,
-			expenseType: values.expenseType,
-			amount: Number(values.amount),
-			expenseDate: values.expenseDate,
-			odometer: optionalNumber(values.odometer),
-			engineHours: optionalNumber(values.engineHours),
-			description: values.description.trim() || undefined,
-			quantity: optionalNumber(values.quantity),
-			supplier: values.supplier.trim() || undefined,
-			buyer: values.buyer.trim() || undefined,
-		};
+		const body = buildExpensePayload(values);
 		try {
 			if (editing) {
 				await updateExpense({ externalId: editing.externalId, body }).unwrap();
@@ -275,9 +279,9 @@ export default function ExpenseReport() {
 				...row,
 				client: masterId(expense.client, clientMaster),
 				transporter: masterId(expense.transporter, transporterMaster),
-				expenseFor: row.expenseFor || "",
-				vehicle: row.vehicle || "",
-				driver: row.driver || "",
+				expenseFor: (expense.expenseFor as ExpenseFormValues["expenseFor"]) || row.expenseFor || "",
+				vehicle: expense.vehicle || row.vehicle || "",
+				driver: expense.driver || row.driver || "",
 				expenseName: expense.expenseName ?? "",
 				expenseType: masterId(expense.expenseType, expenseTypeMaster),
 				expenseTypeName: expense.expenseTypeName || expenseTypeMaster.find((option) => option.id === expense.expenseType)?.name || "",

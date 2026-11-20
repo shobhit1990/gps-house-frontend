@@ -98,7 +98,16 @@ export const masterApi = api.injectEndpoints({
         params: params?.client ? { client: params.client } : undefined,
       }),
       transformResponse: (response: MasterListResponse<TransporterMaster>) =>
-        toMasterOptions(response, (item) => item.transporterName ?? item.company ?? item.name ?? item.username),
+        toMasterOptions(
+          response,
+          (item) =>
+            item.transporterName
+            ?? item.companyName
+            ?? item.company
+            ?? item.name
+            ?? item.userName
+            ?? item.username,
+        ),
       providesTags: (_result, _error, params) => [
         { type: "Master", id: params?.client ? `TRANSPORTER-${params.client}` : "TRANSPORTER" },
         { type: "Transporters", id: "LIST" },
