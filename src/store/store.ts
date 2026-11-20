@@ -11,6 +11,7 @@ import "./services/api/Master";
 import "./services/api/Menu";
 import "./services/api/Owner";
 import "./services/api/PaymentDetails";
+import "./services/api/Policy";
 import "./services/api/Technician";
 import "./services/api/Transporter";
 import "./services/api/User";

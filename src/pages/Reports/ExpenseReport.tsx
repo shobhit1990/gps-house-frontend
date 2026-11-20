@@ -19,6 +19,7 @@ import type { MasterOption } from "@/interfaces/EntityMaster";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type ExpenseRecord = ExpenseFormValues & Pick<Expense, "id" | "externalId"> & {
+	expenseTypeName: string;
 	vehicleNo: string;
 	driverName: string;
 	tripName: string;
@@ -144,7 +145,7 @@ export default function ExpenseReport() {
 	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], vehicles: [], from: initialRange.from, to: initialRange.to });
+	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], vehicles: [], from: "", to: "" });
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [vehicleQuery, setVehicleQuery] = useState("");
@@ -156,8 +157,12 @@ export default function ExpenseReport() {
 			expenseData.map((expense) => ({
 				client: masterId(expense.client, clientMaster),
 				transporter: masterId(expense.transporter, transporterMaster),
+				expenseFor: "" as ExpenseFormValues["expenseFor"],
+				vehicle: "",
+				driver: "",
 				expenseName: expense.expenseName ?? "",
 				expenseType: masterId(expense.expenseType, expenseTypeMaster),
+				expenseTypeName: expense.expenseTypeName || expenseTypeMaster.find((option) => option.id === expense.expenseType)?.name || "",
 				amount: valueAsString(expense.amount),
 				expenseDate: dateTimeInputValue(expense.expenseDate),
 				odometer: valueAsString(expense.odometer),
@@ -270,8 +275,12 @@ export default function ExpenseReport() {
 				...row,
 				client: masterId(expense.client, clientMaster),
 				transporter: masterId(expense.transporter, transporterMaster),
+				expenseFor: row.expenseFor || "",
+				vehicle: row.vehicle || "",
+				driver: row.driver || "",
 				expenseName: expense.expenseName ?? "",
 				expenseType: masterId(expense.expenseType, expenseTypeMaster),
+				expenseTypeName: expense.expenseTypeName || expenseTypeMaster.find((option) => option.id === expense.expenseType)?.name || "",
 				amount: valueAsString(expense.amount),
 				expenseDate: dateTimeInputValue(expense.expenseDate),
 				odometer: valueAsString(expense.odometer),
@@ -347,7 +356,7 @@ export default function ExpenseReport() {
 		if (key === "sn") return String(serial).padStart(2, "0");
 		if (key === "expenseType" || key === "expenseName") {
 			const value = key === "expenseType"
-				? expenseTypeMaster.find((option) => option.id === row.expenseType)?.name ?? row.expenseType
+				? row.expenseTypeName || expenseTypeMaster.find((option) => option.id === row.expenseType)?.name || row.expenseType
 				: row.expenseName;
 			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(value)}</span>;
 		}
@@ -386,7 +395,7 @@ export default function ExpenseReport() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Expense Report</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} expenses</p>
 					</div>
-					<button type="button" onClick={() => { const range = todayRange(); setSearch(""); setSelectedClients([]); setSelectedVehicles([]); setFrom(range.from); setTo(range.to); setApplied({ clients: [], vehicles: [], from: range.from, to: range.to }); setClientQuery(""); setVehicleQuery(""); setOpenMenu(null); setPage(0); void refetch(); }} aria-label="Refresh expenses" title="Refresh expenses" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+					<button type="button" onClick={() => { const range = todayRange(); setSearch(""); setSelectedClients([]); setSelectedVehicles([]); setFrom(range.from); setTo(range.to); setApplied({ clients: [], vehicles: [], from: "", to: "" }); setClientQuery(""); setVehicleQuery(""); setOpenMenu(null); setPage(0); void refetch(); }} aria-label="Refresh expenses" title="Refresh expenses" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
 						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
@@ -448,7 +457,7 @@ export default function ExpenseReport() {
 							</thead>
 							<tbody>
 								{pageRows.map((row, index) => (
-									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+									<tr key={row.externalId || String(row.id)} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row, safePage * pageSize + index + 1)}</td>)}
 									</tr>
 								))}

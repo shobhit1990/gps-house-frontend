@@ -1,17 +1,22 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Pencil, Plus, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
-import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
 import { UploadInventory, type UploadInventoryValues } from "@/components/DeviceInventory/UploadInventory";
 import { useAuth } from "@/contexts/AuthContext";
 import { AssignType } from "@/enums/AssignType";
-import { InventoryType } from "@/enums/InventoryType";
-import { useGetClientMasterQuery } from "@/store/services/api/Master";
-import { useCreateInventoryMutation, useDeleteInventoryMutation, useGetInventoryQuery, useUpdateInventoryMutation } from "@/store/services/api/Inventory";
+import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery, useGetTechnicianMasterQuery } from "@/store/services/api/Master";
+import {
+	useBulkUploadInventoryMutation,
+	useCreateInventoryMutation,
+	useDeleteInventoryMutation,
+	useExportInventoryMutation,
+	useGetInventoryQuery,
+	useUpdateInventoryMutation,
+} from "@/store/services/api/Inventory";
 import type { CreateInventoryRequest, Inventory } from "@/interfaces/Inventory";
-import { DEVICE_TYPE_ID, DEVICE_TYPE_LABEL } from "@/interfaces/AddDeviceFields";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type InventoryRecord = InventoryFormValues & {
@@ -82,17 +87,11 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const statusOptions = ["All", "In Stock", "Used"];
-const demoHeaders = ["Inventory Type", "Imei", "Sim", "Operator", "Secondary Sim Number", "Secondary Sim Operator", "Device Type", "Client", "Technician", "Inventory Status", "Password", "Status", "Wire+", "Assigned", "Added"] as const;
 
 const textValue = (value: unknown) => {
 	if (typeof value === "string") return value.trim() ? value : "—";
 	if (typeof value === "number" || typeof value === "boolean") return String(value);
 	return "—";
-};
-
-const currentMonth = () => {
-	const now = new Date();
-	return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 };
 
 const displayMonth = (value: string) => {
@@ -101,20 +100,38 @@ const displayMonth = (value: string) => {
 	return `${month}/${year}`;
 };
 
-const sheetValue = (row: Record<string, unknown>, header: string) => String(row[header] ?? "").trim();
+const masterName = (
+	options: { id: string; externalId?: string; name: string }[],
+	id?: string | null,
+	fallback = "",
+) => {
+	if (!id) return fallback;
+	return options.find((option) => option.id === id || option.externalId === id)?.name || fallback;
+};
+
+const assignTypeLabel = (value?: string) => {
+	const raw = String(value ?? "").trim().toLowerCase();
+	if (raw === AssignType.CLIENT || raw === "client") return "Client";
+	if (raw === AssignType.TECHNICIAN || raw === "technician") return "Technician";
+	if (!raw) return "";
+	return value ?? "";
+};
 
 export default function DeviceInventory() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const { data: deviceTypeMaster = [] } = useGetDeviceTypeMasterQuery();
+	const { data: technicianMaster = [] } = useGetTechnicianMasterQuery();
 	const clients = clientMaster.map((client) => client.name);
 	const { data: inventoryData = [], isLoading, isError, refetch } = useGetInventoryQuery();
 	const [createInventory, { isLoading: isSavingInventory }] = useCreateInventoryMutation();
 	const [updateInventory, { isLoading: isUpdatingInventory }] = useUpdateInventoryMutation();
 	const [deleteInventory, { isLoading: isDeletingInventory }] = useDeleteInventoryMutation();
+	const [bulkUploadInventory, { isLoading: isUploadingInventory }] = useBulkUploadInventoryMutation();
+	const [exportInventory, { isLoading: isExportingInventory }] = useExportInventoryMutation();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const [tab, setTab] = useState<"Details" | "Summary">("Details");
-	const [uploadedRows, setUploadedRows] = useState<InventoryRecord[]>([]);
 	const [search, setSearch] = useState("");
 	const [summarySearch, setSummarySearch] = useState("");
 	const [clientFilter, setClientFilter] = useState("");
@@ -126,16 +143,33 @@ export default function DeviceInventory() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [showUploadDialog, setShowUploadDialog] = useState(false);
-	const [isUploadingInventory, setIsUploadingInventory] = useState(false);
 	const [editingInventory, setEditingInventory] = useState<InventoryRecord | null>(null);
 	const [uploadError, setUploadError] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
+
+	const deviceTypeNames = useMemo(
+		() =>
+			deviceTypeMaster.map((deviceType) => ({
+				id: String(deviceType.externalId ?? deviceType.id ?? ""),
+				externalId: deviceType.externalId,
+				name: deviceType.deviceName ?? deviceType.deviceTypeName ?? "",
+			})).filter((deviceType) => deviceType.id && deviceType.name),
+		[deviceTypeMaster],
+	);
 
 	const apiRows = useMemo<InventoryRecord[]>(() => inventoryData.map((item: Inventory) => {
 		const addedDate = item.createdAt ? new Date(item.createdAt) : null;
 		const added = addedDate && !Number.isNaN(addedDate.getTime())
 			? `${addedDate.getFullYear()}-${String(addedDate.getMonth() + 1).padStart(2, "0")}`
 			: "";
+		const clientName = item.clientName?.trim() || masterName(clientMaster, item.client);
+		const technicianName =
+			item.technicianName?.trim() ||
+			masterName(technicianMaster, item.technician) ||
+			(item.assignType?.toLowerCase() === AssignType.TECHNICIAN ? masterName(technicianMaster, item.client) : "");
+		const deviceTypeName =
+			item.deviceTypeName?.trim() ||
+			masterName(deviceTypeNames, item.deviceType);
 		return {
 			...item,
 			id: item.id ?? item.externalId,
@@ -146,9 +180,9 @@ export default function DeviceInventory() {
 			operator: item.simOperator,
 			secondarySim: item.secondarySimNumber,
 			secondarySimOperator: item.secondarySimOperator,
-			deviceType: item.deviceType === DEVICE_TYPE_ID ? DEVICE_TYPE_LABEL : item.deviceType,
-			assignType: item.assignType,
-			client: clientMaster.find((client) => client.id === item.client)?.name ?? item.client,
+			deviceType: deviceTypeName || item.deviceType || "",
+			assignType: item.assignType ?? "",
+			client: clientName || "",
 			clientId: item.client,
 			deviceTypeId: item.deviceType,
 			password: item.password,
@@ -156,7 +190,7 @@ export default function DeviceInventory() {
 			ignitionWire: item.ignitionWireConnected,
 			airConditionWire: item.airConditionWireConnected,
 			analogSensor: item.analogSensor,
-			technician: "",
+			technician: technicianName,
 			inventoryStatus: item.assignType ? "Used" : "In Stock",
 			transferBy: "",
 			transferTime: "",
@@ -165,8 +199,8 @@ export default function DeviceInventory() {
 			prt: "",
 			transfer: "",
 		};
-	}), [clientMaster, inventoryData]);
-	const rows = useMemo(() => [...apiRows, ...uploadedRows], [apiRows, uploadedRows]);
+	}), [clientMaster, deviceTypeNames, inventoryData, technicianMaster]);
+	const rows = apiRows;
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -202,10 +236,7 @@ export default function DeviceInventory() {
 	const used = rows.filter((row) => row.inventoryStatus === "Used").length;
 	const totalAssigned = rows.filter((row) => row.assignType.trim()).length;
 	const assignedToSelf = rows.filter((row) => row.assignType === "Self").length;
-	const assignedToTechnician = rows.filter((row) => row.assignType === "Technician").length;
-
-	const nextId = (current: InventoryRecord[]) =>
-		current.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
+	const assignedToTechnician = rows.filter((row) => row.assignType === "Technician" || row.assignType === AssignType.TECHNICIAN).length;
 
 	const saveInventory = async (values: InventoryFormValues) => {
 		const body: CreateInventoryRequest = {
@@ -242,89 +273,41 @@ export default function DeviceInventory() {
 		}
 	};
 
-	const downloadDemo = () => {
-		const sheet = XLSX.utils.json_to_sheet([
-			{
-				"Inventory Type": "GPS Device",
-				Imei: "356857100874929",
-				Sim: "5754190080205123",
-				Operator: "Airtel Gprs (airtelgprs.com)",
-				"Secondary Sim Number": "",
-				"Secondary Sim Operator": "Airtel Gprs (airtelgprs.com)",
-				"Device Type": "Concox (8505)",
-				Client: "arun.singh",
-				Technician: "",
-				"Inventory Status": "In Stock",
-				Password: "",
-				Status: "Active",
-				"Wire+": "No",
-				Assigned: "Self",
-				Added: currentMonth(),
-			},
-		], { header: [...demoHeaders] });
-		const book = XLSX.utils.book_new();
-		XLSX.utils.book_append_sheet(book, sheet, "Inventory");
-		XLSX.writeFile(book, "inventory-demo.xlsx");
+	const downloadExport = async () => {
+		try {
+			const blob = await exportInventory().unwrap();
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = "inventory-export.xlsx";
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+			window.setTimeout(() => URL.revokeObjectURL(url), 0);
+			toast.success("Inventory export downloaded.");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not download inventory export."));
+		}
 	};
 
-	const inventoryTypeLabel = (value: InventoryType) =>
-		value === InventoryType.SIM ? "SIM" : "Device";
-
-	const uploadInventory = async ({ assignType, assigneeId, assigneeName, inventoryType, file }: UploadInventoryValues) => {
-		setIsUploadingInventory(true);
+	const uploadInventory = async ({ assignType, assigneeId, inventoryType, file }: UploadInventoryValues) => {
 		try {
-			const book = XLSX.read(await file.arrayBuffer(), { type: "array" });
-			const sheet = book.Sheets[book.SheetNames[0]];
-			const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
-			const imported = parsed
-				.map((row) => ({
-					inventoryType: inventoryTypeLabel(inventoryType) || sheetValue(row, "Inventory Type"),
-					imei: sheetValue(row, "Imei"),
-					sim: sheetValue(row, "Sim"),
-					operator: sheetValue(row, "Operator") || "Airtel Gprs (airtelgprs.com)",
-					secondarySim: sheetValue(row, "Secondary Sim Number"),
-					secondarySimOperator: sheetValue(row, "Secondary Sim Operator"),
-					deviceType: sheetValue(row, "Device Type") || "Concox (8505)",
-					assignType,
-					password: sheetValue(row, "Password"),
-					active: sheetValue(row, "Status").toLowerCase() !== "inactive",
-					ignitionWire: ["yes", "y", "true", "1"].includes(sheetValue(row, "Wire+").toLowerCase()),
-					airConditionWire: false,
-					analogSensor: false,
-					client: assignType === AssignType.CLIENT ? assigneeName : sheetValue(row, "Client"),
-					clientId: assignType === AssignType.CLIENT ? assigneeId : undefined,
-					technician: assignType === AssignType.TECHNICIAN ? assigneeName : sheetValue(row, "Technician"),
-					inventoryStatus: sheetValue(row, "Inventory Status") || "Used",
-					added: sheetValue(row, "Added") || currentMonth(),
-				}))
-				.filter((row) => row.imei || row.sim || row.inventoryType);
-			if (imported.length === 0) {
-				throw new Error("The file has no inventory rows.");
-			}
-			setUploadedRows((current) => {
-				let id = nextId(current);
-				return [
-					...current,
-					...imported.map((row) => ({
-						...row,
-						id: id++,
-						transferBy: "",
-						transferTime: "",
-						packet: "",
-						prt: "",
-						transfer: "",
-					})),
-				];
-			});
+			await bulkUploadInventory({
+				assignType,
+				inventoryType,
+				file,
+				...(assignType === AssignType.CLIENT ? { client: assigneeId } : {}),
+				...(assignType === AssignType.TECHNICIAN ? { technician: assigneeId } : {}),
+			}).unwrap();
+			toast.success("Inventory uploaded successfully.");
 			setUploadError("");
 			setPage(0);
 			setShowUploadDialog(false);
+			void refetch();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : "That file could not be read. Use the demo workbook.";
+			const message = apiErrorMessage(error, "Could not upload inventory. Please try again.");
 			setUploadError(message);
 			throw error instanceof Error ? error : new Error(message);
-		} finally {
-			setIsUploadingInventory(false);
 		}
 	};
 
@@ -343,7 +326,7 @@ export default function DeviceInventory() {
 			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${active ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-white/[0.06] text-slate-400" : "bg-slate-100 text-slate-600")}`}>{active ? "Active" : "Inactive"}</span>;
 		}
 		if (key === "wirePlus") return row.ignitionWire ? "Yes" : "No";
-		if (key === "assigned") return textValue(row.assignType);
+		if (key === "assigned") return textValue(assignTypeLabel(row.assignType) || row.assignType);
 		if (key === "added") return displayMonth(row.added);
 		if (key === "password") return textValue(row.password);
 		return textValue(String(row[key] ?? ""));
@@ -432,7 +415,10 @@ export default function DeviceInventory() {
 									)}
 								</label>
 								<div className="flex flex-wrap items-center gap-2">
-									<button type="button" onClick={downloadDemo} className={quietButton}><Download className="h-3.5 w-3.5" /> Download Demo Inventory</button>
+									<button type="button" onClick={() => void downloadExport()} disabled={isExportingInventory} className={`${quietButton} disabled:opacity-60`}>
+										<Download className={`h-3.5 w-3.5 ${isExportingInventory ? "animate-pulse" : ""}`} />
+										{isExportingInventory ? "Downloading…" : "Download Demo Inventory"}
+									</button>
 									<button type="button" onClick={() => { setUploadError(""); setShowUploadDialog(true); }} className={cyanButton}><Upload className="h-3.5 w-3.5" /> Upload Inventory</button>
 									<div className="relative">
 										<select aria-label="Rows per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); setSummaryPage(0); }} className={`h-9 appearance-none rounded-lg border pl-3 pr-8 text-[11px] outline-none ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 [color-scheme:dark]" : "border-slate-200 bg-white text-slate-700"}`}>

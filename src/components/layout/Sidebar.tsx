@@ -28,12 +28,12 @@ type NavMenu = { label: string; icon: LucideIcon; to?: string; children: NavChil
 
 const navMenus: NavMenu[] = [
   { label: "Home", icon: Home, children: ["Dashboard", "Advance Dashboard", "Analytics Dashboard"] },
-  { label: "Master", icon: Database, children: ["Owners", "Roles", "Device Type", "Geo Type"] },
+  { label: "Master", icon: Database, children: ["Owners", "Roles", "Device Type", "Geo Type", "Expense Type"] },
   { label: "Vehicles", icon: Car, children: ["Vehicles", "Devices", "Transporter", { label: "Manage Technician", children: ["Technician List", "JobSheet"] }, "Client", { label: "User Groups", children: ["User", "Group"] }, "Vehicle Detail", "Driver Detail", "Geofence", "Payment Detail", "Enquiry", "Device Inventory"] },
   { label: "Reports", icon: BarChart3, children: ["Coin Banking", "Distance Report", "Driver Assignment Report", "Expense Report", "Geofence Report", "Google Map Api Record", "Idle Summary Report", "POI Report", "Register Mobile Report", "Ride Report", "Send Command Logs", "Sensor Report", "Sim Tracking Report", "Speed vs Distance", "Status Report", "Stoppage Summary Report", "Subscription Changed Report", "Subscription Expired Report", "Travel Summary Report", "Vehicle Log Report"] },
   { label: "Alerts", icon: Bell, children: ["Add Alerts", "Notification List", "Service & Maintenance", "Parked Scheduler", "Announcement"] },
   { label: "Settings", icon: Settings, to: "/settings", children: [] },
-  { label: "Support", icon: Video, children: [ "Raise Ticket", "Answer Tickets"] },
+  { label: "Support", icon: Video, children: ["Raise Ticket", "Answer Tickets", "Policy"] },
   { label: "Access Management", icon: Contact, children: ["Access Management"] },
 ];
 
@@ -46,6 +46,7 @@ const menuRoutes: Record<string, string> = {
   "Master/Roles": "/roles",
   "Master/Device Type": "/device-types",
   "Master/Geo Type": "/geo-types",
+  "Master/Expense Type": "/expense-types",
   "Vehicles/Vehicles": "/vehicles",
   "Vehicles/Devices": "/devices",
   "Vehicles/Transporter": "/transporters",
@@ -86,6 +87,7 @@ const menuRoutes: Record<string, string> = {
   "Alerts/Announcement": "/announcement",
   "Support/Raise Ticket": "/raise-ticket",
   "Support/Answer Tickets": "/answer-tickets",
+  "Support/Policy": "/policy",
 };
 
 const routeFor = (...labels: string[]) => menuRoutes[labels.join("/")];

@@ -9,13 +9,14 @@ import { Status } from "@/enums/Status";
 import type { User as UserEntity } from "@/interfaces/User";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetGroupsQuery } from "@/store/services/api/Group";
-import { useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetRoleMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
 import { useDeleteUserMutation, useGetUsersQuery } from "@/store/services/api/User";
 
 type UserRecord = {
 	id: string;
 	username: string;
 	group: string;
+	role: string;
 	company: string;
 	contactPerson: string;
 	phone: string;
@@ -26,11 +27,12 @@ type UserRecord = {
 	password: string;
 };
 
-type ColumnKey = "username" | "group" | "company" | "contactPerson" | "phone" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
+type ColumnKey = "username" | "group" | "role" | "company" | "contactPerson" | "phone" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "username", label: "Username" },
 	{ key: "group", label: "Group" },
+	{ key: "role", label: "Role" },
 	{ key: "company", label: "Company" },
 	{ key: "contactPerson", label: "Contact Person" },
 	{ key: "phone", label: "Phone No." },
@@ -43,7 +45,10 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "delete", label: "Delete" },
 ];
 
-const textValue = (value: string) => (value.trim() ? value : "—");
+const textValue = (value: unknown) => {
+	const text = value == null ? "" : String(value);
+	return text.trim() ? text : "—";
+};
 
 const dateLabel = (value?: string) => {
 	const date = value ? new Date(value) : null;
@@ -57,25 +62,33 @@ export default function User() {
 	const isDark = theme !== "light";
 	const { data: users = [], isLoading, isFetching, isError, refetch } = useGetUsersQuery();
 	const { data: groups = [] } = useGetGroupsQuery();
+	const { data: roles = [] } = useGetRoleMasterQuery();
 	const { data: timezones = [] } = useGetTimezonesQuery();
 	const [deleteUser, { isLoading: isDeleting }] = useDeleteUserMutation();
 	const rows = useMemo(() => {
 		const groupNames = new Map(groups.map((group) => [group.externalId, group.groupName]));
+		const roleNames = new Map(roles.map((role) => [role.id, role.name]));
 		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
-		return users.map((user: UserEntity): UserRecord => ({
-			id: user.externalId,
-			username: user.userName ?? "",
-			group: groupNames.get(user.group) ?? user.group ?? "",
-			company: user.companyName ?? "",
-			contactPerson: user.contactPersonName ?? "",
-			phone: user.phone != null ? String(user.phone) : "",
-			companyAddress: user.companyAddress ?? "",
-			timezone: timezoneNames.get(user.timezone) ?? user.timezone ?? "",
-			active: user.status !== Status.INACTIVE,
-			added: dateLabel(user.createdAt),
-			password: user.password ?? "",
-		}));
-	}, [users, groups, timezones]);
+		return users.map((user: UserEntity): UserRecord => {
+			const groupId = user.group != null ? String(user.group) : "";
+			const roleId = user.role != null ? String(user.role) : "";
+			const timezoneId = user.timezone != null ? String(user.timezone) : "";
+			return {
+				id: user.externalId,
+				username: user.userName ?? "",
+				group: groupNames.get(groupId) ?? groupId,
+				role: roleNames.get(roleId) ?? roleId,
+				company: user.companyName ?? "",
+				contactPerson: user.contactPersonName ?? "",
+				phone: user.phone != null ? String(user.phone) : "",
+				companyAddress: user.companyAddress ?? "",
+				timezone: timezoneNames.get(timezoneId) ?? timezoneId,
+				active: user.status !== Status.INACTIVE,
+				added: dateLabel(user.createdAt),
+				password: user.password ?? "",
+			};
+		});
+	}, [users, groups, roles, timezones]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -87,7 +100,7 @@ export default function User() {
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.username, row.group, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) => [row.username, row.group, row.role, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);

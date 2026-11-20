@@ -27,6 +27,7 @@ export interface TechnicianMaster extends MasterRecordBase {
   technicianName?: string;
   userName?: string;
   username?: string;
+  companyName?: string;
 }
 
 export interface VehicleMaster extends MasterRecordBase {

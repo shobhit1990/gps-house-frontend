@@ -54,10 +54,12 @@ import ParkScheduler from "@/pages/Alert/ParkScheduler";
 import Announcement from "@/pages/Alert/Announcement";
 import Owners from "@/pages/Master/Owners";
 import DeviceType from "@/pages/Master/DeviceType";
+import ExpenseType from "@/pages/Master/ExpenseType";
 import Roles from "@/pages/Master/Roles";
 import GeoType from "@/pages/Geofence/GeoType";
 import RaisedTicket from "@/pages/Support/RaisedTicket";
 import AnsweredTickets from "@/pages/Support/AnsweredTickets";
+import Policy from "@/pages/Support/Policy";
 
 const queryClient = new QueryClient();
 
@@ -86,6 +88,7 @@ const AppContent = () => {
         <Route path="/roles" element={<Roles />} />
         <Route path="/device-types" element={<DeviceType />} />
         <Route path="/geo-types" element={<GeoType />} />
+        <Route path="/expense-types" element={<ExpenseType />} />
         <Route path="/vehicles" element={<Vehicle />} />
         <Route path="/devices" element={<Devices />} />
         <Route path="/transporters" element={<Transporter />} />
@@ -126,6 +129,7 @@ const AppContent = () => {
         <Route path="/announcement" element={<Announcement />} />
         <Route path="/raise-ticket" element={<RaisedTicket />} />
         <Route path="/answer-tickets" element={<AnsweredTickets />} />
+        <Route path="/policy" element={<Policy />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
