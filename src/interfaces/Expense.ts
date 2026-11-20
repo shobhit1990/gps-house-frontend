@@ -19,7 +19,7 @@ export interface CreateExpenseRequest {
   /** Expense type externalId / id. */
   expenseType: string;
   amount: number;
-  /** Date/time selected in the expense form. */
+  /** ISO date/time, e.g. 2026-11-20T15:36:00.000Z */
   expenseDate: string;
   odometer?: number;
   engineHours?: number;
@@ -27,6 +27,7 @@ export interface CreateExpenseRequest {
   quantity?: number;
   supplier?: string;
   buyer?: string;
+  status: string;
 }
 
 export type UpdateExpenseRequest = Partial<CreateExpenseRequest>;
@@ -37,6 +38,9 @@ export interface ExpenseApiRecord {
   externalId?: string;
   client?: string | ExpensePartyRef | null;
   transporter?: string | ExpensePartyRef | null;
+  expenseFor?: string | null;
+  vehicle?: string | ExpensePartyRef | null;
+  driver?: string | ExpensePartyRef | null;
   expenseName?: string;
   expenseType?: string | ExpenseTypeRef | null;
   amount?: number | string;
@@ -67,6 +71,9 @@ export interface Expense {
   /** Transporter id for forms. */
   transporter: string;
   transporterName: string;
+  expenseFor?: string;
+  vehicle?: string;
+  driver?: string;
   expenseName: string;
   /** Expense type id for forms. */
   expenseType: string;
@@ -85,6 +92,7 @@ export interface Expense {
   tripName?: string;
   createdBy?: string;
   role?: string;
+  status?: string;
   createdAt?: string;
   updatedAt?: string;
 }

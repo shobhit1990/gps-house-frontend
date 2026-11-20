@@ -10,6 +10,8 @@ export type VehicleStatus =
 
 export type VehicleRow = {
   sn: number;
+  /** Stable backend id when loaded from live tracking. */
+  id?: string;
   kind: VehicleKind;
   color: string;
   branch: string;
@@ -22,6 +24,8 @@ export type VehicleRow = {
   status: VehicleStatus;
   since: string;
   distanceKm: number;
+  /** Raw vehicle type from API (truck, bike, schoolbus, …). */
+  vehicleType?: string;
   parking?: string;
   speedKmph?: number;
   kmSinceAc?: number;

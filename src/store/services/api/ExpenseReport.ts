@@ -45,6 +45,9 @@ const normalizeExpense = (record: ExpenseApiRecord): Expense => {
     clientName: asPartyName(record.client),
     transporter: asId(record.transporter),
     transporterName: asPartyName(record.transporter),
+    expenseFor: record.expenseFor?.trim() || undefined,
+    vehicle: asId(record.vehicle) || undefined,
+    driver: asId(record.driver) || undefined,
     expenseName: record.expenseName?.trim() ?? "",
     expenseType: asId(record.expenseType),
     expenseTypeName: asExpenseTypeName(record.expenseType),
@@ -61,6 +64,7 @@ const normalizeExpense = (record: ExpenseApiRecord): Expense => {
     tripName: record.tripName ?? "",
     createdBy: record.createdBy ?? "",
     role: record.role ?? "",
+    status: record.status ?? undefined,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };

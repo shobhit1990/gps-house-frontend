@@ -2,11 +2,35 @@ import { api } from "../api";
 import type { DriverDetail, CreateDriverDetailRequest, UpdateDriverDetailRequest } from "@/interfaces/DriverDetail";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-type DriverDetailApiRecord = Omit<DriverDetail, "externalId"> & { externalId?: string };
+type NestedParty = string | { id?: string; name?: string; companyName?: string } | null | undefined;
+
+type DriverDetailApiRecord = Omit<DriverDetail, "externalId" | "client" | "transporter" | "clientName" | "transporterName"> & {
+	externalId?: string;
+	client?: NestedParty;
+	transporter?: NestedParty;
+};
+
+const asId = (value: NestedParty): string => {
+	if (!value) return "";
+	if (typeof value === "string") return value;
+	return String(value.id ?? "").trim();
+};
+
+const asPartyName = (value: NestedParty): string => {
+	if (!value) return "";
+	if (typeof value === "string") return value;
+	return (value.name ?? value.companyName ?? "").trim();
+};
 
 const normalizeDriverDetail = (record: DriverDetailApiRecord): DriverDetail => ({
 	...record,
 	externalId: String(record?.externalId ?? record?.id ?? ""),
+	client: asId(record.client),
+	clientName: asPartyName(record.client),
+	transporter: asId(record.transporter),
+	transporterName: asPartyName(record.transporter),
+	licenseToDrive: Array.isArray(record.licenseToDrive) ? record.licenseToDrive : [],
+	geofences: Array.isArray(record.geofences) ? record.geofences : [],
 });
 
 const normalizeDriverDetailResponse = (response: ApiEnvelope<DriverDetailApiRecord>): DriverDetail => {

@@ -28,7 +28,7 @@ type NavMenu = { label: string; icon: LucideIcon; to?: string; children: NavChil
 
 const navMenus: NavMenu[] = [
   { label: "Home", icon: Home, children: ["Dashboard", "Advance Dashboard", "Analytics Dashboard"] },
-  { label: "Master", icon: Database, children: ["Owners", "Roles", "Device Type", "Geo Type", "Expense Type"] },
+  { label: "Master", icon: Database, children: ["Owners", "Roles", "Device Type", "Geo Type", "Driver License",  "Expense Type"] },
   { label: "Vehicles", icon: Car, children: ["Vehicles", "Devices", "Transporter", { label: "Manage Technician", children: ["Technician List", "JobSheet"] }, "Client", { label: "User Groups", children: ["User", "Group"] }, "Vehicle Detail", "Driver Detail", "Geofence", "Payment Detail", "Enquiry", "Device Inventory"] },
   { label: "Reports", icon: BarChart3, children: ["Coin Banking", "Distance Report", "Driver Assignment Report", "Expense Report", "Geofence Report", "Google Map Api Record", "Idle Summary Report", "POI Report", "Register Mobile Report", "Ride Report", "Send Command Logs", "Sensor Report", "Sim Tracking Report", "Speed vs Distance", "Status Report", "Stoppage Summary Report", "Subscription Changed Report", "Subscription Expired Report", "Travel Summary Report", "Vehicle Log Report"] },
   { label: "Alerts", icon: Bell, children: ["Add Alerts", "Notification List", "Service & Maintenance", "Parked Scheduler", "Announcement"] },
@@ -47,6 +47,7 @@ const menuRoutes: Record<string, string> = {
   "Master/Device Type": "/device-types",
   "Master/Geo Type": "/geo-types",
   "Master/Expense Type": "/expense-types",
+  "Master/Driver License": "/driver-licenses",
   "Vehicles/Vehicles": "/vehicles",
   "Vehicles/Devices": "/devices",
   "Vehicles/Transporter": "/transporters",
@@ -131,11 +132,16 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
   const isDark = theme === "dark";
   const navRef = useRef<HTMLElement>(null);
   const measureRef = useRef<HTMLUListElement>(null);
+  // Sidebar items are hardcoded here. API `/menu/sidebar` is only used as an
+  // optional permission filter — if it hides a whole section (e.g. Master),
+  // fall back to the full hardcoded list so new pages stay reachable.
   const authMenus = useSelector(selectMenus);
-  const allowedMenus = useMemo(
-    () => filterNavMenusByPermissions(navMenus, authMenus, routeFor),
-    [authMenus],
-  );
+  const allowedMenus = useMemo(() => {
+    const filtered = filterNavMenusByPermissions(navMenus, authMenus, routeFor);
+    const hasMaster = filtered.some((menu) => menu.label === "Master");
+    if (!authMenus.length || hasMaster) return filtered;
+    return navMenus;
+  }, [authMenus]);
   const [visibleCount, setVisibleCount] = useState(allowedMenus.length);
 
   // Show as many top-level menus as fit on one line; the rest go into the "More" menu.
@@ -263,7 +269,7 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
                   {isOpen && (
                     <div className="absolute left-0 top-full z-[710] min-w-[210px] pt-2">
                       <div className="relative">
-                        <div ref={submenuListRef} className="max-h-[180px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.08)] dark:border-white/[0.10] dark:bg-[#0a1630] dark:shadow-[0_18px_40px_rgba(0,0,0,0.4)]">
+                        <div ref={submenuListRef} className="max-h-[min(70vh,420px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.08)] dark:border-white/[0.10] dark:bg-[#0a1630] dark:shadow-[0_18px_40px_rgba(0,0,0,0.4)]">
                           {item.children.map((child) => {
                             const childLabel = typeof child === "string" ? child : child.label;
                             const hasChildren = typeof child !== "string" && child.children.length > 0;

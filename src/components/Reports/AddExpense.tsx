@@ -57,7 +57,6 @@ const emptyValues = (): ExpenseFormValues => ({
 
 export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: AddExpenseProps) {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
 	const { data: driverDetails = [] } = useGetDriverDetailsQuery();
@@ -66,6 +65,10 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 	const titleId = useId();
 	const [values, setValues] = useState<ExpenseFormValues>(initial ?? emptyValues);
 	const [formError, setFormError] = useState("");
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery(
+		values.client ? { client: values.client } : undefined,
+		{ skip: !values.client },
+	);
 
 	const canSelectExpenseFor = Boolean(values.client && values.transporter);
 	const showVehicle = values.expenseFor === ExpenseFor.VEHICLE_WISE;
@@ -110,7 +113,13 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 	const update = <K extends keyof ExpenseFormValues>(key: K, value: ExpenseFormValues[K]) => {
 		setValues((current) => {
 			const next = { ...current, [key]: value };
-			if (key === "client" || key === "transporter") {
+			if (key === "client") {
+				next.transporter = "";
+				next.expenseFor = "";
+				next.vehicle = "";
+				next.driver = "";
+			}
+			if (key === "transporter") {
 				next.expenseFor = "";
 				next.vehicle = "";
 				next.driver = "";
@@ -212,7 +221,16 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 						{field("Client", select("client", "Client", clientMaster), true)}
-						{field("Transporter", select("transporter", "Transporter", transporterMaster), true)}
+						{field(
+							"Transporter",
+							select(
+								"transporter",
+								values.client ? "Transporter" : "Select Client first",
+								transporterMaster,
+								!values.client,
+							),
+							true,
+						)}
 						{field(
 							"Expense For",
 							<span className="relative block">
