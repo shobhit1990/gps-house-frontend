@@ -36,24 +36,86 @@ function unwrapMasterList<T>(response: MasterListResponse<T>): T[] {
   return response?.data ?? [];
 }
 
-function isActiveRecord<T extends { status?: Status }>(item: T): boolean {
-  return !item.status || item.status === Status.ACTIVE;
+function isActiveRecord<T extends { status?: Status | string; active?: boolean }>(item: T): boolean {
+  if (typeof item.active === "boolean") return item.active;
+  if (!item.status) return true;
+  return String(item.status).trim().toLowerCase() === Status.ACTIVE;
 }
 
-/** Turns master records into unique, non-empty `{ id, name }` dropdown options. */
-function toMasterOptions<T extends { id?: string | number; externalId?: string; status?: Status }>(
+const masterRefId = (value: unknown): string | undefined => {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value).trim();
+    return text || undefined;
+  }
+  if (typeof value === "object") {
+    const record = value as { externalId?: string | number; id?: string | number };
+    const text = String(record.externalId ?? record.id ?? "").trim();
+    return text || undefined;
+  }
+  return undefined;
+};
+
+/** Turns master records into unique, non-empty `{ id, name }` dropdown options.
+ *  Dedupes by id (not display name) so two clients with the same company still appear. */
+function toMasterOptions<T extends { id?: string | number; externalId?: string; status?: Status | string; active?: boolean }>(
   response: MasterListResponse<T>,
   getName: (item: T) => string | undefined,
+  getExtra?: (item: T) => Partial<MasterOption> | undefined,
 ): MasterOption[] {
   const seen = new Set<string>();
   return unwrapMasterList(response)
     .filter(isActiveRecord)
     .flatMap((item) => {
       const name = getName(item)?.trim();
-      if (!name || seen.has(name)) return [];
-      seen.add(name);
-      return [{ id: String(item.externalId ?? item.id ?? name), externalId: item.externalId, name }];
+      if (!name) return [];
+      const id = String(item.externalId ?? item.id ?? name);
+      if (seen.has(id)) return [];
+      seen.add(id);
+      const extra = getExtra?.(item);
+      return [{ id, externalId: item.externalId, name, ...extra }];
     });
+}
+
+const asTrimmedText = (value: unknown): string | undefined => {
+  if (value == null || value === "") return undefined;
+  return String(value).trim() || undefined;
+};
+
+/** Company + login/name so shared company names stay distinguishable in dropdowns. */
+function entityMasterLabel(
+  item: {
+    companyName?: string;
+    company?: string;
+    name?: string;
+    userName?: string;
+    username?: string;
+    owner_name?: string;
+    ownerName?: string;
+  },
+  primaryName?: string,
+): string | undefined {
+  const company = asTrimmedText(primaryName ?? item.companyName ?? item.company);
+  const identity = asTrimmedText(
+    item.userName ??
+    item.username ??
+    item.name ??
+    item.owner_name ??
+    item.ownerName,
+  );
+  if (company && identity && company !== identity) return `${company} (${identity})`;
+  return company || identity || undefined;
+}
+
+/** Client dropdowns prefer owner_name; fall back to company/username when missing. */
+function clientMasterLabel(
+  item: ClientMaster & { owner?: { ownerName?: string; owner_name?: string } | null },
+): string | undefined {
+  const owner = item.owner && typeof item.owner === "object" ? item.owner : undefined;
+  return (
+    asTrimmedText(item.owner_name ?? item.ownerName ?? owner?.ownerName ?? owner?.owner_name) ||
+    entityMasterLabel(item, item.clientName)
+  );
 }
 
 export const masterApi = api.injectEndpoints({
@@ -89,36 +151,34 @@ export const masterApi = api.injectEndpoints({
     getClientMaster: builder.query<MasterOption[], void>({
       query: () => "/master/client",
       transformResponse: (response: MasterListResponse<ClientMaster>) =>
-        toMasterOptions(
-          response,
-          (item) =>
-            item.clientName
-            ?? item.companyName
-            ?? item.company
-            ?? item.name
-            ?? item.userName
-            ?? item.username,
-        ),
+        toMasterOptions(response, clientMasterLabel),
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
     getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({
-      query: (params) => ({
-        url: "/master/transporter",
-        params: params?.client ? { client: params.client } : undefined,
-      }),
+      query: (arg) => {
+        const client = typeof arg === "object" && arg?.client ? arg.client : undefined;
+        return {
+          url: "/master/transporter",
+          params: client ? { client } : undefined,
+        };
+      },
       transformResponse: (response: MasterListResponse<TransporterMaster>) =>
         toMasterOptions(
           response,
-          (item) =>
-            item.transporterName
-            ?? item.companyName
-            ?? item.company
-            ?? item.name
-            ?? item.userName
-            ?? item.username,
+          (item) => entityMasterLabel(item, item.transporterName),
+          (item) => {
+            const clientRef = asTrimmedText(item.client);
+            return clientRef ? { clientRef } : undefined;
+          },
         ),
-      providesTags: (_result, _error, params) => [
-        { type: "Master", id: params?.client ? `TRANSPORTER-${params.client}` : "TRANSPORTER" },
+      providesTags: (_result, _error, arg) => [
+        {
+          type: "Master",
+          id:
+            typeof arg === "object" && arg?.client
+              ? `TRANSPORTER-${arg.client}`
+              : "TRANSPORTER",
+        },
         { type: "Transporters", id: "LIST" },
       ],
     }),
@@ -146,7 +206,18 @@ export const masterApi = api.injectEndpoints({
     getVehicleMaster: builder.query<MasterOption[], void>({
       query: () => "/master/vehicle",
       transformResponse: (response: MasterListResponse<VehicleMaster>) =>
-        toMasterOptions(response, (item) => item.vehicle ?? item.vehicleNo ?? item.vehicleName ?? item.name),
+        toMasterOptions(
+          response,
+          (item) => item.vehicle ?? item.vehicleNo ?? item.vehicleName ?? item.name,
+          (item) => {
+            const clientId = masterRefId(item.client);
+            const transporterId = masterRefId(item.transporter);
+            return {
+              ...(clientId ? { clientId } : {}),
+              ...(transporterId ? { transporterId } : {}),
+            };
+          },
+        ),
       providesTags: [{ type: "Master", id: "VEHICLE" }, { type: "Vehicles", id: "LIST" }],
     }),
     getDeviceTypeMaster: builder.query<DeviceTypeMaster[], void>({

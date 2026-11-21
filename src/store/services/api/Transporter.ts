@@ -4,12 +4,22 @@ import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapRes
 
 type TransporterApiRecord = Omit<Transporter, "externalId"> & { externalId?: string };
 
+const asOptionalText = (value: unknown): string | undefined => {
+  if (value == null || value === "") return undefined;
+  return String(value).trim() || undefined;
+};
+
 const normalizeTransporter = (record?: TransporterApiRecord | null): Transporter => {
   const safeRecord = record && typeof record === "object" ? record : ({} as TransporterApiRecord);
   return {
     ...safeRecord,
     id: safeRecord.id ?? "",
     externalId: String(safeRecord.externalId ?? safeRecord.id ?? ""),
+    // API may return phone as a number — keep string so forms can safely .trim().
+    phone: asOptionalText(safeRecord.phone),
+    name: asOptionalText(safeRecord.name),
+    email: asOptionalText(safeRecord.email),
+    address: asOptionalText(safeRecord.address),
   };
 };
 

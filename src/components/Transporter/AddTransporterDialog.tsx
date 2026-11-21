@@ -151,7 +151,7 @@ const transporterToFormState = (transporter: Transporter, timezone: string, lang
     language: transporter.language || language,
     name: transporter.name ?? "",
     email: transporter.email ?? "",
-    phone: transporter.phone ?? "",
+    phone: transporter.phone != null ? String(transporter.phone) : "",
     address: transporter.address ?? "",
     subscriptionStartDate: toDateInputValue(transporter.subscriptionStartDate) || localDate(),
     subscriptionDueDate: toDateInputValue(transporter.subscriptionDueDate) || localDate(1),
@@ -420,7 +420,7 @@ export function AddTransporterDialog({
             values.billingAddress,
             values.website,
             values.paymentMode,
-        ].some((value) => Boolean(value?.trim()));
+        ].some((value) => Boolean(String(value ?? "").trim()));
         if (hasBilling && (!values.billingCompanyName.trim() || !values.billingAddress.trim())) {
             setFormError("Company Name and Address are required to save billing details.");
             return;

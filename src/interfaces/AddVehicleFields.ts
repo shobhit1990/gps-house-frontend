@@ -1,3 +1,4 @@
+import { VehicleStatus, vehicleStatusLabels } from "@/enums/VehicleStatus";
 import { VehicleType } from "@/enums/VehicleType";
 
 /** Display names for the vehicle types the backend accepts. */
@@ -47,5 +48,13 @@ export const addVehicleFields: VehicleFieldConfig[] = [
 	{ name: "remark", label: "Remark", placeholder: "Remark" },
 	{ name: "durationOdometer", label: "Duration Odometer", type: "number" },
 	{ name: "remark2", label: "Remark 2", placeholder: "Remark 2" },
+	{
+		name: "status",
+		label: "Status",
+		type: "select",
+		required: true,
+		options: Object.values(VehicleStatus),
+		optionLabels: vehicleStatusLabels,
+	},
 	{ name: "parkingViolationAlarm", label: "Parking violation alarm on Ignition on", type: "checkbox" },
 ];

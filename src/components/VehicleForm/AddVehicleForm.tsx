@@ -24,6 +24,7 @@ import {
 } from "@/components/VehicleForm/vehiclePayloads";
 import { useLazyGetDeviceByIdQuery } from "@/store/services/api/AddDevice";
 import { SimOperator } from "@/enums/SimOperator";
+import { VehicleStatus } from "@/enums/VehicleStatus";
 import { DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
@@ -31,11 +32,48 @@ const fallbackLanguages = ["English", "Hindi"];
 
 type VehicleFormValues = Record<string, string>;
 
+/** Prefill client/transporter/device from the list row while getById loads. */
+export type VehicleRelationSeed = {
+    clientId?: string;
+    clientLabel?: string;
+    transporterId?: string;
+    transporterLabel?: string;
+    deviceId?: string;
+    deviceLabel?: string;
+};
+
 type AddVehicleFormProps = {
     onClose: () => void;
     onSubmit: (values: VehicleFormValues) => void;
     /** When set, form opens in edit mode and loads `/vehicle/getById/:id`. */
     vehicleId?: string;
+    /** List-row relation ids/labels so edit selects fill immediately. */
+    relationSeed?: VehicleRelationSeed;
+};
+
+const applyRelationSeed = (current: VehicleFormValues, seed?: VehicleRelationSeed): VehicleFormValues => {
+    if (!seed) return current;
+    return {
+        ...current,
+        ...(seed.clientId
+            ? {
+                vehicleClient: seed.clientId,
+                vehicleClientLabel: seed.clientLabel ?? current.vehicleClientLabel ?? "",
+            }
+            : {}),
+        ...(seed.transporterId
+            ? {
+                vehicleTransporter: seed.transporterId,
+                vehicleTransporterLabel: seed.transporterLabel ?? current.vehicleTransporterLabel ?? "",
+            }
+            : {}),
+        ...(seed.deviceId
+            ? {
+                vehicleDevice: seed.deviceId,
+                vehicleDeviceLabel: seed.deviceLabel ?? current.vehicleDeviceLabel ?? "",
+            }
+            : {}),
+    };
 };
 
 type FieldConfig = VehicleFieldConfig;
@@ -129,7 +167,7 @@ const transporterToFormValues = (transporter: Transporter): VehicleFormValues =>
     language: transporter.language ?? "",
     name: transporter.name ?? "",
     email: transporter.email ?? "",
-    phone: transporter.phone ?? "",
+    phone: transporter.phone != null ? String(transporter.phone) : "",
     address: transporter.address ?? "",
     subscriptionStart: toDateInputValue(transporter.subscriptionStartDate),
     subscriptionDue: toDateInputValue(transporter.subscriptionDueDate),
@@ -301,7 +339,7 @@ function FormField({
     );
 }
 
-export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormProps) {
+export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: AddVehicleFormProps) {
     const { theme } = useTheme();
     const isDark = theme !== "light";
     const isEditMode = Boolean(vehicleId);
@@ -399,30 +437,46 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormP
     const [updateVehicle, { isLoading: updatingVehicle }] = useUpdateVehicleMutation();
     const isSaving = updatingTransporter || creatingVehicle || updatingVehicle;
     const vehicleExternalId = savedIds.vehicle || vehicleId || "";
-    const [values, setValues] = useState<VehicleFormValues>({
-        timezone: "(GMT+5:30) Asia/Calcutta",
-        inactiveTime: "12",
-        language: "English",
-        accessTimezone: "(GMT+5:30) Asia/Calcutta",
-        accessInactiveTime: "12",
-        accessLanguage: "English",
-        mileage: "1",
-        vehicleType: "",
-        subscriptionStart: "2026-10-05",
-        subscriptionDue: "2027-10-05",
-        subscriptionExtend: "2027-05-10",
-        subscriptionExpiryCount: "10",
-        active: "true",
-        simOperator: SimOperator.AIRTEL_GPRS,
-        secondarySimOperator: SimOperator.AIRTEL_GPRS,
-        deviceType: "",
-        sellingPrice: "0",
-        installationDate: "2026-05-10",
-        rentalDueDate: "2026-05-10",
-        ...vehicleDetailDefaults,
-        manufactureDate: "2026-10-26",
-        purchaseDate: "2026-10-26",
-    });
+    const [values, setValues] = useState<VehicleFormValues>(() =>
+        applyRelationSeed(
+            {
+                timezone: "(GMT+5:30) Asia/Calcutta",
+                inactiveTime: "12",
+                language: "English",
+                accessTimezone: "(GMT+5:30) Asia/Calcutta",
+                accessInactiveTime: "12",
+                accessLanguage: "English",
+                mileage: "1",
+                vehicleType: "",
+                subscriptionStart: "2026-10-05",
+                subscriptionDue: "2027-10-05",
+                subscriptionExtend: "2027-05-10",
+                subscriptionExpiryCount: "10",
+                active: "true",
+                status: VehicleStatus.ACTIVE,
+                simOperator: SimOperator.AIRTEL_GPRS,
+                secondarySimOperator: SimOperator.AIRTEL_GPRS,
+                deviceType: "",
+                sellingPrice: "0",
+                installationDate: "2026-05-10",
+                rentalDueDate: "2026-05-10",
+                ...vehicleDetailDefaults,
+                manufactureDate: "2026-10-26",
+                purchaseDate: "2026-10-26",
+            },
+            relationSeed,
+        ),
+    );
+
+    useEffect(() => {
+        if (!relationSeed) return;
+        setValues((current) => applyRelationSeed(current, relationSeed));
+        if (relationSeed.deviceId) setSelectedDeviceId(relationSeed.deviceId);
+        if (relationSeed.transporterId) {
+            setSelectedTransporterId(relationSeed.transporterId);
+            setShowTransporterForm(false);
+        }
+    }, [relationSeed]);
 
     useEffect(() => {
         setValues((current) => ({
@@ -443,19 +497,49 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormP
                 const vehicle = await loadVehicle(vehicleId).unwrap();
                 if (cancelled) return;
                 const relations = vehicleRelationIds(vehicle);
+                const fromApi = vehicleToFormValues(vehicle);
                 setValues((current) => ({
                     ...current,
-                    ...vehicleToFormValues(vehicle),
+                    ...fromApi,
+                    // Prefer API ids; keep list-row seed when getById omits nested relations.
+                    vehicleClient: fromApi.vehicleClient || relationSeed?.clientId || current.vehicleClient || "",
+                    vehicleClientLabel:
+                        fromApi.vehicleClientLabel ||
+                        relationSeed?.clientLabel ||
+                        current.vehicleClientLabel ||
+                        "",
+                    vehicleTransporter:
+                        fromApi.vehicleTransporter ||
+                        relationSeed?.transporterId ||
+                        current.vehicleTransporter ||
+                        "",
+                    vehicleTransporterLabel:
+                        fromApi.vehicleTransporterLabel ||
+                        relationSeed?.transporterLabel ||
+                        current.vehicleTransporterLabel ||
+                        "",
+                    vehicleDevice: fromApi.vehicleDevice || relationSeed?.deviceId || current.vehicleDevice || "",
+                    vehicleDeviceLabel:
+                        fromApi.vehicleDeviceLabel ||
+                        relationSeed?.deviceLabel ||
+                        current.vehicleDeviceLabel ||
+                        "",
                 }));
                 setSavedIds((current) => ({
                     ...current,
                     vehicle: relations.vehicleId || vehicleId,
-                    ...(relations.deviceId ? { device: relations.deviceId } : {}),
-                    ...(relations.transporterId ? { transporter: relations.transporterId } : {}),
+                    ...(relations.deviceId || relationSeed?.deviceId
+                        ? { device: relations.deviceId || relationSeed?.deviceId }
+                        : {}),
+                    ...(relations.transporterId || relationSeed?.transporterId
+                        ? { transporter: relations.transporterId || relationSeed?.transporterId }
+                        : {}),
                 }));
-                if (relations.deviceId) setSelectedDeviceId(relations.deviceId);
-                if (relations.transporterId) {
-                    setSelectedTransporterId(relations.transporterId);
+                const deviceId = relations.deviceId || relationSeed?.deviceId;
+                const transporterId = relations.transporterId || relationSeed?.transporterId;
+                if (deviceId) setSelectedDeviceId(deviceId);
+                if (transporterId) {
+                    setSelectedTransporterId(transporterId);
                     setShowTransporterForm(false);
                 }
                 setFormError("");
@@ -470,7 +554,7 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormP
         return () => {
             cancelled = true;
         };
-    }, [vehicleId, loadVehicle]);
+    }, [vehicleId, loadVehicle, relationSeed]);
 
     const transporterFields = fieldsByTabWithMaster.Transporter.map((field) => {
         // Selected transporters are view-only; never require password/fields for HTML validation.
@@ -539,15 +623,17 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormP
                 nextValues[field.name] =
                     field.name === "active"
                         ? "true"
-                        : field.name === "sellingPrice"
-                            ? "0"
-                            : field.name === "installationDate" || field.name === "rentalDueDate"
-                                ? "2026-05-10"
-                                : field.type === "select"
-                                    ? field.options?.[0]?.startsWith("Select ")
-                                        ? ""
-                                        : field.options?.[0] ?? ""
-                                    : "";
+                        : field.name === "status"
+                            ? VehicleStatus.ACTIVE
+                            : field.name === "sellingPrice"
+                                ? "0"
+                                : field.name === "installationDate" || field.name === "rentalDueDate"
+                                    ? "2026-05-10"
+                                    : field.type === "select"
+                                        ? field.options?.[0]?.startsWith("Select ")
+                                            ? ""
+                                            : field.options?.[0] ?? ""
+                                        : "";
             });
             return nextValues;
         });
@@ -793,6 +879,11 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId }: AddVehicleFormP
                         : `${saveLabels[target]} linked to vehicle.`
                     : `${saveLabels[target]} ${isUpdate ? "updated" : "saved"}.`,
             );
+            // Edit mode: close after a successful vehicle update.
+            if (isEditMode && target === "vehicle") {
+                onClose();
+                return;
+            }
             // Keep the wizard open after vehicle create so transporter/device tabs can link next.
             if (target === "vehicle" && !vehicleExternalId) onSubmit(values);
             if (!isEditMode && activeTabIndex < visibleTabs.length - 1) {

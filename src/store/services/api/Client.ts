@@ -12,11 +12,22 @@ type ClientApiRecord = Omit<Client, "externalId" | "companyName" | "userName" | 
   ownerName?: string;
 };
 
+const asOptionalText = (value: unknown): string | undefined => {
+  if (value == null || value === "") return undefined;
+  return String(value).trim() || undefined;
+};
+
 const normalizeClient = (record: ClientApiRecord): Client => ({
   ...record,
   companyName: record.companyName ?? record.company ?? "",
   userName: record.userName ?? record.username ?? "",
   owner_name: record.owner_name ?? record.ownerName ?? "",
+  // API sometimes returns phone as a number — keep it string for forms / .trim().
+  phone: asOptionalText(record.phone),
+  name: asOptionalText(record.name),
+  email: asOptionalText(record.email),
+  address: asOptionalText(record.address),
+  domain: asOptionalText(record.domain),
   externalId: String(record?.externalId ?? record?.id ?? ""),
 });
 
