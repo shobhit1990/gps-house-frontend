@@ -5,7 +5,7 @@ import { baseQueryWithInterceptor } from "./utils/baseQuery";
 export const api = createApi({
   reducerPath: "api",
   baseQuery: baseQueryWithInterceptor,
-  tagTypes: ["Auth", "Master", "Owners", "Roles", "Clients", "Transporters", "Vehicles", "VehicleLiveTracking", "VehicleHistoryTracking", "Devices", "DeviceTypes", "GeoTypes","ExpenseTypes", "Licenses", "Inventory", "PaymentDetails", "BillingDetails", "Technicians", "DriverDetails", "JobSheets", "Groups", "Users", "Trips", "TripDetails", "TripEvents", "TripEventDetails", "Alerts", "ServiceMaintenance", "ParkedSchedules", "Announcements", "RaiseTickets", "VehicleConfigs", "Expenses", "Menus", "Geofences", "TransferCoins", "Policies"],
+  tagTypes: ["Auth", "Master", "Owners", "Roles", "Clients", "Transporters", "Vehicles", "VehicleLiveTracking", "VehicleHistoryTracking", "VehicleLogReports", "TravelSummaryReports", "StoppageSummaryReports", "DriverAssignmentReports", "AnalyticsDashboard", "Devices", "DeviceTypes", "GeoTypes","ExpenseTypes", "Licenses", "Inventory", "PaymentDetails", "BillingDetails", "Technicians", "DriverDetails", "JobSheets", "Groups", "Users", "Trips", "TripDetails", "TripEvents", "TripEventDetails", "Alerts", "ServiceMaintenance", "ParkedSchedules", "Announcements", "RaiseTickets", "VehicleConfigs", "Expenses", "Menus", "Geofences", "TransferCoins", "Policies"],
   endpoints: () => ({}),
 });
 

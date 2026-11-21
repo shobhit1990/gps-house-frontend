@@ -13,6 +13,7 @@ import { ApiProgressBar } from "@/components/common/ApiProgressBar";
 import DashboardPage from "@/pages/Dashboard/DashboardPage";
 import AdvanceDashboard from "@/pages/AdvanceDashboard/AdvanceDashboard";
 import AnalyticsDashboard from "@/pages/AnalyticsDashboard/AnalyticsDashboard";
+import HistoryTrackingPage from "@/pages/HistoryTracking/HistoryTrackingPage";
 import Vehicle from "@/pages/Vehicles/Vehicle";
 import Devices from "@/pages/Vehicles/Devices";
 import Transporter from "@/pages/Transporter/Transporter";
@@ -85,6 +86,7 @@ const AppContent = () => {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/advance-dashboard" element={<AdvanceDashboard />} />
         <Route path="/analytics-dashboard" element={<AnalyticsDashboard />} />
+        <Route path="/history-tracking" element={<HistoryTrackingPage />} />
         <Route path="/owners" element={<Owners />} />
         <Route path="/roles" element={<Roles />} />
         <Route path="/device-types" element={<DeviceType />} />

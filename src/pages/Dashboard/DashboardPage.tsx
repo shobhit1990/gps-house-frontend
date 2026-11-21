@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTheme } from "next-themes";
 import {
   CarFront,
@@ -6,6 +7,7 @@ import {
   CircleHelp,
   Clock3,
   Command,
+  History,
   MapPin,
   Search,
   Settings2,
@@ -16,7 +18,11 @@ import {
 } from "lucide-react";
 import { Sidebar } from "../../components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
-import type { VehicleKind } from "@/components/data/vehicles";
+import type { VehicleKind, VehicleRow } from "@/components/data/vehicles";
+import {
+  DashboardFilterDialog,
+  type DashboardFilterValues,
+} from "@/components/Dashboard/DashboardFilterDialog";
 import { VehicleHistoryPanel } from "@/components/Dashboard/VehicleHistoryPanel";
 import { VehicleMap } from "@/pages/Dashboard/VehicleMap";
 import { VehicleGlyph } from "@/pages/Dashboard/VehicleGlyph";
@@ -78,12 +84,18 @@ function Metric({
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme !== "light";
-  const { data: vehicles = [], isLoading, isError } = useGetVehicleLiveTrackingQuery(undefined, {
+  const { data: liveVehicles = [], isLoading, isError } = useGetVehicleLiveTrackingQuery(undefined, {
     pollingInterval: 15000,
   });
+  const [filteredApiVehicles, setFilteredApiVehicles] = useState<VehicleRow[] | null>(null);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterValues, setFilterValues] = useState<DashboardFilterValues | null>(null);
+  const [enableGeofenceOnMap, setEnableGeofenceOnMap] = useState(false);
+  const vehicles = filteredApiVehicles ?? liveVehicles;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<VehicleFilter>("all");
   const [selectedVehicleSn, setSelectedVehicleSn] = useState<number | null>(null);
@@ -96,9 +108,7 @@ export default function DashboardPage() {
       return;
     }
     setSelectedVehicleSn((current) =>
-      current != null && vehicles.some((vehicle) => vehicle.sn === current)
-        ? current
-        : vehicles[0].sn,
+      current != null && vehicles.some((vehicle) => vehicle.sn === current) ? current : null,
     );
     setHistoryVehicleId((current) =>
       current && vehicles.some((vehicle) => vehicle.id === current) ? current : null,
@@ -146,9 +156,9 @@ export default function DashboardPage() {
   }, [filter, search, vehicles]);
 
   const selectedVehicle =
-    filteredVehicles.find((vehicle) => vehicle.sn === selectedVehicleSn) ??
-    filteredVehicles[0] ??
-    null;
+    selectedVehicleSn != null
+      ? filteredVehicles.find((vehicle) => vehicle.sn === selectedVehicleSn) ?? null
+      : null;
 
   const historyVehicle = historyVehicleId
     ? vehicles.find((vehicle) => vehicle.id === historyVehicleId) ?? null
@@ -184,8 +194,19 @@ export default function DashboardPage() {
 
       <main id="overview" className="mx-auto max-w-[1900px] px-4 pb-6 pt-6 sm:px-6 lg:px-7 lg:pt-7">
           <section className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-            <div>
-              
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/history-tracking")}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-semibold tracking-wide shadow-[0_0_18px_rgba(34,211,238,0.12)] transition ${
+                  isDark
+                    ? "border-cyan-300/40 bg-gradient-to-r from-cyan-300/20 via-cyan-300/10 to-violet-400/15 text-cyan-50 ring-1 ring-cyan-300/25 hover:border-cyan-200/50 hover:from-cyan-300/28"
+                    : "border-cyan-300 bg-gradient-to-r from-cyan-100 via-cyan-50 to-violet-50 text-cyan-800 ring-1 ring-cyan-200 hover:from-cyan-150"
+                }`}
+              >
+                <History className="h-3.5 w-3.5" />
+                History Tracking
+              </button>
             </div>
             <div className="flex w-fit items-center gap-2 rounded-xl border border-white/[0.08] bg-[#08142e]/70 px-3 py-2 text-[11px] text-slate-300 shadow-[0_10px_30px_rgba(0,0,0,0.12)]">
               <Clock3 className="h-3.5 w-3.5 text-violet-200" />
@@ -268,10 +289,40 @@ export default function DashboardPage() {
                   )}
                 </label>
                 <div className="flex items-center gap-1.5">
-                  <span className={`mr-1 hidden items-center gap-1.5 text-[10px] sm:flex ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+                  <button
+                    type="button"
+                    onClick={() => setShowFilterDialog(true)}
+                    aria-pressed={Boolean(filteredApiVehicles)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-[10px] font-semibold transition sm:px-3 ${
+                      filteredApiVehicles
+                        ? isDark
+                          ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                          : "border-cyan-200 bg-cyan-50 text-cyan-700"
+                        : isDark
+                          ? "border-white/[0.09] bg-white/[0.03] text-slate-300 hover:border-white/[0.16]"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
                     <SlidersHorizontal className="h-3.5 w-3.5" />
                     Filter
-                  </span>
+                  </button>
+                  {filteredApiVehicles && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilteredApiVehicles(null);
+                        setFilterValues(null);
+                        setEnableGeofenceOnMap(false);
+                      }}
+                      className={`rounded-lg border px-2.5 py-2 text-[10px] font-medium transition ${
+                        isDark
+                          ? "border-white/[0.08] text-slate-400 hover:text-white"
+                          : "border-slate-200 text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Clear
+                    </button>
+                  )}
                   {filterOptions.map(([value, label, count]) => (
                     <button
                       key={value}
@@ -324,7 +375,7 @@ export default function DashboardPage() {
                     </thead>
                     <tbody>
                       {filteredVehicles.map((vehicle) => {
-                        const isSelected = selectedVehicle?.sn === vehicle.sn;
+                        const isSelected = selectedVehicleSn === vehicle.sn;
                         const [date, time] = vehicle.updatedAt.split(" ");
                         const typeLabel = vehicle.vehicleType
                           ? vehicle.vehicleType
@@ -345,7 +396,12 @@ export default function DashboardPage() {
                           >
                             <td className={`border-l-2 px-4 py-3.5 sm:px-5 ${isSelected ? "border-cyan-300" : "border-transparent"}`}>
                               <div className="flex items-center gap-3">
-                                <VehicleGlyph kind={vehicle.kind} color={vehicle.color} size="md" />
+                                <VehicleGlyph
+                                  kind={vehicle.kind}
+                                  status={vehicle.status}
+                                  color={vehicle.color}
+                                  size="md"
+                                />
                                 <div>
                                   <p className={`text-[11px] font-semibold ${isSelected ? "text-black-900" : "text-black-900"}`}>
                                     {vehicle.vehicle}
@@ -425,7 +481,9 @@ export default function DashboardPage() {
                         {mappedVehicles.length} locations
                       </span>
                     </div>
-                    <p className="mt-1 pl-5 text-[10px] text-slate-500">Lucknow &amp; surrounding region</p>
+                    <p className="mt-1 pl-5 text-[10px] text-slate-500">
+                      {enableGeofenceOnMap ? "Geofence visibility enabled" : "Lucknow & surrounding region"}
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -440,21 +498,10 @@ export default function DashboardPage() {
                     vehicles={mappedVehicles}
                     selectedVehicleSn={selectedVehicle?.sn ?? null}
                     onVehicleSelect={selectVehicle}
+                    focusZoom={16}
+                    showPopup={Boolean(selectedVehicle)}
+                    lockFitOnSelect
                   />
-                  {selectedVehicle && Number.isFinite(selectedVehicle.lat) && Number.isFinite(selectedVehicle.lng) && (
-                    <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-[500] rounded-xl border border-white/15 bg-[#07142f]/90 p-3 shadow-[0_12px_35px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-                      <div className="flex items-center gap-2.5">
-                        <VehicleGlyph kind={selectedVehicle.kind} color={selectedVehicle.color} size="sm" />
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-semibold text-white">{selectedVehicle.vehicle}</p>
-                          <p className="mt-1 truncate text-[9px] text-slate-400">{selectedVehicle.address}</p>
-                        </div>
-                        <span className="ml-auto hidden shrink-0 rounded-full border border-cyan-200/15 bg-cyan-200/[0.07] px-2 py-1 text-[9px] font-medium text-cyan-100 sm:block">
-                          Selected
-                        </span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </section>
             </div>
@@ -466,6 +513,21 @@ export default function DashboardPage() {
               vehicleName={historyVehicle.vehicle || "Selected vehicle"}
               isDark={isDark}
               onClose={() => setHistoryVehicleId(null)}
+            />
+          )}
+
+          {showFilterDialog && (
+            <DashboardFilterDialog
+              isDark={isDark}
+              initialValues={filterValues ?? undefined}
+              onClose={() => setShowFilterDialog(false)}
+              onApplied={({ vehicles: nextVehicles, values }) => {
+                setFilteredApiVehicles(nextVehicles);
+                setFilterValues(values);
+                setEnableGeofenceOnMap(values.enableGeofenceOnMap);
+                setSelectedVehicleSn(null);
+                setHistoryVehicleId(null);
+              }}
             />
           )}
 

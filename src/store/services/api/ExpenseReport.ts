@@ -24,17 +24,39 @@ const asPartyName = (value: NestedParty): string => {
   return (value.name ?? value.companyName ?? "").trim();
 };
 
+const asVehicleNo = (value: NestedParty, fallback?: string): string => {
+  if (fallback?.trim()) return fallback.trim();
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  return (
+    value.vehicle?.trim() ||
+    value.vehicleNo?.trim() ||
+    value.vehicleNickname?.trim() ||
+    value.name?.trim() ||
+    ""
+  );
+};
+
+const asDriverName = (value: NestedParty, fallback?: string): string => {
+  if (fallback?.trim()) return fallback.trim();
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  return (value.name ?? value.companyName ?? "").trim();
+};
+
 const asExpenseTypeName = (value: NestedExpenseType): string => {
   if (!value) return "";
   if (typeof value === "string") return value;
   return (value.expenseName ?? value.name ?? "").trim();
 };
 
-const asNumber = (value: number | string | undefined): number | undefined => {
+const asNumber = (value: number | string | null | undefined): number | undefined => {
   if (value === undefined || value === null || value === "") return undefined;
   const num = Number(value);
   return Number.isFinite(num) ? num : undefined;
 };
+
+const asText = (value: string | null | undefined): string => value?.trim() ?? "";
 
 const normalizeExpense = (record: ExpenseApiRecord): Expense => {
   const amount = asNumber(record.amount) ?? 0;
@@ -48,22 +70,22 @@ const normalizeExpense = (record: ExpenseApiRecord): Expense => {
     expenseFor: record.expenseFor?.trim() || undefined,
     vehicle: asId(record.vehicle) || undefined,
     driver: asId(record.driver) || undefined,
-    expenseName: record.expenseName?.trim() ?? "",
+    expenseName: asText(record.expenseName),
     expenseType: asId(record.expenseType),
     expenseTypeName: asExpenseTypeName(record.expenseType),
     amount,
     expenseDate: record.expenseDate ?? "",
     odometer: asNumber(record.odometer),
     engineHours: asNumber(record.engineHours),
-    description: record.description ?? "",
+    description: asText(record.description),
     quantity: asNumber(record.quantity),
-    supplier: record.supplier ?? "",
-    buyer: record.buyer ?? "",
-    vehicleNo: record.vehicleNo ?? "",
-    driverName: record.driverName ?? "",
-    tripName: record.tripName ?? "",
-    createdBy: record.createdBy ?? "",
-    role: record.role ?? "",
+    supplier: asText(record.supplier),
+    buyer: asText(record.buyer),
+    vehicleNo: asVehicleNo(record.vehicle, record.vehicleNo),
+    driverName: asDriverName(record.driver, record.driverName),
+    tripName: asText(record.tripName),
+    createdBy: asText(record.createdBy),
+    role: asText(record.role),
     status: record.status ?? undefined,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,

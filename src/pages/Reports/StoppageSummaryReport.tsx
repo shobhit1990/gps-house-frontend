@@ -1,33 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Play, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-
-type StoppageRow = {
-	id: string;
-	vehicle: string;
-	totalDistance: number;
-	runningMinutes: number;
-	idleMinutes: number;
-	stopMinutes: number;
-	stops: number;
-	avgSpeed: number;
-	maxSpeed: number;
-};
+import type { StoppageSummary } from "@/interfaces/StoppageSummaryReport";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
+import { useLazyGetStoppageSummaryReportQuery } from "@/store/services/api/StoppageSummaryReport";
 
 type ColumnKey = "sn" | "vehicle" | "totalDistance" | "running" | "idle" | "stop" | "stops" | "avgSpeed" | "maxSpeed" | "playback";
 
 type MenuKind = "client" | "transporter" | "vehicle" | "duration";
-
-type AppliedFilters = {
-	clients: string[];
-	transporters: string[];
-	vehicles: string[];
-	duration: string;
-};
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -42,17 +30,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "playback", label: "Playback" },
 ];
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-const durations = ["0 minute", "5 minute", "10 minute", "30 minute", "60 minute", "120 minute"];
-
-const stoppageLog: StoppageRow[] = [
-	{ id: "UP32HN8013", vehicle: "UP32HN8013", totalDistance: 86.4, runningMinutes: 310, idleMinutes: 80, stopMinutes: 45, stops: 6, avgSpeed: 42, maxSpeed: 78 },
-	{ id: "UP45AC5536", vehicle: "UP45AC5536", totalDistance: 22.1, runningMinutes: 65, idleMinutes: 12, stopMinutes: 8, stops: 2, avgSpeed: 36, maxSpeed: 61 },
-	{ id: "UP32LU6158", vehicle: "UP32LU6158", totalDistance: 140.2, runningMinutes: 400, idleMinutes: 120, stopMinutes: 130, stops: 4, avgSpeed: 48, maxSpeed: 92 },
-	{ id: "UP45AC6533", vehicle: "UP45AC6533", totalDistance: 54, runningMinutes: 195, idleMinutes: 40, stopMinutes: 25, stops: 3, avgSpeed: 39, maxSpeed: 70 },
-	{ id: "UPHK8143", vehicle: "UPHK8143", totalDistance: 98.7, runningMinutes: 290, idleMinutes: 65, stopMinutes: 70, stops: 5, avgSpeed: 44, maxSpeed: 81 },
-	{ id: "UP32ER2711", vehicle: "UP32ER2711", totalDistance: 12, runningMinutes: 40, idleMinutes: 5, stopMinutes: 0, stops: 0, avgSpeed: 28, maxSpeed: 45 },
-];
+const durations = ["0 minute", "5 minute", "10 minute", "15 minute", "30 minute", "60 minute", "120 minute"];
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -66,7 +44,16 @@ const todayRange = () => {
 	return { from: toInput(now, false), to: toInput(now, true) };
 };
 
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
+/** datetime-local (YYYY-MM-DDTHH:mm) → API format DD/MM/YYYY HH:mm */
+const toApiDateTime = (value: string) => {
+	const [datePart, timePart = "00:00"] = value.split("T");
+	const [year, month, day] = datePart.split("-");
+	if (!year || !month || !day) return value;
+	return `${day}/${month}/${year} ${timePart}`;
+};
+
+const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
+	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
 
 const durationMinutes = (label: string) => {
 	const minutes = Number(label.split(" ")[0]);
@@ -85,9 +72,9 @@ const formatDistance = (value: number) => (Number.isInteger(value) ? String(valu
 
 export default function StoppageSummaryReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const [fetchStoppageSummary, { isFetching }] = useLazyGetStoppageSummaryReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -96,7 +83,7 @@ export default function StoppageSummaryReport() {
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
 	const durationRef = useRef<HTMLDivElement>(null);
-	const [rows, setRows] = useState<StoppageRow[]>([]);
+	const [rows, setRows] = useState<StoppageSummary[]>([]);
 	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -108,7 +95,6 @@ export default function StoppageSummaryReport() {
 	const [duration, setDuration] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], duration: "" });
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
@@ -117,21 +103,31 @@ export default function StoppageSummaryReport() {
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
+		if (!searched) return [];
 		const query = search.trim().toLowerCase();
-		const minimum = durationMinutes(applied.duration);
-		return rows.filter((row) => {
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicle)) return false;
-			if (minimum > 0 && row.stopMinutes < minimum) return false;
-			if (!query) return true;
-			return [row.vehicle, formatDistance(row.totalDistance), formatMinutes(row.runningMinutes), formatMinutes(row.idleMinutes), formatMinutes(row.stopMinutes), String(row.stops), String(row.avgSpeed), String(row.maxSpeed)].join(" ").toLowerCase().includes(query);
-		});
-	}, [applied, rows, search]);
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[
+				row.vehicle,
+				formatDistance(row.totalDistance),
+				formatMinutes(row.runningMinutes),
+				formatMinutes(row.idleMinutes),
+				formatMinutes(row.stopMinutes),
+				String(row.stops),
+				String(row.avgSpeed),
+				String(row.maxSpeed),
+			]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search, searched]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+	const visibleClients = clientMaster.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const visibleTransporters = transporterMaster.filter((option) => option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
+	const visibleVehicles = vehicleMaster.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 	const visibleDurations = durations.filter((name) => name.toLowerCase().includes(durationQuery.trim().toLowerCase()));
 
 	useEffect(() => {
@@ -156,13 +152,51 @@ export default function StoppageSummaryReport() {
 		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
 	};
 
-	const applyFilters = () => {
-		const ready = selectedClients.length > 0 && selectedTransporters.length > 0 && selectedVehicles.length > 0;
-		setRows(ready ? stoppageLog.filter((row) => selectedVehicles.includes(row.vehicle)) : []);
-		setApplied({ clients: selectedClients, transporters: selectedTransporters, vehicles: selectedVehicles, duration });
-		setSearched(true);
-		setOpenMenu(null);
-		setPage(0);
+	const applyFilters = async () => {
+		if (selectedClients.length !== 1 || selectedVehicles.length === 0) {
+			toast.error("Select one client and at least one vehicle.");
+			return;
+		}
+		if (!duration) {
+			toast.error("Select duration.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
+
+		const client = selectedClients[0];
+		const durationValue = durationMinutes(duration);
+		const startDate = toApiDateTime(from);
+		const endDate = toApiDateTime(to);
+
+		try {
+			const vehicleNameById = new Map(vehicleMaster.map((option) => [option.id, option.name]));
+			const batches = await Promise.all(
+				selectedVehicles.map(async (vehicle) => {
+					const data = await fetchStoppageSummary({
+						client,
+						vehicle,
+						duration: durationValue,
+						startDate,
+						endDate,
+					}).unwrap();
+					const vehicleName = vehicleNameById.get(vehicle) ?? "";
+					return data.map((row, index) => ({
+						...row,
+						id: row.id || `${vehicle}-${index}`,
+						vehicle: row.vehicle || vehicleName,
+					}));
+				}),
+			);
+			setRows(batches.flat());
+			setSearched(true);
+			setOpenMenu(null);
+			setPage(0);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load stoppage summary report."));
+		}
 	};
 
 	const refresh = () => {
@@ -176,7 +210,6 @@ export default function StoppageSummaryReport() {
 		setDuration("");
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [], duration: "" });
 		setClientQuery("");
 		setTransporterQuery("");
 		setVehicleQuery("");
@@ -196,13 +229,13 @@ export default function StoppageSummaryReport() {
 		emptyLabel: string,
 		selected: string[],
 		setSelected: (next: string[]) => void,
-		options: string[],
+		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -211,7 +244,7 @@ export default function StoppageSummaryReport() {
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
 					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
+						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
 							Select All
 						</button>
 						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
@@ -219,11 +252,11 @@ export default function StoppageSummaryReport() {
 						</button>
 					</div>
 					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
+						{options.map((option) => (
+							<li key={option.id}>
 								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
+									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
+									{option.name}
 								</label>
 							</li>
 						))}
@@ -234,9 +267,9 @@ export default function StoppageSummaryReport() {
 		</div>
 	);
 
-	const cell = (key: ColumnKey, row: StoppageRow, serial: number) => {
+	const cell = (key: ColumnKey, row: StoppageSummary, serial: number) => {
 		if (key === "sn") return String(serial);
-		if (key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicle}</span>;
+		if (key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicle || "—"}</span>;
 		if (key === "totalDistance") return formatDistance(row.totalDistance);
 		if (key === "running") return formatMinutes(row.runningMinutes);
 		if (key === "idle") return formatMinutes(row.idleMinutes);
@@ -269,7 +302,7 @@ export default function StoppageSummaryReport() {
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{searched ? filteredRows.length : 0} reports</p>
 					</div>
 					<button type="button" onClick={refresh} aria-label="Refresh stoppage summary" title="Refresh stoppage summary" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -306,8 +339,8 @@ export default function StoppageSummaryReport() {
 							<span className="text-slate-500">-</span>
 							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 						</div>
-						<button type="button" onClick={applyFilters} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							Search
+						<button type="button" onClick={() => void applyFilters()} disabled={isFetching} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							{isFetching ? "Searching..." : "Search"}
 						</button>
 					</div>
 				</section>
@@ -358,13 +391,13 @@ export default function StoppageSummaryReport() {
 							</thead>
 							<tbody>
 								{pageRows.map((row, index) => (
-									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+									<tr key={`${row.id}-${index}`} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row, safePage * pageSize + index + 1)}</td>)}
 									</tr>
 								))}
 								{pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">No data available</td>
+										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">{isFetching ? "Loading..." : "No data available"}</td>
 									</tr>
 								)}
 							</tbody>

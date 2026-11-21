@@ -4,7 +4,7 @@ import { autoTable } from "jspdf-autotable";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -62,6 +62,7 @@ type ColumnKey =
 	| "showPassword"
 	| "resetPassword"
 	| "address"
+	| "edit"
 	| "delete";
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -88,12 +89,13 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "showPassword", label: "Show Password" },
 	{ key: "resetPassword", label: "Reset Password" },
 	{ key: "address", label: "Address" },
+	{ key: "edit", label: "Edit" },
 	{ key: "delete", label: "Delete" },
 ];
 
 const exportKeys: ColumnKey[] = columns
 	.map((column) => column.key)
-	.filter((key) => key !== "showPassword" && key !== "resetPassword" && key !== "delete");
+	.filter((key) => key !== "showPassword" && key !== "resetPassword" && key !== "edit" && key !== "delete");
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -178,6 +180,7 @@ export default function Transporter() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editingTransporterId, setEditingTransporterId] = useState<string | undefined>();
 	const [visiblePasswords, setVisiblePasswords] = useState<string[]>([]);
 
 	const clients = [...new Set(rows.map((row) => row.client).filter(Boolean))];
@@ -195,8 +198,23 @@ export default function Transporter() {
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const pageRows = filteredRows.slice(page * pageSize, (page + 1) * pageSize);
 
-	const saveTransporter = () => {
+	const closeTransporterDialog = () => {
 		setShowAddDialog(false);
+		setEditingTransporterId(undefined);
+	};
+
+	const openAddTransporter = () => {
+		setEditingTransporterId(undefined);
+		setShowAddDialog(true);
+	};
+
+	const openEditTransporter = (row: TransporterRecord) => {
+		setEditingTransporterId(row.id);
+		setShowAddDialog(true);
+	};
+
+	const saveTransporter = () => {
+		closeTransporterDialog();
 	};
 
 	const toggleColumn = (key: ColumnKey) => {
@@ -217,7 +235,7 @@ export default function Transporter() {
 
 	const exportValue = (row: TransporterRecord, key: ColumnKey) => {
 		if (key === "sn") return String(row.sn);
-		if (key === "showPassword" || key === "resetPassword" || key === "delete") return "";
+		if (key === "showPassword" || key === "resetPassword" || key === "edit" || key === "delete") return "";
 		return String(row[key as keyof TransporterRecord] ?? "");
 	};
 
@@ -250,6 +268,19 @@ export default function Transporter() {
 					className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
 				>
 					Reset
+				</button>
+			);
+		}
+		if (key === "edit") {
+			return (
+				<button
+					type="button"
+					title="Edit transporter"
+					aria-label={`Edit ${row.username}`}
+					onClick={() => openEditTransporter(row)}
+					className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}
+				>
+					<Pencil className="h-3.5 w-3.5" />
 				</button>
 			);
 		}
@@ -382,7 +413,7 @@ export default function Transporter() {
 							<button type="button" onClick={downloadExcel} className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-medium transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/20" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-300"}`}>
 								<FileSpreadsheet className="h-3.5 w-3.5" /> Download Excel
 							</button>
-							<button type="button" onClick={() => setShowAddDialog(true)} className={`flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/35 bg-cyan-300/[0.16] text-cyan-50 hover:bg-cyan-300/[0.24]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
+							<button type="button" onClick={openAddTransporter} className={`flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/35 bg-cyan-300/[0.16] text-cyan-50 hover:bg-cyan-300/[0.24]" : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"}`}>
 								<Plus className="h-3.5 w-3.5" /> Add
 							</button>
 						</div>
@@ -418,7 +449,12 @@ export default function Transporter() {
 			</main>
 
 			{showAddDialog && (
-				<AddTransporterDialog isDark={isDark} onClose={() => setShowAddDialog(false)} onSave={saveTransporter} />
+				<AddTransporterDialog
+					isDark={isDark}
+					transporterId={editingTransporterId}
+					onClose={closeTransporterDialog}
+					onSave={saveTransporter}
+				/>
 			)}
 		</div>
 	);
