@@ -17,6 +17,8 @@ export interface ClientMaster extends MasterRecordBase {
   companyName?: string;
   username?: string;
   userName?: string;
+  owner_name?: string;
+  ownerName?: string;
 }
 
 export interface TransporterMaster extends MasterRecordBase {
@@ -39,6 +41,8 @@ export interface VehicleMaster extends MasterRecordBase {
   vehicle?: string;
   vehicleNo?: string;
   vehicleName?: string;
+  client?: string | { id?: string | number; externalId?: string; name?: string };
+  transporter?: string | { id?: string | number; externalId?: string; name?: string };
 }
 
 export interface StateMaster extends MasterRecordBase {
@@ -67,4 +71,10 @@ export interface MasterOption {
   id: string;
   externalId?: string;
   name: string;
+  /** Vehicle master: linked client UUID when API nests `client`. */
+  clientId?: string;
+  /** Vehicle master: linked transporter UUID when API nests `transporter`. */
+  transporterId?: string;
+  /** Transporter master: raw `client` field (often client name, sometimes UUID). */
+  clientRef?: string;
 }

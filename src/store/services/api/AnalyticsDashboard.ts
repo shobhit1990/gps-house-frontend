@@ -61,13 +61,29 @@ const parseApiDate = (raw: string): Date | null => {
     const date = new Date(year, month, day);
     return Number.isNaN(date.getTime()) ? null : date;
   }
+  // DD-MM-YYYY
+  const dashed = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  if (dashed) {
+    const day = Number(dashed[1]);
+    const month = Number(dashed[2]) - 1;
+    const year = Number(dashed[3]);
+    const date = new Date(year, month, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  // YYYY-MM-DD (avoid UTC shift from `new Date("YYYY-MM-DD")`)
+  const isoDay = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDay) {
+    const date = new Date(Number(isoDay[1]), Number(isoDay[2]) - 1, Number(isoDay[3]));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   const iso = new Date(text);
   return Number.isNaN(iso.getTime()) ? null : iso;
 };
 
+/** Always DD/MM/YYYY so chart axis matches the filter range. */
 const formatDayLabel = (raw: string) => {
   const date = parseApiDate(raw);
-  if (date) return date.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  if (date) return toDayKey(date);
   const text = raw.trim();
   return text || "—";
 };
@@ -150,7 +166,7 @@ const normalizeAnalytics = (
     toHighlight(highlights.longestDistance ?? data.longestDistance, "distance", true) ??
     (chartData.length
       ? {
-          vehicle: "Selected vehicle",
+          vehicle: "",
           value: formatKm(Math.max(...chartData.map((row) => row.mileage))),
           note: "Peak day",
           positive: true,
@@ -160,7 +176,7 @@ const normalizeAnalytics = (
     toHighlight(highlights.shortestDistance ?? data.shortestDistance, "distance", false) ??
     (chartData.length
       ? {
-          vehicle: "Selected vehicle",
+          vehicle: "",
           value: formatKm(Math.min(...chartData.map((row) => row.mileage))),
           note: "Lowest day",
           positive: false,
@@ -170,7 +186,7 @@ const normalizeAnalytics = (
     toHighlight(highlights.longestDuration ?? data.longestDuration, "duration", true) ??
     (chartData.length
       ? {
-          vehicle: "Selected vehicle",
+          vehicle: "",
           value: formatDurationHours(Math.max(...chartData.map((row) => row.duration))),
           note: "Peak day",
           positive: true,
@@ -180,7 +196,7 @@ const normalizeAnalytics = (
     toHighlight(highlights.shortestDuration ?? data.shortestDuration, "duration", false) ??
     (chartData.length
       ? {
-          vehicle: "Selected vehicle",
+          vehicle: "",
           value: formatDurationHours(Math.min(...chartData.map((row) => row.duration))),
           note: "Lowest day",
           positive: false,

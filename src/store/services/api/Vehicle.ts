@@ -118,11 +118,12 @@ const refName = (value: RefLike): string => {
   );
 };
 
-const formatReportDate = (value?: string, withTime = false) => {
-  if (!value?.trim()) return "";
-  const date = new Date(value);
+const formatReportDate = (value?: string | number | null, withTime = false) => {
+  const text = value == null ? "" : String(value).trim();
+  if (!text) return "";
+  const date = new Date(text);
   if (Number.isNaN(date.getTime())) {
-    return value === "--" ? "--" : value;
+    return text === "--" ? "--" : text;
   }
   const day = `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
   if (!withTime) return day;

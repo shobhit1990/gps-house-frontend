@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, RotateCcw, Search, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleDetailForm, type VehicleDetailFormValues } from "@/components/VehicleForm/AddVehicleDetailForm";
 import type { ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
@@ -13,6 +13,8 @@ import { useCreateServiceMaintenanceMutation, useGetServiceMaintenancesQuery } f
 
 type VehicleDetailRecord = {
 	id: number;
+	client: string;
+	transporter: string;
 	vehicleNo: string;
 	ownerName: string;
 	ownedBy: string;
@@ -42,6 +44,8 @@ const columns: { key: ColumnKey; label: string }[] = [
 const seedRows: VehicleDetailRecord[] = [
 	{
 		id: 1,
+		client: "",
+		transporter: "",
 		vehicleNo: "UP32ER2711",
 		ownerName: "",
 		ownedBy: "",
@@ -54,6 +58,8 @@ const seedRows: VehicleDetailRecord[] = [
 	},
 	{
 		id: 2,
+		client: "",
+		transporter: "",
 		vehicleNo: "UP45AC5536",
 		ownerName: "neeraj",
 		ownedBy: "market",
@@ -66,6 +72,8 @@ const seedRows: VehicleDetailRecord[] = [
 	},
 	{
 		id: 3,
+		client: "",
+		transporter: "",
 		vehicleNo: "UP32HN8013",
 		ownerName: "neeraj",
 		ownedBy: "market",
@@ -77,6 +85,20 @@ const seedRows: VehicleDetailRecord[] = [
 		purchaseDate: "2026-10-21",
 	},
 ];
+
+const toFormValues = (row: VehicleDetailRecord): VehicleDetailFormValues => ({
+	client: row.client,
+	transporter: row.transporter,
+	vehicleNo: row.vehicleNo,
+	ownerName: row.ownerName,
+	ownedBy: row.ownedBy,
+	vehicleBrand: row.vehicleBrand,
+	vehicleModel: row.vehicleModel,
+	vehicleBody: row.vehicleBody,
+	capacity: String(row.capacity ?? 0),
+	manufactureDate: row.manufactureDate,
+	purchaseDate: row.purchaseDate,
+});
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -144,6 +166,8 @@ export default function VehicleDetail() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editingRow, setEditingRow] = useState<VehicleDetailRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<VehicleDetailRecord | null>(null);
 	const [serviceRow, setServiceRow] = useState<VehicleDetailRecord | null>(null);
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
 	const { data: serviceData = [] } = useGetServiceMaintenancesQuery();
@@ -203,24 +227,52 @@ export default function VehicleDetail() {
 		setPage(0);
 	};
 
+	const closeForm = () => {
+		setShowAddDialog(false);
+		setEditingRow(null);
+	};
+
+	const openEdit = (row: VehicleDetailRecord) => {
+		setEditingRow(row);
+		setShowAddDialog(true);
+	};
+
 	const saveVehicle = (values: VehicleDetailFormValues) => {
 		const capacity = Number(values.capacity);
-		setRows((current) => [
-			...current,
-			{
-				id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
-				vehicleNo: values.vehicleNo,
-				ownerName: values.ownerName,
-				ownedBy: values.ownedBy,
-				vehicleBrand: values.vehicleBrand,
-				vehicleModel: values.vehicleModel,
-				vehicleBody: values.vehicleBody,
-				capacity: Number.isFinite(capacity) && capacity > 0 ? capacity : 0,
-				manufactureDate: values.manufactureDate,
-				purchaseDate: values.purchaseDate,
-			},
-		]);
-		setShowAddDialog(false);
+		const next: Omit<VehicleDetailRecord, "id"> = {
+			client: values.client,
+			transporter: values.transporter,
+			vehicleNo: values.vehicleNo,
+			ownerName: values.ownerName,
+			ownedBy: values.ownedBy,
+			vehicleBrand: values.vehicleBrand,
+			vehicleModel: values.vehicleModel,
+			vehicleBody: values.vehicleBody,
+			capacity: Number.isFinite(capacity) && capacity > 0 ? capacity : 0,
+			manufactureDate: values.manufactureDate,
+			purchaseDate: values.purchaseDate,
+		};
+		if (editingRow) {
+			setRows((current) => current.map((row) => (row.id === editingRow.id ? { ...row, ...next } : row)));
+			toast.success(`${values.vehicleNo} updated.`);
+		} else {
+			setRows((current) => [
+				...current,
+				{
+					id: current.reduce((max, row) => Math.max(max, row.id), 0) + 1,
+					...next,
+				},
+			]);
+			toast.success(`${values.vehicleNo} added.`);
+		}
+		closeForm();
+	};
+
+	const confirmDelete = () => {
+		if (!pendingDelete) return;
+		setRows((current) => current.filter((row) => row.id !== pendingDelete.id));
+		toast.success(`${pendingDelete.vehicleNo} deleted.`);
+		setPendingDelete(null);
 	};
 
 	const saveService = async (values: ServiceMaintenanceValues) => {
@@ -251,7 +303,7 @@ export default function VehicleDetail() {
 				allowVisibilityToDriver: values.visibleToDriver,
 			}).unwrap();
 			toast.success("Service saved.");
-			setShowAddDialog(false);
+			closeForm();
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not save the service."));
 		}
@@ -322,19 +374,27 @@ export default function VehicleDetail() {
 									))}
 								</div>
 							</details>
-							<button type="button" onClick={() => setShowAddDialog(true)} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							<button
+								type="button"
+								onClick={() => {
+									setEditingRow(null);
+									setShowAddDialog(true);
+								}}
+								className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+							>
 								<Plus className="h-3.5 w-3.5" /> Add
 							</button>
 						</div>
 					</div>
 
 					<div className="overflow-x-auto">
-						<table className="w-full min-w-[1280px] border-collapse text-left">
+						<table className="w-full min-w-[1360px] border-collapse text-left">
 							<thead>
 								<tr className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
 									{visibleColumns.map((column) => (
 										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>
 									))}
+									<th scope="col" className="w-24 px-3 py-3"><span className="sr-only">Actions</span></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -353,11 +413,33 @@ export default function VehicleDetail() {
 												)}
 											</td>
 										))}
+										<td className="px-3 py-3">
+											<div className="flex items-center gap-1">
+												<button
+													type="button"
+													aria-label={`Edit ${row.vehicleNo}`}
+													title="Edit"
+													onClick={() => openEdit(row)}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+												>
+													<Pencil className="h-3.5 w-3.5" />
+												</button>
+												<button
+													type="button"
+													aria-label={`Delete ${row.vehicleNo}`}
+													title="Delete"
+													onClick={() => setPendingDelete(row)}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
+												>
+													<Trash2 className="h-3.5 w-3.5" />
+												</button>
+											</div>
+										</td>
 									</tr>
 								))}
 								{pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
+										<td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No vehicles match these filters</p>
 											<p className="mt-1 text-xs text-slate-500">Try clearing a filter or changing your search.</p>
 										</td>
@@ -385,7 +467,12 @@ export default function VehicleDetail() {
 			</main>
 
 			{showAddDialog && (
-				<AddVehicleDetailForm onClose={() => setShowAddDialog(false)} onSubmit={saveVehicle} onSaveService={saveService} />
+				<AddVehicleDetailForm
+					initialValues={editingRow ? toFormValues(editingRow) : null}
+					onClose={closeForm}
+					onSubmit={saveVehicle}
+					onSaveService={saveService}
+				/>
 			)}
 
 			{serviceRow && (
@@ -394,6 +481,46 @@ export default function VehicleDetail() {
 					records={services.filter((record) => record.vehicleNo === serviceRow.vehicleNo)}
 					onClose={() => setServiceRow(null)}
 				/>
+			)}
+
+			{pendingDelete && (
+				<div
+					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget) setPendingDelete(null);
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="vehicle-detail-delete-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+					>
+						<h3 id="vehicle-detail-delete-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+							Delete vehicle detail?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							This will remove{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>{pendingDelete.vehicleNo}</strong> from the list.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(null)}
+								className={`h-9 rounded-lg border px-4 text-[12px] ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={confirmDelete}
+								className={`h-9 rounded-lg border px-4 text-[12px] font-semibold ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
+							>
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
 			)}
 		</div>
 	);

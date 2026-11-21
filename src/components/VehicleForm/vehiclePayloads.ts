@@ -3,16 +3,29 @@ import type { CreateTransporterRequest } from "@/interfaces/Transporter";
 import type { CreateVehicleRequest, UpdateVehicleRequest, Vehicle, VehicleSaveType } from "@/interfaces/Vehicle";
 import type { CreateDeviceRequest } from "@/interfaces/AddDevice";
 import { Status } from "@/enums/Status";
+import { VehicleStatus } from "@/enums/VehicleStatus";
 
 type FormValues = Record<string, string>;
 
-/** Trimmed text, or undefined when the field was left empty. */
-const text = (value?: string) => value?.trim() || undefined;
-const number = (value?: string) => (value?.trim() ? Number(value) : undefined);
+/** Trimmed text, or undefined when the field was left empty. Coerces numbers (e.g. phone). */
+const text = (value?: string | number | null) => {
+    if (value == null || value === "") return undefined;
+    return String(value).trim() || undefined;
+};
+const number = (value?: string | number | null) => {
+    if (value == null || value === "") return undefined;
+    const trimmed = String(value).trim();
+    return trimmed ? Number(trimmed) : undefined;
+};
 const flag = (value?: string) => value === "true";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
     value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const stringOrEmpty = (value: unknown): string => {
+    if (value == null) return "";
+    return String(value);
+};
 
 const refId = (value: unknown): string => {
     if (typeof value === "string" || typeof value === "number") return String(value);
@@ -22,23 +35,36 @@ const refId = (value: unknown): string => {
     return typeof id === "string" || typeof id === "number" ? String(id) : "";
 };
 
-const dateInput = (value: unknown): string => {
-    if (typeof value !== "string" || !value.trim()) return "";
-    return value.slice(0, 10);
+const refLabel = (value: unknown): string => {
+    if (typeof value === "string" || typeof value === "number") return String(value).trim();
+    const record = asRecord(value);
+    if (!record) return "";
+    const owner = asRecord(record.owner);
+    return (
+        stringOrEmpty(record.owner_name).trim() ||
+        stringOrEmpty(owner?.ownerName).trim() ||
+        stringOrEmpty(record.userName).trim() ||
+        stringOrEmpty(record.username).trim() ||
+        stringOrEmpty(record.name).trim() ||
+        stringOrEmpty(record.companyName).trim() ||
+        stringOrEmpty(record.company).trim() ||
+        refId(value)
+    );
 };
 
-const stringOrEmpty = (value: unknown): string => {
-    if (value == null) return "";
-    return String(value);
+const dateInput = (value: unknown): string => {
+    if (value == null || value === "") return "";
+    const text = String(value).trim();
+    if (!text) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return "";
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${date.getFullYear()}-${month}-${day}`;
 };
 
 const boolFlag = (value: unknown): string => (value === true ? "true" : "false");
-
-const titleCase = (value: unknown): string => {
-    const textValue = stringOrEmpty(value).trim();
-    if (!textValue) return "";
-    return textValue.charAt(0).toUpperCase() + textValue.slice(1);
-};
 
 /** Maps a getById / list vehicle record into Add Vehicle form field values. */
 export function vehicleToFormValues(vehicle: Vehicle): FormValues {
@@ -54,8 +80,11 @@ export function vehicleToFormValues(vehicle: Vehicle): FormValues {
         idleTimeHour: stringOrEmpty(record.hours),
         idleTimeMinute: stringOrEmpty(record.minutes),
         vehicleClient: refId(record.client),
+        vehicleClientLabel: refLabel(record.client),
         vehicleDevice: refId(record.device),
+        vehicleDeviceLabel: refLabel(record.device) || stringOrEmpty(device?.imei),
         vehicleTransporter: refId(record.transporter),
+        vehicleTransporterLabel: refLabel(record.transporter),
         subscriptionStart: dateInput(record.subscriptionStartDate),
         subscriptionDue: dateInput(record.subscriptionDueDate),
         fuelType: stringOrEmpty(record.fuelType),
@@ -66,13 +95,18 @@ export function vehicleToFormValues(vehicle: Vehicle): FormValues {
         remark2: stringOrEmpty(record.remark2),
         parkingViolationAlarm: boolFlag(record.parkingViolationAlarmOnIgnitionOn),
         ownerName: stringOrEmpty(record.ownerName),
-        ownedBy: titleCase(record.ownedBy),
+        // Keep API enum values lowercase (market | example).
+        ownedBy: stringOrEmpty(record.ownedBy).toLowerCase(),
         vehicleBrand: stringOrEmpty(record.vehicleBrand),
         vehicleModel: stringOrEmpty(record.vehicleModel),
         vehicleBody: stringOrEmpty(record.vehicleBody),
         capacity: stringOrEmpty(record.capacity ?? "0"),
         manufactureDate: dateInput(record.manufactureDate),
         purchaseDate: dateInput(record.purchaseDate),
+        status:
+            String(record.status ?? "").toLowerCase() === VehicleStatus.INACTIVE
+                ? VehicleStatus.INACTIVE
+                : VehicleStatus.ACTIVE,
         imei: stringOrEmpty(device?.imei),
         sim: stringOrEmpty(device?.simNumber),
         simOperator: stringOrEmpty(device?.simOperator),
@@ -170,14 +204,17 @@ export function buildVehiclePayload(values: FormValues): CreateVehicleRequest {
         remark2: text(values.remark2),
         parkingViolationAlarmOnIgnitionOn: flag(values.parkingViolationAlarm),
         ownerName: text(values.ownerName),
-        ownedBy: text(values.ownedBy),
+        ownedBy: text(values.ownedBy)?.toLowerCase(),
         vehicleBrand: text(values.vehicleBrand),
         vehicleModel: text(values.vehicleModel),
         vehicleBody: text(values.vehicleBody),
         capacity: number(values.capacity),
         manufactureDate: text(values.manufactureDate),
         purchaseDate: text(values.purchaseDate),
-        status: Status.ACTIVE,
+        status:
+            String(values.status ?? "").toLowerCase() === VehicleStatus.INACTIVE
+                ? Status.INACTIVE
+                : Status.ACTIVE,
         reason: "New vehicle added",
     };
 }

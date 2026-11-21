@@ -54,7 +54,7 @@ const toRecord = (client: ClientEntity): ClientRecord => ({
 	id: client.externalId,
 	username: client.userName ?? "",
 	name: client.name ?? "",
-	phone: client.phone ?? "",
+	phone: client.phone != null ? String(client.phone) : "",
 	vehicleCount: client.vehicleCount ?? 0,
 	added: client.createdAt?.slice(0, 10) ?? "",
 	inactiveDate: client.inactiveDate?.slice(0, 10) ?? "",

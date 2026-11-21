@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
@@ -38,11 +38,35 @@ import {
 } from "@/store/services/api/Master";
 import { useLazyGetAnalyticsDashboardQuery } from "@/store/services/api/AnalyticsDashboard";
 
+type FilterMenu = "client" | "transporter" | "vehicle" | null;
+
 /** YYYY-MM-DD → DD/MM/YYYY HH:mm (from 00:00, to 23:59). */
 const toApiDateTime = (date: string, endOfDay = false) => {
 	const [year, month, day] = date.split("-");
 	if (!year || !month || !day) return "";
 	return `${day}/${month}/${year} ${endOfDay ? "23:59" : "00:00"}`;
+};
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** Local calendar day as DD/MM/YYYY. */
+const formatDayKey = (date: Date) =>
+	`${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`;
+
+/** Every day in the filter range (YYYY-MM-DD from/to) as DD/MM/YYYY — max 62 days. */
+const daysInFilterRange = (fromYmd: string, toYmd: string): string[] => {
+	const [fy, fm, fd] = fromYmd.split("-").map(Number);
+	const [ty, tm, td] = toYmd.split("-").map(Number);
+	if (![fy, fm, fd, ty, tm, td].every((n) => Number.isFinite(n))) return [];
+	const cursor = new Date(fy, fm - 1, fd);
+	const last = new Date(ty, tm - 1, td);
+	if (cursor > last) return [];
+	const days: string[] = [];
+	while (cursor <= last && days.length < 62) {
+		days.push(formatDayKey(cursor));
+		cursor.setDate(cursor.getDate() + 1);
+	}
+	return days;
 };
 
 const emptyAnalytics = (): AnalyticsDashboardResult => ({
@@ -65,7 +89,21 @@ const panelClass = (isDark: boolean) =>
 			: "border-slate-200/80 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.06)]"
 	}`;
 
-function MetricCard({
+/**
+ * Nice axis steps like 0, 25, 50… km or 0, 1, 2… hr.
+ * `minMax` keeps a readable scale even when daily values are tiny (e.g. 1 km).
+ */
+const buildStepTicks = (maxValue: number, step: number, minMax: number) => {
+	const safeStep = step > 0 ? step : 1;
+	const ceil = Math.max(
+		minMax,
+		safeStep,
+		Math.ceil(Math.max(0, maxValue) / safeStep) * safeStep,
+	);
+	return Array.from({ length: Math.floor(ceil / safeStep) + 1 }, (_, index) => index * safeStep);
+};
+
+function MetricTile({
 	label,
 	value,
 	detail,
@@ -87,12 +125,11 @@ function MetricCard({
 		emerald: isDark ? "border-emerald-300/15 bg-emerald-300/[0.09] text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700",
 	};
 	return (
-		<article className={`${panelClass(isDark)} group relative overflow-hidden p-4 transition duration-200 hover:-translate-y-0.5`}>
-			<div className={`absolute -right-7 -top-8 h-24 w-24 rounded-full opacity-30 blur-2xl ${tone === "cyan" ? "bg-cyan-400" : tone === "violet" ? "bg-violet-400" : tone === "blue" ? "bg-blue-400" : "bg-emerald-400"}`} />
-			<div className="relative flex items-start justify-between gap-3">
+		<article className={`rounded-xl border p-4 ${isDark ? "border-white/[0.07] bg-[#03091c]/35" : "border-slate-100 bg-slate-50/70"}`}>
+			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
 					<p className={`text-xs font-medium ${isDark ? "text-slate-400" : "text-slate-500"}`}>{label}</p>
-					<p className={`mt-2 text-2xl font-semibold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>{value}</p>
+					<p className={`mt-2 text-xl font-semibold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>{value}</p>
 					<p className={`mt-1.5 text-[11px] ${isDark ? "text-slate-500" : "text-slate-500"}`}>{detail}</p>
 				</div>
 				<span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${colors[tone]}`}>
@@ -103,17 +140,17 @@ function MetricCard({
 	);
 }
 
-function ChartPanel({ title, description, isDark, children }: { title: string; description: string; isDark: boolean; children: ReactNode }) {
+function ChartBlock({ title, description, isDark, children }: { title: string; description: string; isDark: boolean; children: ReactNode }) {
 	return (
-		<section className={`${panelClass(isDark)} min-w-0 overflow-hidden`}>
-			<div className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${isDark ? "border-white/[0.07]" : "border-slate-100"}`}>
+		<section className={`min-w-0 overflow-hidden rounded-xl border ${isDark ? "border-white/[0.07] bg-[#03091c]/25" : "border-slate-100 bg-slate-50/50"}`}>
+			<div className={`flex items-start justify-between gap-4 border-b px-4 py-3.5 ${isDark ? "border-white/[0.07]" : "border-slate-100"}`}>
 				<div>
-					<h2 className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>{title}</h2>
-					<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-500"}`}>{description}</p>
+					<h3 className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>{title}</h3>
+					<p className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-slate-500"}`}>{description}</p>
 				</div>
-				<span className={`rounded-lg border px-2.5 py-1 text-[10px] font-medium ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"}`}>Daily</span>
+				<span className={`rounded-lg border px-2.5 py-1 text-[10px] font-medium ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-400" : "border-slate-200 bg-white text-slate-500"}`}>Daily</span>
 			</div>
-			<div className="h-[300px] w-full px-2 pb-3 pt-5 sm:h-[340px] sm:px-4">{children}</div>
+			<div className="h-[300px] w-full px-1 pb-2 pt-3 sm:h-[340px] sm:px-2">{children}</div>
 		</section>
 	);
 }
@@ -122,11 +159,22 @@ export default function AnalyticsDashboard() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
-	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const {
+		data: clients = [],
+		isLoading: clientsLoading,
+		isError: clientsError,
+		refetch: refetchClients,
+	} = useGetClientMasterQuery();
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
 	const [vehicle, setVehicle] = useState("");
+	const [clientQuery, setClientQuery] = useState("");
+	const [transporterQuery, setTransporterQuery] = useState("");
+	const [vehicleQuery, setVehicleQuery] = useState("");
+	const [openMenu, setOpenMenu] = useState<FilterMenu>(null);
 	const [filtersApplied, setFiltersApplied] = useState(false);
+	const [appliedVehicleLabel, setAppliedVehicleLabel] = useState("");
+	const [appliedDates, setAppliedDates] = useState({ from: "", to: "" });
 	const [analytics, setAnalytics] = useState<AnalyticsDashboardResult | null>(null);
 	const [dates, setDates] = useState(() => {
 		const to = new Date();
@@ -135,19 +183,154 @@ export default function AnalyticsDashboard() {
 		return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 	});
 
-	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery(
-		client ? { client } : undefined,
-		{ skip: !client },
-	);
+	const clientRef = useRef<HTMLDivElement>(null);
+	const transporterRef = useRef<HTMLDivElement>(null);
+	const vehicleRef = useRef<HTMLDivElement>(null);
+
+	/** Client → transporters via `/master/transporter?client=`. */
+	const {
+		data: transportersByClient = [],
+		isLoading: transportersLoading,
+		isError: transportersError,
+		refetch: refetchTransporters,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+	/** Full transporter list — fills gaps when API filter misses links that vehicle master still has. */
+	const { data: allTransporters = [] } = useGetTransporterMasterQuery();
 	/** Master vehicle IDs are UUIDs — required by `/analytics-dashboard`. */
-	const { data: vehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const {
+		data: allVehicles = [],
+		isLoading: vehiclesLoading,
+		refetch: refetchVehicles,
+	} = useGetVehicleMasterQuery();
 	const [fetchAnalytics, { isFetching }] = useLazyGetAnalyticsDashboardQuery();
 
-	const chartData = analytics?.chartData ?? [];
+	/** X-axis = every day in the applied from→to filter; API values merged by day. */
+	const chartData = useMemo(() => {
+		const points = analytics?.chartData ?? [];
+		const rangeDays = appliedDates.from && appliedDates.to
+			? daysInFilterRange(appliedDates.from, appliedDates.to)
+			: [];
+
+		if (rangeDays.length === 0) {
+			return points.map((point) => ({
+				...point,
+				axisLabel: point.dayKey || point.date || "—",
+			}));
+		}
+
+		const byKey = new Map<string, (typeof points)[number]>();
+		for (const point of points) {
+			const key = point.dayKey || point.date;
+			if (key) byKey.set(key, point);
+		}
+		const matchedCount = rangeDays.filter((day) => byKey.has(day)).length;
+		/** If API dates did not parse into the filter keys, align by index. */
+		const alignByIndex = matchedCount === 0 && points.length > 0;
+
+		return rangeDays.map((dayKey, index) => {
+			const hit = alignByIndex ? points[index] : byKey.get(dayKey);
+			return {
+				dayKey,
+				date: dayKey,
+				axisLabel: dayKey,
+				mileage: hit?.mileage ?? 0,
+				duration: hit?.duration ?? 0,
+			};
+		});
+	}, [analytics?.chartData, appliedDates.from, appliedDates.to]);
 	const hasChart = chartData.length > 0;
+	const xAxisAngle = chartData.length > 7 ? -35 : 0;
+	const xAxisHeight = chartData.length > 7 ? 48 : 28;
+	/** Match reference scale: 0 / 25 / 50 / 75 / 100 / 125 km (grows if data is higher). */
+	const mileageTicks = useMemo(
+		() => buildStepTicks(Math.max(0, ...chartData.map((point) => point.mileage), 0), 25, 125),
+		[chartData],
+	);
+	/** Match reference scale: 0 … 6 hr (grows if data is higher). */
+	const durationTicks = useMemo(
+		() => buildStepTicks(Math.max(0, ...chartData.map((point) => point.duration), 0), 1, 6),
+		[chartData],
+	);
+
+	/** Prefer API-filtered transporters; also include any linked via this client's vehicles. */
+	const transporters = useMemo(() => {
+		if (!client) return [];
+		const byId = new Map(transportersByClient.map((item) => [item.id, item]));
+		for (const item of allVehicles) {
+			if (item.clientId !== client || !item.transporterId || byId.has(item.transporterId)) continue;
+			const linked = allTransporters.find((row) => row.id === item.transporterId);
+			if (linked) byId.set(linked.id, linked);
+		}
+		return [...byId.values()];
+	}, [allTransporters, allVehicles, client, transportersByClient]);
+
+	/** Vehicles for the selected client + transporter only. */
+	const vehicles = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			const transporterOk = item.transporterId === transporter;
+			return clientOk && transporterOk;
+		});
+	}, [allVehicles, client, transporter]);
+
+	const visibleClients = useMemo(
+		() => clients.filter((item) => item.name.toLowerCase().includes(clientQuery.trim().toLowerCase())),
+		[clientQuery, clients],
+	);
+	const visibleTransporters = useMemo(
+		() => transporters.filter((item) => item.name.toLowerCase().includes(transporterQuery.trim().toLowerCase())),
+		[transporterQuery, transporters],
+	);
+	const visibleVehicles = useMemo(
+		() => vehicles.filter((item) => item.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase())),
+		[vehicleQuery, vehicles],
+	);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicle("");
+		setVehicleQuery("");
+	}, [transporter, transporters]);
+
+	useEffect(() => {
+		if (!vehicle) return;
+		if (vehicles.some((item) => item.id === vehicle)) return;
+		setVehicle("");
+	}, [vehicle, vehicles]);
+
+	useEffect(() => {
+		if (clientsError) toast.error("Could not load clients. Try refresh.");
+	}, [clientsError]);
+
+	useEffect(() => {
+		if (transportersError) toast.error("Could not load transporters. Try refresh.");
+	}, [transportersError]);
+
+	useEffect(() => {
+		if (!openMenu) return;
+		const onPointerDown = (event: MouseEvent) => {
+			const target = event.target as Node;
+			const refs: Record<Exclude<FilterMenu, null>, RefObject<HTMLDivElement | null>> = {
+				client: clientRef,
+				transporter: transporterRef,
+				vehicle: vehicleRef,
+			};
+			const active = refs[openMenu];
+			if (active.current && !active.current.contains(target)) setOpenMenu(null);
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		return () => document.removeEventListener("mousedown", onPointerDown);
+	}, [openMenu]);
+
+	const optionLabel = (id: string, options: { id: string; name: string }[], fallback: string) =>
+		options.find((item) => item.id === id)?.name ?? fallback;
 
 	const applyFilters = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		setOpenMenu(null);
 		if (!client || !transporter || !vehicle) {
 			toast.error("Select client, transporter, and vehicle.");
 			return;
@@ -168,6 +351,8 @@ export default function AnalyticsDashboard() {
 			return;
 		}
 
+		const vehicleLabel = optionLabel(vehicle, vehicles, vehicle);
+
 		try {
 			const result = await fetchAnalytics({
 				client,
@@ -177,6 +362,8 @@ export default function AnalyticsDashboard() {
 				to,
 			}).unwrap();
 			setAnalytics(result);
+			setAppliedVehicleLabel(vehicleLabel);
+			setAppliedDates({ from: dates.from, to: dates.to });
 			setFiltersApplied(true);
 			if (result.chartData.length === 0) {
 				toast.message("No analytics points for this range.");
@@ -186,6 +373,8 @@ export default function AnalyticsDashboard() {
 		} catch (error) {
 			console.error("Failed to load analytics dashboard.", error);
 			setAnalytics(emptyAnalytics());
+			setAppliedVehicleLabel(vehicleLabel);
+			setAppliedDates({ from: dates.from, to: dates.to });
 			setFiltersApplied(true);
 			toast.error(apiErrorMessage(error, "Could not load analytics. Please try again."));
 		}
@@ -198,22 +387,125 @@ export default function AnalyticsDashboard() {
 		setClient("");
 		setTransporter("");
 		setVehicle("");
+		setClientQuery("");
+		setTransporterQuery("");
+		setVehicleQuery("");
+		setOpenMenu(null);
 		setDates({ from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) });
 		setFiltersApplied(false);
+		setAppliedVehicleLabel("");
+		setAppliedDates({ from: "", to: "" });
 		setAnalytics(null);
+		void refetchClients();
+		void refetchTransporters();
+		void refetchVehicles();
 	};
 
-	const selectClass = `h-11 w-full appearance-none rounded-xl border pl-3.5 pr-9 text-xs outline-none transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60 ${
+	const controlClass = `flex h-11 w-full items-center justify-between gap-2 rounded-xl border px-3.5 text-left text-xs outline-none transition disabled:cursor-not-allowed disabled:opacity-60 ${
 		isDark
-			? "border-white/[0.09] bg-[#03091c]/65 text-slate-200 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08]"
-			: "border-slate-200 bg-white text-slate-700 focus:border-cyan-400 focus:ring-cyan-100"
+			? "border-white/[0.09] bg-[#03091c]/65 text-slate-200 hover:border-cyan-300/35 focus:border-cyan-300/35"
+			: "border-slate-200 bg-white text-slate-700 hover:border-cyan-400 focus:border-cyan-400"
 	}`;
-	const selectWrap = (select: ReactNode) => (
-		<div className="relative min-w-0">
-			{select}
-			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden />
+	const menuClass = `absolute left-0 top-[calc(100%+6px)] z-[70] w-full min-w-[220px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.35)] ${
+		isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+	}`;
+	const searchInputClass = `h-9 w-full rounded-md border px-3 text-xs outline-none ${
+		isDark
+			? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35"
+			: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
+	}`;
+
+	const filterSelect = (
+		kind: Exclude<FilterMenu, null>,
+		ref: RefObject<HTMLDivElement | null>,
+		label: string,
+		value: string,
+		placeholder: string,
+		allOptions: { id: string; name: string }[],
+		visibleOptions: { id: string; name: string }[],
+		query: string,
+		setQuery: (next: string) => void,
+		onChoose: (id: string) => void,
+		disabled = false,
+	) => (
+		<div ref={ref} className="relative z-[60] min-w-0">
+			<button
+				type="button"
+				aria-expanded={openMenu === kind}
+				aria-haspopup="listbox"
+				aria-label={label}
+				disabled={disabled}
+				onClick={() => setOpenMenu((current) => (current === kind ? null : kind))}
+				className={controlClass}
+			>
+				<span className={`min-w-0 truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
+					{value ? optionLabel(value, allOptions, placeholder) : placeholder}
+				</span>
+				<ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
+			</button>
+			{openMenu === kind && !disabled && (
+				<div className={menuClass}>
+					<div className="p-2">
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							aria-label={`Search ${label}`}
+							placeholder="Search…"
+							className={searchInputClass}
+							autoFocus
+						/>
+					</div>
+					<ul role="listbox" aria-label={label} className="max-h-52 overflow-y-auto p-1">
+						{visibleOptions.map((item) => (
+							<li key={item.id}>
+								<button
+									type="button"
+									role="option"
+									aria-selected={value === item.id}
+									onClick={() => {
+										onChoose(item.id);
+										setOpenMenu(null);
+										setQuery("");
+									}}
+									className={`w-full rounded-md px-2.5 py-2 text-left text-xs ${
+										value === item.id
+											? isDark
+												? "bg-cyan-300/[0.16] text-cyan-50"
+												: "bg-cyan-50 text-cyan-800"
+											: isDark
+												? "text-slate-300 hover:bg-white/[0.04]"
+												: "text-slate-700 hover:bg-slate-100"
+									}`}
+								>
+									{item.name}
+								</button>
+							</li>
+						))}
+						{visibleOptions.length === 0 && (
+							<li className="px-2 py-3 text-center text-[11px] text-slate-500">
+								{kind === "client"
+									? clientsLoading
+										? "Loading clients…"
+										: clientsError
+											? "Failed to load clients"
+											: "Nothing found"
+									: kind === "transporter"
+										? transportersLoading
+											? "Loading transporters…"
+											: transportersError
+												? "Failed to load transporters"
+												: "Nothing found"
+										: vehiclesLoading
+											? "Loading vehicles…"
+											: "Nothing found"}
+							</li>
+						)}
+					</ul>
+				</div>
+			)}
 		</div>
 	);
+
 	const axisColor = isDark ? "#64748b" : "#94a3b8";
 	const gridColor = isDark ? "rgba(148,163,184,0.12)" : "rgba(148,163,184,0.2)";
 	const tooltipStyle = {
@@ -232,14 +524,49 @@ export default function AnalyticsDashboard() {
 	}, [filtersApplied, isFetching]);
 
 	const fallbackHighlight = (positive: boolean): AnalyticsHighlight => ({
-		vehicle: "—",
+		vehicle: appliedVehicleLabel || "—",
 		value: "—",
 		note: filtersApplied ? "No data" : "Apply filters",
 		positive,
 	});
 
+	/** Prefer the searched vehicle number over API/fallback placeholders like "Selected vehicle". */
+	const highlightFor = (highlight: AnalyticsHighlight | null, positive: boolean): AnalyticsHighlight => {
+		const base = highlight ?? fallbackHighlight(positive);
+		const raw = base.vehicle?.trim();
+		const isPlaceholder = !raw || raw === "—" || /^(selected vehicle|vehicle)$/i.test(raw);
+		return {
+			...base,
+			vehicle: isPlaceholder ? appliedVehicleLabel || "—" : raw,
+		};
+	};
+
+	const clientPlaceholder = clientsLoading
+		? "Loading clients…"
+		: clientsError
+			? "Failed to load clients"
+			: clients.length === 0
+				? "No clients found"
+				: "Select client";
+	const transporterPlaceholder = !client
+		? "Select client first"
+		: transportersLoading
+			? "Loading transporters…"
+			: transportersError
+				? "Failed to load transporters"
+				: transporters.length === 0
+					? "No transporters found"
+					: "Select transporter";
+	const vehiclePlaceholder = !client || !transporter
+		? "Select client & transporter first"
+		: vehiclesLoading
+			? "Loading vehicles…"
+			: vehicles.length === 0
+				? "No vehicles found"
+				: "Select vehicle";
+
 	return (
-		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
+		<div className={`relative min-h-screen overflow-x-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
 			<div className="pointer-events-none fixed inset-0 overflow-hidden">
 				<div className="absolute -left-52 -top-56 h-[620px] w-[620px] rounded-full bg-violet-700/[0.13] blur-[160px]" />
 				<div className="absolute right-[-200px] top-[10%] h-[600px] w-[600px] rounded-full bg-cyan-500/[0.09] blur-[170px]" />
@@ -251,9 +578,9 @@ export default function AnalyticsDashboard() {
 			<main className="relative mx-auto max-w-[1900px] px-4 pb-8 pt-6 sm:px-6 lg:px-7 lg:pt-8">
 				<header className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
 					<div>
-						<div className={`mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] ${isDark ? "border-cyan-300/15 bg-gradient-to-r from-cyan-300/[0.09] to-violet-400/[0.08] text-cyan-100" : "border-cyan-200 bg-gradient-to-r from-cyan-50 to-violet-50 text-cyan-800"}`}>
+						{/* <div className={`mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] ${isDark ? "border-cyan-300/15 bg-gradient-to-r from-cyan-300/[0.09] to-violet-400/[0.08] text-cyan-100" : "border-cyan-200 bg-gradient-to-r from-cyan-50 to-violet-50 text-cyan-800"}`}>
 							<Sparkles className="h-3 w-3" /> Fleet insights
-						</div>
+						</div> */}
 						<h1 className={`text-2xl font-semibold tracking-tight sm:text-3xl ${isDark ? "text-white" : "text-slate-900"}`}>Analytics Dashboard</h1>
 						<p className={`mt-1.5 text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>Understand distance and driving time across your fleet.</p>
 					</div>
@@ -267,7 +594,7 @@ export default function AnalyticsDashboard() {
 					</div>
 				</header>
 
-				<form onSubmit={applyFilters} className={`${panelClass(isDark)} mb-5 p-4 sm:p-5`}>
+				<form onSubmit={applyFilters} className={`${panelClass(isDark)} relative z-30 mb-5 overflow-visible p-4 sm:p-5`}>
 					<div className="mb-3 flex items-center justify-between gap-3">
 						<div className="flex items-center gap-2">
 							<span className={`flex h-8 w-8 items-center justify-center rounded-lg ${isDark ? "bg-cyan-300/[0.09] text-cyan-200" : "bg-cyan-50 text-cyan-700"}`}><CalendarDays className="h-4 w-4" /></span>
@@ -278,82 +605,72 @@ export default function AnalyticsDashboard() {
 						</div>
 						{filtersApplied && <span className={`text-[10px] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Filters applied</span>}
 					</div>
-					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1.2fr_auto_auto]">
-						{selectWrap(
-							<select
-								aria-label="Select client"
-								value={client}
-								onChange={(event) => {
-									setClient(event.target.value);
-									setTransporter("");
-									setVehicle("");
-								}}
-								className={selectClass}
-								disabled={clientsLoading}
-							>
-								<option value="">{clientsLoading ? "Loading clients…" : "Select client"}</option>
-								{clients.map((item) => (
-									<option key={item.id} value={item.id}>
-										{item.name}
-									</option>
-								))}
-							</select>,
+					<div className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_minmax(160px,1fr)_minmax(280px,1.4fr)_auto_auto]">
+						{filterSelect(
+							"client",
+							clientRef,
+							"Select client",
+							client,
+							clientPlaceholder,
+							clients,
+							visibleClients,
+							clientQuery,
+							setClientQuery,
+							(id) => {
+								setClient(id);
+								setTransporter("");
+								setVehicle("");
+								setTransporterQuery("");
+								setVehicleQuery("");
+							},
+							clientsLoading,
 						)}
-						{selectWrap(
-							<select
-								aria-label="Select transporter"
-								value={transporter}
-								onChange={(event) => {
-									setTransporter(event.target.value);
-									setVehicle("");
-								}}
-								className={selectClass}
-								disabled={!client || transportersLoading}
-							>
-								<option value="">
-									{!client
-										? "Select client first"
-										: transportersLoading
-											? "Loading transporters…"
-											: transporters.length === 0
-												? "No transporters found"
-												: "Select transporter"}
-								</option>
-								{transporters.map((item) => (
-									<option key={item.id} value={item.id}>
-										{item.name}
-									</option>
-								))}
-							</select>,
+						{filterSelect(
+							"transporter",
+							transporterRef,
+							"Select transporter",
+							transporter,
+							transporterPlaceholder,
+							transporters,
+							visibleTransporters,
+							transporterQuery,
+							setTransporterQuery,
+							(id) => {
+								setTransporter(id);
+								setVehicle("");
+								setVehicleQuery("");
+							},
+							!client || transportersLoading,
 						)}
-						{selectWrap(
-							<select
-								aria-label="Select vehicle"
-								value={vehicle}
-								onChange={(event) => setVehicle(event.target.value)}
-								className={selectClass}
-								disabled={!client || !transporter || vehiclesLoading}
-							>
-								<option value="">
-									{!client || !transporter
-										? "Select client & transporter first"
-										: vehiclesLoading
-											? "Loading vehicles…"
-											: vehicles.length === 0
-												? "No vehicles found"
-												: "Select vehicle"}
-								</option>
-								{vehicles.map((item) => (
-									<option key={item.id} value={item.id}>
-										{item.name}
-									</option>
-								))}
-							</select>,
+						{filterSelect(
+							"vehicle",
+							vehicleRef,
+							"Select vehicle",
+							vehicle,
+							vehiclePlaceholder,
+							vehicles,
+							visibleVehicles,
+							vehicleQuery,
+							setVehicleQuery,
+							(id) => setVehicle(id),
+							!client || !transporter || vehiclesLoading,
 						)}
-						<div className={`flex h-11 min-w-0 items-center gap-2 rounded-xl border px-3 ${isDark ? "border-white/[0.09] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
-							<input aria-label="From date" type="date" value={dates.from} onChange={(event) => setDates((current) => ({ ...current, from: event.target.value }))} className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
-							<span className="text-[10px] text-slate-500">to</span>
-							<input aria-label="To date" type="date" value={dates.to} onChange={(event) => setDates((current) => ({ ...current, to: event.target.value }))} className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
+						<div className={`flex h-11 min-w-0 items-center gap-2 overflow-hidden rounded-xl border px-2.5 ${isDark ? "border-white/[0.09] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
+							<input
+								aria-label="From date"
+								type="date"
+								value={dates.from}
+								onChange={(event) => setDates((current) => ({ ...current, from: event.target.value }))}
+								className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
+							/>
+							<span className="shrink-0 text-[10px] text-slate-500">to</span>
+							<input
+								aria-label="To date"
+								type="date"
+								value={dates.to}
+								onChange={(event) => setDates((current) => ({ ...current, to: event.target.value }))}
+								className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
+							/>
 						</div>
 						<button
 							type="submit"
@@ -369,86 +686,182 @@ export default function AnalyticsDashboard() {
 					</div>
 				</form>
 
-				<section aria-label="Fleet analytics summary" className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-					<MetricCard
-						label="Distance travelled"
-						value={`${(analytics?.totalDistanceKm ?? 0).toLocaleString()} km`}
-						detail={filtersApplied ? "Selected period" : "Apply filters to load"}
-						icon={Route}
-						tone="cyan"
-						isDark={isDark}
-					/>
-					<MetricCard
-						label="Total duration"
-						value={analytics?.totalDurationLabel ?? "0h 0m"}
-						detail="Across selected vehicle"
-						icon={Clock3}
-						tone="violet"
-						isDark={isDark}
-					/>
-					<MetricCard
-						label="Daily average"
-						value={`${analytics?.dailyAverageKm ?? 0} km`}
-						detail="Average distance per day"
-						icon={Gauge}
-						tone="blue"
-						isDark={isDark}
-					/>
-					<MetricCard
-						label="Vehicles tracked"
-						value={String(analytics?.vehiclesTracked ?? 0).padStart(2, "0")}
-						detail="Active in this period"
-						icon={CarFront}
-						tone="emerald"
-						isDark={isDark}
-					/>
-				</section>
+				{filtersApplied && analytics && (
+					<section aria-label="Fleet analytics results" className={`${panelClass(isDark)} overflow-hidden p-4 sm:p-5`}>
+						<div className={`mb-5 flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between ${isDark ? "border-white/[0.07]" : "border-slate-100"}`}>
+							<div className="flex min-w-0 items-center gap-3">
+								<span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isDark ? "bg-cyan-300/[0.09] text-cyan-200" : "bg-cyan-50 text-cyan-700"}`}>
+									<CarFront className="h-5 w-5" />
+								</span>
+								<div className="min-w-0">
+									<p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isDark ? "text-slate-500" : "text-slate-500"}`}>Vehicle number</p>
+									<p className={`mt-1 truncate text-lg font-semibold tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
+										{appliedVehicleLabel || "—"}
+									</p>
+								</div>
+							</div>
+							<div className="grid grid-cols-2 gap-3 sm:min-w-[320px]">
+								<div className={`rounded-xl border px-3.5 py-3 ${isDark ? "border-white/[0.07] bg-[#03091c]/35" : "border-slate-100 bg-slate-50/80"}`}>
+									<p className={`flex items-center gap-1.5 text-[10px] font-medium ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+										<Route className="h-3 w-3" /> Distance
+									</p>
+									<p className={`mt-1 text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+										{analytics.totalDistanceKm.toLocaleString()} km
+									</p>
+								</div>
+								<div className={`rounded-xl border px-3.5 py-3 ${isDark ? "border-white/[0.07] bg-[#03091c]/35" : "border-slate-100 bg-slate-50/80"}`}>
+									<p className={`flex items-center gap-1.5 text-[10px] font-medium ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+										<Clock3 className="h-3 w-3" /> Time
+									</p>
+									<p className={`mt-1 text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+										{analytics.totalDurationLabel}
+									</p>
+								</div>
+							</div>
+						</div>
 
-				<section aria-label="Daily analytics charts" className="mb-5 grid gap-4 xl:grid-cols-2">
-					<ChartPanel title="Mileage" description="Daily distance travelled · kilometres" isDark={isDark}>
-						{hasChart ? (
-							<ResponsiveContainer width="100%" height="100%">
-								<BarChart data={chartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }} barCategoryGap="34%">
-									<defs><linearGradient id="mileageFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22d3ee" /><stop offset="100%" stopColor="#3b82f6" /></linearGradient></defs>
-									<CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="4 5" />
-									<XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 11 }} dy={10} />
-									<YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} tickFormatter={(value: number) => `${value} km`} width={56} />
-									<Tooltip cursor={{ fill: isDark ? "rgba(34,211,238,0.05)" : "rgba(14,116,144,0.05)" }} contentStyle={tooltipStyle} formatter={(value) => [`${Number(value).toLocaleString()} km`, "Distance"]} />
-									<Bar dataKey="mileage" fill="url(#mileageFill)" radius={[7, 7, 2, 2]} maxBarSize={38} />
-								</BarChart>
-							</ResponsiveContainer>
-						) : (
-							<EmptyChart isDark={isDark} fetching={isFetching} />
-						)}
-					</ChartPanel>
-					<ChartPanel title="Duration" description="Daily driving time · hours" isDark={isDark}>
-						{hasChart ? (
-							<ResponsiveContainer width="100%" height="100%">
-								<BarChart data={chartData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }} barCategoryGap="34%">
-									<defs><linearGradient id="durationFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#818cf8" /><stop offset="100%" stopColor="#22d3ee" /></linearGradient></defs>
-									<CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="4 5" />
-									<XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 11 }} dy={10} />
-									<YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} tickFormatter={(value: number) => `${value} hr`} width={48} />
-									<Tooltip cursor={{ fill: isDark ? "rgba(129,140,248,0.06)" : "rgba(99,102,241,0.05)" }} contentStyle={tooltipStyle} formatter={(value) => [`${Number(value).toFixed(1)} hr`, "Duration"]} />
-									<Bar dataKey="duration" fill="url(#durationFill)" radius={[7, 7, 2, 2]} maxBarSize={38} />
-								</BarChart>
-							</ResponsiveContainer>
-						) : (
-							<EmptyChart isDark={isDark} fetching={isFetching} />
-						)}
-					</ChartPanel>
-				</section>
+						<div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+							<MetricTile
+								label="Distance travelled"
+								value={`${analytics.totalDistanceKm.toLocaleString()} km`}
+								detail="Selected period"
+								icon={Route}
+								tone="cyan"
+								isDark={isDark}
+							/>
+							<MetricTile
+								label="Total duration"
+								value={analytics.totalDurationLabel}
+								detail="Across selected vehicle"
+								icon={Clock3}
+								tone="violet"
+								isDark={isDark}
+							/>
+							<MetricTile
+								label="Daily average"
+								value={`${analytics.dailyAverageKm} km`}
+								detail="Average distance per day"
+								icon={Gauge}
+								tone="blue"
+								isDark={isDark}
+							/>
+							<MetricTile
+								label="Vehicles tracked"
+								value={String(analytics.vehiclesTracked).padStart(2, "0")}
+								detail="Active in this period"
+								icon={CarFront}
+								tone="emerald"
+								isDark={isDark}
+							/>
+						</div>
 
-				<section aria-label="Trip highlights" className="grid gap-4 xl:grid-cols-2">
-					<HighlightPanel title="Distance Travelled" subtitle="Top and low mileage in this period" icon={MapPinned} isDark={isDark}>
-						<Highlight {...(analytics?.longestDistance ?? fallbackHighlight(true))} label="Longest distance" isDark={isDark} />
-						<Highlight {...(analytics?.shortestDistance ?? fallbackHighlight(false))} label="Shortest distance" isDark={isDark} />
-					</HighlightPanel>
-					<HighlightPanel title="Total Duration" subtitle="Longest and shortest driving time" icon={Clock3} isDark={isDark}>
-						<Highlight {...(analytics?.longestDuration ?? fallbackHighlight(true))} label="Longest duration" isDark={isDark} />
-						<Highlight {...(analytics?.shortestDuration ?? fallbackHighlight(false))} label="Shortest duration" isDark={isDark} />
-					</HighlightPanel>
-				</section>
+						<div className="mb-5 grid gap-4 xl:grid-cols-2">
+							<ChartBlock title="Mileage" description="Daily distance travelled · kilometres" isDark={isDark}>
+								{hasChart ? (
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: xAxisHeight }} barCategoryGap="26%">
+											<defs>
+												<linearGradient id="mileageFill" x1="0" y1="0" x2="0" y2="1">
+													<stop offset="0%" stopColor="#facc15" />
+													<stop offset="55%" stopColor="#84cc16" />
+													<stop offset="100%" stopColor="#65a30d" />
+												</linearGradient>
+											</defs>
+											<CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="3 4" />
+											<XAxis
+												dataKey="axisLabel"
+												axisLine={false}
+												tickLine={false}
+												tick={{ fill: axisColor, fontSize: 10 }}
+												dy={10}
+												interval={0}
+												minTickGap={4}
+												angle={xAxisAngle}
+												textAnchor={xAxisAngle ? "end" : "middle"}
+												height={xAxisHeight}
+											/>
+											<YAxis
+												domain={[0, mileageTicks[mileageTicks.length - 1] ?? 125]}
+												ticks={mileageTicks}
+												axisLine={false}
+												tickLine={false}
+												width={62}
+												tick={{ fill: axisColor, fontSize: 11 }}
+												tickFormatter={(value: number) => `${value} km`}
+											/>
+											<Tooltip
+												cursor={{ fill: isDark ? "rgba(132,204,22,0.08)" : "rgba(132,204,22,0.08)" }}
+												contentStyle={tooltipStyle}
+												formatter={(value) => [`${Number(value).toLocaleString()} km`, "Distance"]}
+												labelFormatter={(label) => String(label)}
+											/>
+											<Bar dataKey="mileage" fill="url(#mileageFill)" radius={[8, 8, 2, 2]} maxBarSize={34} minPointSize={3} />
+										</BarChart>
+									</ResponsiveContainer>
+								) : (
+									<EmptyChart isDark={isDark} fetching={isFetching} />
+								)}
+							</ChartBlock>
+							<ChartBlock title="Duration" description="Daily driving time · hours" isDark={isDark}>
+								{hasChart ? (
+									<ResponsiveContainer width="100%" height="100%">
+										<BarChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: xAxisHeight }} barCategoryGap="26%">
+											<defs>
+												<linearGradient id="durationFill" x1="0" y1="0" x2="0" y2="1">
+													<stop offset="0%" stopColor="#fde047" />
+													<stop offset="55%" stopColor="#a3e635" />
+													<stop offset="100%" stopColor="#65a30d" />
+												</linearGradient>
+											</defs>
+											<CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="3 4" />
+											<XAxis
+												dataKey="axisLabel"
+												axisLine={false}
+												tickLine={false}
+												tick={{ fill: axisColor, fontSize: 10 }}
+												dy={10}
+												interval={0}
+												minTickGap={4}
+												angle={xAxisAngle}
+												textAnchor={xAxisAngle ? "end" : "middle"}
+												height={xAxisHeight}
+											/>
+											<YAxis
+												domain={[0, durationTicks[durationTicks.length - 1] ?? 6]}
+												ticks={durationTicks}
+												axisLine={false}
+												tickLine={false}
+												width={48}
+												tick={{ fill: axisColor, fontSize: 11 }}
+												tickFormatter={(value: number) => `${value} hr`}
+											/>
+											<Tooltip
+												cursor={{ fill: isDark ? "rgba(163,230,53,0.08)" : "rgba(163,230,53,0.08)" }}
+												contentStyle={tooltipStyle}
+												formatter={(value) => [`${Number(value).toFixed(1)} hr`, "Duration"]}
+												labelFormatter={(label) => String(label)}
+											/>
+											<Bar dataKey="duration" fill="url(#durationFill)" radius={[8, 8, 2, 2]} maxBarSize={34} minPointSize={3} />
+										</BarChart>
+									</ResponsiveContainer>
+								) : (
+									<EmptyChart isDark={isDark} fetching={isFetching} />
+								)}
+							</ChartBlock>
+						</div>
+
+						<div className="grid gap-4 xl:grid-cols-2">
+							<HighlightPanel title="Distance Travelled" subtitle="Top and low mileage in this period" icon={MapPinned} isDark={isDark}>
+								<Highlight {...highlightFor(analytics.longestDistance, true)} label="Longest distance" isDark={isDark} />
+								<Highlight {...highlightFor(analytics.shortestDistance, false)} label="Shortest distance" isDark={isDark} />
+							</HighlightPanel>
+							<HighlightPanel title="Total Duration" subtitle="Longest and shortest driving time" icon={Clock3} isDark={isDark}>
+								<Highlight {...highlightFor(analytics.longestDuration, true)} label="Longest duration" isDark={isDark} />
+								<Highlight {...highlightFor(analytics.shortestDuration, false)} label="Shortest duration" isDark={isDark} />
+							</HighlightPanel>
+						</div>
+					</section>
+				)}
 			</main>
 		</div>
 	);
@@ -457,7 +870,7 @@ export default function AnalyticsDashboard() {
 function EmptyChart({ isDark, fetching }: { isDark: boolean; fetching: boolean }) {
 	return (
 		<div className={`flex h-full items-center justify-center text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}>
-			{fetching ? "Loading chart…" : "Apply filters to load chart data"}
+			{fetching ? "Loading chart…" : "No chart data for this range"}
 		</div>
 	);
 }
@@ -470,11 +883,11 @@ function HighlightPanel({ title, subtitle, icon: Icon, isDark, children }: {
 	children: ReactNode;
 }) {
 	return (
-		<section className={`${panelClass(isDark)} p-5`}>
+		<section className={`rounded-xl border p-4 ${isDark ? "border-white/[0.07] bg-[#03091c]/25" : "border-slate-100 bg-slate-50/50"}`}>
 			<div className="mb-4 flex items-center gap-2.5">
 				<span className={`flex h-9 w-9 items-center justify-center rounded-xl ${isDark ? "bg-cyan-300/[0.09] text-cyan-200" : "bg-cyan-50 text-cyan-700"}`}><Icon className="h-4 w-4" /></span>
 				<div>
-					<h2 className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>{title}</h2>
+					<h3 className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>{title}</h3>
 					<p className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-slate-500"}`}>{subtitle}</p>
 				</div>
 			</div>

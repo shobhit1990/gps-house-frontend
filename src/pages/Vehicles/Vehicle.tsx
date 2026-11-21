@@ -27,6 +27,7 @@ import {
   RotateCcw,
   Search,
   FileBadge,
+  Pencil,
   ScrollText,
   Terminal,
   Trash2,
@@ -301,7 +302,7 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
       : displayValue(record.ignitionWire);
 
   return {
-    vehicleId: vehicle.externalId,
+    vehicleId: vehicle.externalId || String(vehicle.id ?? ""),
     lifecycleStatus: displayValue(vehicle.status, ""),
     deviceId: referenceId(record.device),
     clientId: referenceId(vehicle.client),
@@ -421,6 +422,14 @@ export default function Vehicle() {
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
+  const [editingRelationSeed, setEditingRelationSeed] = useState<{
+    clientId?: string;
+    clientLabel?: string;
+    transporterId?: string;
+    transporterLabel?: string;
+    deviceId?: string;
+    deviceLabel?: string;
+  } | null>(null);
   const isSavingEdit = false;
 
   const openVehicleEditor = (row: VehicleRecord) => {
@@ -428,6 +437,18 @@ export default function Vehicle() {
       toast.error("This vehicle does not have a valid ID.");
       return;
     }
+    setEditingRelationSeed({
+      clientId: row.clientId || undefined,
+      clientLabel:
+        row.client && row.client !== "—" && row.client !== "Unassigned" ? row.client : undefined,
+      transporterId: row.transporterId || undefined,
+      transporterLabel:
+        row.transporter && row.transporter !== "—" && row.transporter !== "Unassigned"
+          ? row.transporter
+          : undefined,
+      deviceId: row.deviceId || undefined,
+      deviceLabel: row.imei && row.imei !== "—" ? row.imei : undefined,
+    });
     setEditingVehicleId(row.vehicleId);
     setShowAddDialog(true);
   };
@@ -435,6 +456,7 @@ export default function Vehicle() {
   const closeVehicleForm = () => {
     setShowAddDialog(false);
     setEditingVehicleId(null);
+    setEditingRelationSeed(null);
   };
 
   const openFieldEditor = (row: VehicleRecord, field: EditableVehicleField) => {
@@ -1420,6 +1442,9 @@ export default function Vehicle() {
                       {column.label}
                     </th>
                   ))}
+                  <th className="w-24 whitespace-nowrap px-3 py-3 font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
 
@@ -1427,7 +1452,7 @@ export default function Vehicle() {
                 {isVehiclesLoading && (
                   <tr>
                     <td
-                      colSpan={visibleColumns.length}
+                      colSpan={visibleColumns.length + 1}
                       className="px-6 py-16 text-center text-xs text-slate-500"
                     >
                       Loading vehicles...
@@ -1438,7 +1463,7 @@ export default function Vehicle() {
                 {isVehiclesError && (
                   <tr>
                     <td
-                      colSpan={visibleColumns.length}
+                      colSpan={visibleColumns.length + 1}
                       className="px-6 py-16 text-center"
                     >
                       <p className="text-sm font-medium text-rose-600">
@@ -1643,6 +1668,48 @@ export default function Vehicle() {
                         </td>
                       );
                     })}
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openVehicleEditor(row)}
+                          disabled={!row.vehicleId}
+                          aria-label={`Edit vehicle ${row.vehicleNo}`}
+                          title={`Edit vehicle ${row.vehicleNo}`}
+                          className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            isDark
+                              ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]"
+                              : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+                          }`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!isInactiveVehicleStatus(row.lifecycleStatus) || !row.vehicleId) {
+                              toast.error("Only inactive vehicles can be deleted.");
+                              return;
+                            }
+                            setPendingDelete(row);
+                          }}
+                          disabled={isDeletingVehicle || !row.vehicleId}
+                          aria-label={`Delete vehicle ${row.vehicleNo}`}
+                          title={
+                            isInactiveVehicleStatus(row.lifecycleStatus)
+                              ? `Delete vehicle ${row.vehicleNo}`
+                              : "Only inactive vehicles can be deleted"
+                          }
+                          className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            isDark
+                              ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+                              : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          }`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                   ))}
 
@@ -1651,7 +1718,7 @@ export default function Vehicle() {
                   pageRows.length === 0 && (
                   <tr>
                     <td
-                      colSpan={visibleColumns.length}
+                      colSpan={visibleColumns.length + 1}
                       className="px-6 py-16 text-center"
                     >
                       <CarFront
@@ -1872,6 +1939,7 @@ export default function Vehicle() {
       {showAddDialog && (
         <AddVehicleForm
           vehicleId={editingVehicleId ?? undefined}
+          relationSeed={editingRelationSeed ?? undefined}
           onClose={closeVehicleForm}
           onSubmit={handleAddVehicle}
         />

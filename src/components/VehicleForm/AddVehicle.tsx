@@ -1,7 +1,8 @@
-import { useState, type ChangeEvent, type ReactNode } from "react";
+import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { Minus, Plus } from "lucide-react";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addVehicleFields } from "@/interfaces/AddVehicleFields";
+import type { MasterOption } from "@/interfaces/EntityMaster";
 import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 
 type AddVehicleProps = {
@@ -10,7 +11,11 @@ type AddVehicleProps = {
 	onChange: (name: string, value: string) => void;
 };
 
-const ownedByOptions = ["Market", "Own", "Company", "Individual"];
+/** Backend accepts only these lowercase values for ownedBy. */
+const ownedByOptions = [
+	{ value: "market", label: "Market" },
+	{ value: "example", label: "Example" },
+] as const;
 const bodyOptions = ["Lowbed", "Open", "Container", "Trailer"];
 
 export const vehicleDetailDefaults = {
@@ -24,6 +29,24 @@ export const vehicleDetailDefaults = {
 	purchaseDate: "",
 };
 
+/** Keep the currently selected relation visible even when master list omits it. */
+const withSelectedOption = (
+	options: MasterOption[],
+	selectedId?: string,
+	selectedLabel?: string,
+): MasterOption[] => {
+	const id = selectedId?.trim();
+	if (!id) return options;
+	if (options.some((option) => option.id === id || option.externalId === id)) return options;
+	return [...options, { id, name: selectedLabel?.trim() || id }];
+};
+
+const resolveSelectValue = (options: MasterOption[], selectedId: string): string => {
+	if (!selectedId) return "";
+	const match = options.find((option) => option.id === selectedId || option.externalId === selectedId);
+	return match?.id ?? selectedId;
+};
+
 export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 	const [detailOpen, setDetailOpen] = useState(false);
 	const { data: clients = [] } = useGetClientMasterQuery();
@@ -33,11 +56,28 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 		isError: devicesError,
 	} = useGetDeviceMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
-	const masterOptions: Record<string, { id: string; name: string }[]> = {
-		vehicleClient: clients,
-		vehicleDevice: devices,
-		vehicleTransporter: transporters,
-	};
+	const masterOptions = useMemo(
+		() => ({
+			vehicleClient: withSelectedOption(clients, values.vehicleClient, values.vehicleClientLabel),
+			vehicleDevice: withSelectedOption(devices, values.vehicleDevice, values.vehicleDeviceLabel),
+			vehicleTransporter: withSelectedOption(
+				transporters,
+				values.vehicleTransporter,
+				values.vehicleTransporterLabel,
+			),
+		}),
+		[
+			clients,
+			devices,
+			transporters,
+			values.vehicleClient,
+			values.vehicleClientLabel,
+			values.vehicleDevice,
+			values.vehicleDeviceLabel,
+			values.vehicleTransporter,
+			values.vehicleTransporterLabel,
+		],
+	);
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
 			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
@@ -68,13 +108,16 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 			);
 		}
 
+		const relationOptions = masterOptions[field.name as keyof typeof masterOptions];
+		const selectValue = relationOptions ? resolveSelectValue(relationOptions, value) : value;
+
 		return (
 			<label key={field.name} className="block min-w-0">
 				{label}
 				{field.type === "select" ? (
 					<span className="relative block">
 						<select
-							value={value}
+							value={selectValue}
 							required={field.required}
 							disabled={field.name === "vehicleDevice" && devicesLoading}
 							onChange={(event) => onChange(field.name, event.target.value)}
@@ -85,7 +128,7 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 									{field.optionLabels?.[option] ?? option}
 								</option>
 							))}
-							{masterOptions[field.name]?.map((option) => (
+							{relationOptions?.map((option) => (
 								<option key={option.id} value={option.id}>{option.name}</option>
 							))}
 						</select>
@@ -124,7 +167,11 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 		</label>
 	);
 
-	const detailSelect = (name: keyof typeof vehicleDetailDefaults, placeholder: string, options: string[]) => (
+	const detailSelect = (
+		name: keyof typeof vehicleDetailDefaults,
+		placeholder: string,
+		options: readonly string[] | readonly { value: string; label: string }[],
+	) => (
 		<span className="relative block">
 			<select
 				value={detailValue(name)}
@@ -132,9 +179,13 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 				className={`${inputClass} appearance-none pr-9`}
 			>
 				<option value="">{placeholder}</option>
-				{options.map((option) => (
-					<option key={option} value={option}>{option}</option>
-				))}
+				{options.map((option) => {
+					const value = typeof option === "string" ? option : option.value;
+					const label = typeof option === "string" ? option : option.label;
+					return (
+						<option key={value} value={value}>{label}</option>
+					);
+				})}
 			</select>
 			<span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">⌄</span>
 		</span>

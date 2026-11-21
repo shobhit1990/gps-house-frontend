@@ -38,10 +38,11 @@ type AssignType = (typeof assignTypes)[number];
 
 const houseAccount = "gpshouse";
 
-const formatAdded = (value?: string) => {
-	if (!value?.trim()) return "—";
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return value;
+const formatAdded = (value?: string | number | null) => {
+	const text = value == null ? "" : String(value).trim();
+	if (!text) return "—";
+	const date = new Date(text);
+	if (Number.isNaN(date.getTime())) return text;
 	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
 

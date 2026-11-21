@@ -152,7 +152,7 @@ export default function Transporter() {
 				vehicleCount: 0,
 				payment: "",
 				contactPerson: transporter.name ?? "",
-				phone: transporter.phone ?? "",
+				phone: transporter.phone != null ? String(transporter.phone) : "",
 				email: transporter.email ?? "",
 				company: transporter.companyName ?? "",
 				inactiveTime: transporter.inactiveTime == null ? "" : String(transporter.inactiveTime),

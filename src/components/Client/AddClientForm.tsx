@@ -38,6 +38,7 @@ type AddClientFormProps = {
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
+const phonePattern = /^\d{10}$/;
 
 const emptyValues: ClientFormValues = {
 	owner_name: "",
@@ -64,7 +65,7 @@ const valuesFromClient = (client: Client): ClientFormValues => ({
 	companyName: client.companyName ?? "",
 	name: client.name ?? "",
 	email: client.email ?? "",
-	phone: client.phone ?? "",
+	phone: String(client.phone ?? "").replace(/\D/g, "").slice(0, 10),
 	address: client.address ?? "",
 	language: client.language ?? "",
 	domain: client.domain ?? "",
@@ -81,7 +82,7 @@ const buildClientPayload = (values: ClientFormValues, image: string): CreateClie
 	companyName: values.companyName.trim(),
 	name: values.name.trim() || undefined,
 	email: values.email.trim() || undefined,
-	phone: values.phone.trim() || undefined,
+	phone: String(values.phone ?? "").trim() || undefined,
 	address: values.address.trim() || undefined,
 	language: values.language,
 	domain: values.domain.trim() || undefined,
@@ -267,6 +268,11 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
+		const phone = String(values.phone ?? "").trim();
+		if (phone && !phonePattern.test(phone)) {
+			setFormError("Phone number must be exactly 10 digits.");
+			return;
+		}
 
 		const body = buildClientPayload(values, imagePreview);
 		try {
@@ -379,7 +385,23 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 						{field("Company Name", <input required value={values.companyName} placeholder="Company Name" onChange={(event) => update("companyName", event.target.value)} className={inputClass} />, undefined, true)}
 						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, undefined, false, true)}
 						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, undefined, false, true)}
-						{field("Phone", <input type="tel" value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, undefined, false, true)}
+						{field(
+							"Phone",
+							<input
+								type="tel"
+								inputMode="numeric"
+								maxLength={10}
+								value={values.phone}
+								placeholder="10 digit phone"
+								pattern="\d{10}"
+								title="Enter a 10 digit phone number"
+								onChange={(event) => update("phone", event.target.value.replace(/\D/g, "").slice(0, 10))}
+								className={inputClass}
+							/>,
+							"Must be exactly 10 digits",
+							false,
+							true,
+						)}
 						{field("Address", <input value={values.address} placeholder="Address" onChange={(event) => update("address", event.target.value)} className={inputClass} />, undefined, false, true)}
 						{field(
 							"Language",

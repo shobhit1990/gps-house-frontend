@@ -19,6 +19,8 @@ export type VehicleDetailFormValues = {
 };
 
 type AddVehicleDetailFormProps = {
+	/** When set, the form opens in edit mode with these values. */
+	initialValues?: Partial<VehicleDetailFormValues> | null;
 	onClose: () => void;
 	onSubmit: (values: VehicleDetailFormValues) => void;
 	onSaveService: (values: ServiceMaintenanceValues) => void;
@@ -27,7 +29,8 @@ type AddVehicleDetailFormProps = {
 const tabs = ["Add Vehicle Detail", "Service And Maintenance"] as const;
 type DetailTab = (typeof tabs)[number];
 
-const ownedByOptions = ["market", "own"];
+/** Backend accepts only these values for ownedBy. */
+const ownedByOptions = ["market", "example"];
 const bodyOptions = ["Lowbed", "Open", "Container", "Trailer"];
 
 const today = () => {
@@ -51,16 +54,20 @@ const detailDefaults = (): VehicleDetailFormValues => ({
 	purchaseDate: today(),
 });
 
-export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVehicleDetailFormProps) {
+export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveService }: AddVehicleDetailFormProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
+	const isEdit = Boolean(initialValues);
 	const titleId = useId();
 	const serviceRef = useRef<ServiceMaintenanceHandle>(null);
 	const { data: clients = [] } = useGetClientMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const [activeTab, setActiveTab] = useState<DetailTab>(tabs[0]);
-	const [values, setValues] = useState<VehicleDetailFormValues>(detailDefaults);
+	const [values, setValues] = useState<VehicleDetailFormValues>(() => ({
+		...detailDefaults(),
+		...initialValues,
+	}));
 	const [formError, setFormError] = useState("");
 
 	useEffect(() => {
@@ -85,7 +92,7 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 
 	const resetTab = () => {
 		if (activeTab === "Service And Maintenance") serviceRef.current?.reset();
-		else setValues(detailDefaults());
+		else setValues({ ...detailDefaults(), ...initialValues });
 		setFormError("");
 	};
 
@@ -139,7 +146,7 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
 						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Add Vehicle Detail</h2>
+						<h2 id={titleId} className="text-[15px] font-semibold">{isEdit ? "Edit Vehicle Detail" : "Add Vehicle Detail"}</h2>
 					</div>
 					<button type="button" onClick={onClose} aria-label="Close vehicle detail form" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
 						<X className="h-5 w-5 stroke-[3]" />
@@ -200,7 +207,7 @@ export function AddVehicleDetailForm({ onClose, onSubmit, onSaveService }: AddVe
 						Reset
 					</button>
 					<button type="submit" className={`h-9 rounded-lg border px-4 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						Save
+						{isEdit ? "Update" : "Save"}
 					</button>
 				</footer>
 			</form>
