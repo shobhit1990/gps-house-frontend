@@ -89,7 +89,16 @@ export const masterApi = api.injectEndpoints({
     getClientMaster: builder.query<MasterOption[], void>({
       query: () => "/master/client",
       transformResponse: (response: MasterListResponse<ClientMaster>) =>
-        toMasterOptions(response, (item) => item.clientName ?? item.company ?? item.name ?? item.username),
+        toMasterOptions(
+          response,
+          (item) =>
+            item.clientName
+            ?? item.companyName
+            ?? item.company
+            ?? item.name
+            ?? item.userName
+            ?? item.username,
+        ),
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
     getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({

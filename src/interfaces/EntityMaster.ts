@@ -14,7 +14,9 @@ interface MasterRecordBase {
 export interface ClientMaster extends MasterRecordBase {
   clientName?: string;
   company?: string;
+  companyName?: string;
   username?: string;
+  userName?: string;
 }
 
 export interface TransporterMaster extends MasterRecordBase {

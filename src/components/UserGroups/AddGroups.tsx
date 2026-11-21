@@ -5,10 +5,13 @@ import { ChevronDown, Loader2, X } from "lucide-react";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
+import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 export type GroupFormValues = {
 	name: string;
 	assignedTo: string;
+	vehicle: string;
+	transporter: string;
 };
 
 type AddGroupsProps = {
@@ -19,9 +22,9 @@ type AddGroupsProps = {
 export const groupAssignedToOptions = [
 	{ value: "vehicle", label: "Vehicle" },
 	{ value: "transporter", label: "Transporter" },
-];
+] as const;
 
-const emptyValues = (): GroupFormValues => ({ name: "", assignedTo: "" });
+const emptyValues = (): GroupFormValues => ({ name: "", assignedTo: "", vehicle: "", transporter: "" });
 
 export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 	const { theme } = useTheme();
@@ -30,6 +33,8 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 	const [values, setValues] = useState<GroupFormValues>(emptyValues);
 	const [formError, setFormError] = useState("");
 	const { data: groups = [] } = useGetGroupsQuery();
+	const { data: vehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
 	const [createGroup, { isLoading: isSaving }] = useCreateGroupMutation();
 
 	useEffect(() => {
@@ -52,6 +57,16 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 		setFormError("");
 	};
 
+	const handleAssignedToChange = (assignedTo: string) => {
+		setValues((current) => ({
+			...current,
+			assignedTo,
+			vehicle: "",
+			transporter: "",
+		}));
+		setFormError("");
+	};
+
 	const submit = async (event: FormEvent) => {
 		event.preventDefault();
 		const name = values.name.trim();
@@ -59,12 +74,27 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 			setFormError("Group Name and Assigned To are required.");
 			return;
 		}
+		if (values.assignedTo === "vehicle" && !values.vehicle) {
+			setFormError("Please select a vehicle.");
+			return;
+		}
+		if (values.assignedTo === "transporter" && !values.transporter) {
+			setFormError("Please select a transporter.");
+			return;
+		}
 		if (groups.some((group) => group.groupName?.toLowerCase() === name.toLowerCase())) {
 			setFormError("A group with this name already exists.");
 			return;
 		}
 		try {
-			await createGroup({ groupName: name, assignedTo: values.assignedTo, status: Status.ACTIVE, reason: "Group created" }).unwrap();
+			await createGroup({
+				groupName: name,
+				assignedTo: values.assignedTo,
+				...(values.assignedTo === "vehicle" ? { vehicle: values.vehicle } : {}),
+				...(values.assignedTo === "transporter" ? { transporter: values.transporter } : {}),
+				status: Status.ACTIVE,
+				reason: "Group created",
+			}).unwrap();
 			toast.success(`${name} saved.`);
 			onSubmit();
 		} catch (error) {
@@ -107,13 +137,43 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 						<label className="block min-w-0">
 							<span className={labelClass}>Assigned To <span className="text-rose-400">*</span></span>
 							<span className="relative block">
-								<select required value={values.assignedTo} onChange={(event) => update("assignedTo", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+								<select required value={values.assignedTo} onChange={(event) => handleAssignedToChange(event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 									<option value="">Select</option>
 									{groupAssignedToOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</span>
 						</label>
+
+						{values.assignedTo === "vehicle" && (
+							<label className="block min-w-0 sm:col-span-2">
+								<span className={labelClass}>Vehicle <span className="text-rose-400">*</span></span>
+								<span className="relative block max-w-md">
+									<select required value={values.vehicle} disabled={vehiclesLoading} onChange={(event) => update("vehicle", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+										<option value="">{vehiclesLoading ? "Loading vehicles…" : "Select Vehicle"}</option>
+										{vehicles.map((vehicle) => (
+											<option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>
+							</label>
+						)}
+
+						{values.assignedTo === "transporter" && (
+							<label className="block min-w-0 sm:col-span-2">
+								<span className={labelClass}>Transporter <span className="text-rose-400">*</span></span>
+								<span className="relative block max-w-md">
+									<select required value={values.transporter} disabled={transportersLoading} onChange={(event) => update("transporter", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+										<option value="">{transportersLoading ? "Loading transporters…" : "Select Transporter"}</option>
+										{transporters.map((transporter) => (
+											<option key={transporter.id} value={transporter.id}>{transporter.name}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>
+							</label>
+						)}
 					</div>
 				</div>
 

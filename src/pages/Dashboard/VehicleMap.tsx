@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
-import { MapContainer, Marker, TileLayer, ZoomControl, useMap } from "react-leaflet";
+import { MapContainer, Marker, Polyline, TileLayer, ZoomControl, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Layers3, LocateFixed } from "lucide-react";
 import type { VehicleRow } from "@/components/data/vehicles";
+import { getVehicleStatusImage } from "@/lib/vehicleStatusImage";
+
+type RoutePoint = [number, number];
 
 type VehicleMapProps = {
   vehicles: VehicleRow[];
@@ -12,39 +15,31 @@ type VehicleMapProps = {
   focusZoom?: number;
   showPopup?: boolean;
   lockFitOnSelect?: boolean;
+  /** Historical path to draw on the map. */
+  routePath?: RoutePoint[] | null;
 };
 
-function statusColor(vehicle: VehicleRow) {
-  if (vehicle.status === "running") return "#34d399";
-  if (vehicle.status === "stopped") return "#fb7185";
-  if (vehicle.status === "unreachable") return "#22d3ee";
-  if (vehicle.status === "overspeed") return "#fb923c";
-  if (vehicle.status === "idle") return "#fbbf24";
-  return vehicle.color;
-}
+const isValidLatLng = (lat: number, lng: number) =>
+  Number.isFinite(lat) && Number.isFinite(lng);
 
-function vehicleGlyphSvg(kind: VehicleRow["kind"]) {
-  if (kind === "bike") {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h3"/></svg>`;
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>`;
-}
+const hasValidCoords = (vehicle: VehicleRow) => isValidLatLng(vehicle.lat, vehicle.lng);
+
+const isValidRoutePoint = (point: RoutePoint) => isValidLatLng(point[0], point[1]);
 
 function markerIcon(vehicle: VehicleRow, selected: boolean) {
-  const color = statusColor(vehicle);
-  const size = selected ? 46 : 38;
-  const ring = selected ? "0 0 0 3px rgba(103,232,249,.55), 0 10px 28px rgba(0,0,0,.45)" : "0 8px 20px rgba(3,9,28,.45)";
+  const size = selected ? 52 : 42;
+  const img = getVehicleStatusImage(vehicle.kind, vehicle.status);
+  const ring = selected
+    ? "0 0 0 2px rgba(103,232,249,.7), 0 10px 28px rgba(0,0,0,.45)"
+    : "0 8px 20px rgba(3,9,28,.45)";
 
   return L.divIcon({
-    className: "",
-    iconSize: [size, size + 8],
-    iconAnchor: [size / 2, size + 2],
+    className: "vehicle-status-marker",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
     html: `
-      <div style="display:flex;flex-direction:column;align-items:center;filter:drop-shadow(0 6px 14px rgba(0,0,0,.35))">
-        <div style="width:${size}px;height:${size}px;border-radius:16px;background:linear-gradient(145deg,${color},#0b1730);color:#fff;display:flex;align-items:center;justify-content:center;border:${selected ? "2px solid #67e8f9" : "1px solid rgba(255,255,255,.55)"};box-shadow:${ring}">
-          ${vehicleGlyphSvg(vehicle.kind)}
-        </div>
-        <div style="width:10px;height:10px;margin-top:-5px;background:linear-gradient(145deg,${color},#0b1730);transform:rotate(45deg);border-right:1px solid rgba(255,255,255,.35);border-bottom:1px solid rgba(255,255,255,.35)"></div>
+      <div style="width:${size}px;height:${size}px;background:transparent;border:none;filter:drop-shadow(${ring});display:flex;align-items:center;justify-content:center${selected ? ";outline:2px solid #67e8f9;outline-offset:1px;border-radius:12px" : ""}">
+        <img src="${img}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:contain;display:block;pointer-events:none;background:transparent" draggable="false" />
       </div>
     `,
   });
@@ -54,21 +49,53 @@ function FitVehicles({
   vehicles,
   selectedVehicleSn,
   lockFitOnSelect,
+  hasRoute,
 }: {
   vehicles: VehicleRow[];
   selectedVehicleSn?: number | null;
   lockFitOnSelect?: boolean;
+  hasRoute?: boolean;
 }) {
   const map = useMap();
 
   useEffect(() => {
-    if (vehicles.length === 0) return;
+    if (hasRoute) return;
+    const mappable = vehicles.filter(hasValidCoords);
+    if (mappable.length === 0) return;
     if (lockFitOnSelect && selectedVehicleSn != null) return;
-    const bounds = L.latLngBounds(vehicles.map((vehicle) => [vehicle.lat, vehicle.lng]));
+    const bounds = L.latLngBounds(mappable.map((vehicle) => [vehicle.lat, vehicle.lng] as RoutePoint));
     map.fitBounds(bounds.pad(0.35));
-  }, [map, vehicles, selectedVehicleSn, lockFitOnSelect]);
+  }, [map, vehicles, selectedVehicleSn, lockFitOnSelect, hasRoute]);
 
   return null;
+}
+
+function FitRoute({ routePath }: { routePath: RoutePoint[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const points = routePath.filter(isValidRoutePoint);
+    if (points.length === 0) return;
+    if (points.length === 1) {
+      map.flyTo(points[0], 16, { duration: 0.75 });
+      return;
+    }
+    const bounds = L.latLngBounds(points);
+    map.flyToBounds(bounds.pad(0.2), { duration: 0.75 });
+  }, [map, routePath]);
+
+  return null;
+}
+
+function routeEndpointIcon(kind: "start" | "end") {
+  const color = kind === "start" ? "#22c55e" : "#ef4444";
+  const label = kind === "start" ? "S" : "E";
+  return L.divIcon({
+    className: "",
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+    html: `<div style="width:26px;height:26px;border-radius:999px;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font:700 11px/1 sans-serif;border:2px solid #fff;box-shadow:0 6px 16px rgba(0,0,0,.35)">${label}</div>`,
+  });
 }
 
 function FocusVehicle({
@@ -91,7 +118,7 @@ function FocusVehicle({
       return;
     }
 
-    if (!selected || selectedVehicleSn == null) return;
+    if (!selected || selectedVehicleSn == null || !hasValidCoords(selected)) return;
 
     map.flyTo([selected.lat, selected.lng], focusZoom, {
       duration: 0.75,
@@ -108,8 +135,14 @@ export function VehicleMap({
   focusZoom = 9,
   showPopup = false,
   lockFitOnSelect = false,
+  routePath = null,
 }: VehicleMapProps) {
+  const mappableVehicles = vehicles.filter(hasValidCoords);
   const selected = vehicles.find((vehicle) => vehicle.sn === selectedVehicleSn) ?? null;
+  const validRoutePath = (routePath ?? []).filter(isValidRoutePoint);
+  const hasRoute = validRoutePath.length > 0;
+  const routeStart = hasRoute ? validRoutePath[0] : null;
+  const routeEnd = hasRoute ? validRoutePath[validRoutePath.length - 1] : null;
 
   return (
     <div className="vehicle-map relative h-full w-full">
@@ -126,49 +159,66 @@ export function VehicleMap({
         />
         <ZoomControl position="bottomleft" />
         <FitVehicles
-          vehicles={vehicles}
+          vehicles={mappableVehicles}
           selectedVehicleSn={selectedVehicleSn}
           lockFitOnSelect={lockFitOnSelect}
+          hasRoute={hasRoute}
         />
-        <FocusVehicle
-          vehicles={vehicles}
-          selectedVehicleSn={selectedVehicleSn}
-          focusZoom={focusZoom}
-        />
-        {vehicles.map((vehicle) => (
-          <Marker
-            key={vehicle.sn}
-            position={[vehicle.lat, vehicle.lng]}
-            icon={markerIcon(vehicle, vehicle.sn === selectedVehicleSn)}
-            eventHandlers={{
-              click: () => onVehicleSelect?.(vehicle.sn),
-            }}
-            title={vehicle.vehicle}
+        {!hasRoute && (
+          <FocusVehicle
+            vehicles={mappableVehicles}
+            selectedVehicleSn={selectedVehicleSn}
+            focusZoom={focusZoom}
           />
-        ))}
+        )}
+        {hasRoute && <FitRoute routePath={validRoutePath} />}
+        {hasRoute && (
+          <Polyline
+            positions={validRoutePath}
+            pathOptions={{ color: "#2563eb", weight: 4, opacity: 0.9 }}
+          />
+        )}
+        {routeStart && (
+          <Marker position={routeStart} icon={routeEndpointIcon("start")} interactive={false} />
+        )}
+        {routeEnd && validRoutePath.length > 1 && (
+          <Marker position={routeEnd} icon={routeEndpointIcon("end")} interactive={false} />
+        )}
+        {!hasRoute &&
+          mappableVehicles.map((vehicle) => (
+            <Marker
+              key={vehicle.sn}
+              position={[vehicle.lat, vehicle.lng]}
+              icon={markerIcon(vehicle, vehicle.sn === selectedVehicleSn)}
+              eventHandlers={{
+                click: () => onVehicleSelect?.(vehicle.sn),
+              }}
+              title={vehicle.vehicle}
+            />
+          ))}
       </MapContainer>
 
       {showPopup && selected && (
-        <div className="pointer-events-none absolute left-1/2 top-[42%] z-[1100] w-[min(280px,70vw)] -translate-x-1/2 -translate-y-full">
-          <div className="rounded-2xl border border-white/20 bg-[#07142f]/95 p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-            <p className="text-[11px] font-semibold text-white">{selected.vehicle}</p>
-            <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-slate-300">
+        <div className="pointer-events-none absolute left-1/2 top-[42%] z-[1100] w-[min(168px,52vw)] -translate-x-1/2 -translate-y-full">
+          <div className="rounded-xl border border-white/20 bg-[#07142f]/95 px-2.5 py-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.4)] backdrop-blur-xl">
+            <p className="truncate text-[10px] font-semibold text-white">{selected.vehicle}</p>
+            <p className="mt-0.5 line-clamp-1 text-[8px] leading-snug text-slate-300">
               {selected.address}
             </p>
-            <div className="mt-2 flex items-center justify-between gap-2 text-[9px] text-slate-400">
-              <span>{selected.updatedAt}</span>
+            <div className="mt-1 flex items-center justify-between gap-1.5 text-[8px] text-slate-400">
+              <span className="truncate">{selected.updatedAt}</span>
               <span
                 className={
                   selected.ignition
-                    ? "font-medium text-emerald-300"
-                    : "font-medium text-rose-300"
+                    ? "shrink-0 font-medium text-emerald-300"
+                    : "shrink-0 font-medium text-rose-300"
                 }
               >
-                Ignition {selected.ignition ? "on" : "off"}
+                Ign {selected.ignition ? "on" : "off"}
               </span>
             </div>
           </div>
-          <div className="mx-auto h-3 w-3 -translate-y-1.5 rotate-45 border-b border-r border-white/20 bg-[#07142f]/95" />
+          <div className="mx-auto h-2.5 w-2.5 -translate-y-1 rotate-45 border-b border-r border-white/20 bg-[#07142f]/95" />
         </div>
       )}
 

@@ -2,6 +2,10 @@ export interface ExpensePartyRef {
   id?: string;
   name?: string;
   companyName?: string;
+  /** Vehicle plate / number when relation is a vehicle. */
+  vehicle?: string;
+  vehicleNo?: string;
+  vehicleNickname?: string;
 }
 
 export interface ExpenseTypeRef {
@@ -15,6 +19,12 @@ export interface CreateExpenseRequest {
   client: string;
   /** Transporter externalId / id. */
   transporter: string;
+  /** Must be VehicleWise | DriverWise */
+  expenseFor: string;
+  /** Vehicle id when expenseFor is VehicleWise */
+  vehicle?: string;
+  /** Driver id when expenseFor is DriverWise */
+  driver?: string;
   expenseName?: string;
   /** Expense type externalId / id. */
   expenseType: string;
@@ -41,25 +51,27 @@ export interface ExpenseApiRecord {
   expenseFor?: string | null;
   vehicle?: string | ExpensePartyRef | null;
   driver?: string | ExpensePartyRef | null;
-  expenseName?: string;
+  expenseName?: string | null;
   expenseType?: string | ExpenseTypeRef | null;
-  amount?: number | string;
-  expenseDate?: string;
-  odometer?: number | string;
-  engineHours?: number | string;
-  description?: string;
-  quantity?: number | string;
-  supplier?: string;
-  buyer?: string;
+  amount?: number | string | null;
+  expenseDate?: string | null;
+  odometer?: number | string | null;
+  engineHours?: number | string | null;
+  description?: string | null;
+  quantity?: number | string | null;
+  supplier?: string | null;
+  buyer?: string | null;
   vehicleNo?: string;
   driverName?: string;
   tripName?: string;
-  createdBy?: string;
+  createdBy?: string | null;
+  updatedBy?: string | null;
   role?: string;
   status?: string | null;
   reason?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  deletedAt?: string | null;
 }
 
 export interface Expense {

@@ -94,3 +94,10 @@
     @apply bg-background text-foreground antialiased;
   }
 }
+
+/* Transparent Leaflet vehicle markers (no default white square). */
+.leaflet-div-icon.vehicle-status-marker,
+.leaflet-div-icon.history-vehicle-marker {
+  background: transparent !important;
+  border: none !important;
+}

@@ -1,11 +1,16 @@
 import { History, Loader2, MapPin, X } from "lucide-react";
-import { useGetVehicleHistoryTrackingQuery } from "@/store/services/api/VehicleHistoryTracking";
+import {
+  todayHistoryRangeIso,
+  useGetVehicleHistoryTrackingQuery,
+} from "@/store/services/api/VehicleHistoryTracking";
 
 type VehicleHistoryPanelProps = {
   vehicleId: string;
   vehicleName: string;
   isDark: boolean;
   onClose: () => void;
+  from?: string;
+  to?: string;
 };
 
 export function VehicleHistoryPanel({
@@ -13,9 +18,18 @@ export function VehicleHistoryPanel({
   vehicleName,
   isDark,
   onClose,
+  from,
+  to,
 }: VehicleHistoryPanelProps) {
-  const { data: rows = [], isLoading, isFetching, isError, refetch } =
-    useGetVehicleHistoryTrackingQuery(vehicleId);
+  const range = from && to ? { from, to } : todayHistoryRangeIso();
+  const { data, isLoading, isFetching, isError, refetch } =
+    useGetVehicleHistoryTrackingQuery({
+      vehicleId,
+      from: range.from,
+      to: range.to,
+      limit: 5000,
+    });
+  const rows = data?.rows ?? [];
 
   return (
     <section

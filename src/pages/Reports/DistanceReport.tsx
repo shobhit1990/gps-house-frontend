@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { ReportType } from "@/enums/ReportType";
+import { SortOrder } from "@/enums/SortOrder";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useLazyGetAnalyticsDashboardQuery } from "@/store/services/api/AnalyticsDashboard";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
 
 type DistanceRow = {
 	id: string;
@@ -17,19 +25,14 @@ type DistanceRow = {
 };
 
 type AppliedFilters = {
-	clients: string[];
-	transporters: string[];
-	vehicles: string[];
 	days: string[];
 };
 
 type MenuKind = "client" | "transporter" | "vehicle" | "type" | "sort";
-type ReportType = "Vehicle Wise" | "Day Wise";
-type SortOrder = "" | "Ascending" | "Descending";
+type SortOrderValue = "" | SortOrder;
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-const reportTypes: ReportType[] = ["Vehicle Wise", "Day Wise"];
-const sortOptions: Exclude<SortOrder, "">[] = ["Ascending", "Descending"];
+const reportTypes = Object.values(ReportType);
+const sortOptions = Object.values(SortOrder);
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -41,6 +44,14 @@ const toInput = (date: Date, end: boolean) => {
 const todayRange = () => {
 	const now = new Date();
 	return { from: toInput(now, false), to: toInput(now, true) };
+};
+
+/** datetime-local (YYYY-MM-DDTHH:mm) → API format DD/MM/YYYY HH:mm */
+const toApiDateTime = (value: string) => {
+	const [datePart, timePart = "00:00"] = value.split("T");
+	const [year, month, day] = datePart.split("-");
+	if (!year || !month || !day) return value;
+	return `${day}/${month}/${year} ${timePart}`;
 };
 
 const formatDay = (date: Date) => `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
@@ -66,13 +77,10 @@ const recordedKm = (distance: number | undefined) => {
 	return Math.round(km * 10) / 10;
 };
 
-const coveredByVehicle: Record<string, number> = {
-	UP32HN8013: 10,
-};
-
 const formatKm = (value: number) => (Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10));
 
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
+const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
+	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
 
 const axisMaxFor = (max: number) => (max <= 0 ? 10 : Math.max(1, Math.ceil(max)));
 
@@ -141,9 +149,9 @@ function DistanceChart({ title, items }: { title: string; items: { id: string; l
 
 export default function DistanceReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const [fetchAnalytics, { isFetching }] = useLazyGetAnalyticsDashboardQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -163,9 +171,9 @@ export default function DistanceReport() {
 	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], days: [] });
-	const [reportType, setReportType] = useState<ReportType>("Vehicle Wise");
-	const [sortOrder, setSortOrder] = useState<SortOrder>("");
+	const [applied, setApplied] = useState<AppliedFilters>({ days: [] });
+	const [reportType, setReportType] = useState<ReportType>(ReportType.VEHICLE_WISE);
+	const [sortOrder, setSortOrder] = useState<SortOrderValue>("");
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
@@ -174,24 +182,21 @@ export default function DistanceReport() {
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		const matched = rows.filter((row) => {
-			if (applied.clients.length > 0 && row.client && !applied.clients.includes(row.client)) return false;
-			if (applied.transporters.length > 0 && !applied.transporters.includes(row.transporter)) return false;
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicle)) return false;
 			if (!query) return true;
 			const dayText = applied.days.map((day) => formatKm(row.byDay[day] ?? 0)).join(" ");
 			return [row.vehicle, row.alias, dayText, formatKm(row.total)].join(" ").toLowerCase().includes(query);
 		});
 		if (!sortOrder) return matched;
-		const direction = sortOrder === "Ascending" ? 1 : -1;
+		const direction = sortOrder === SortOrder.ASCENDING ? 1 : -1;
 		return [...matched].sort((left, right) => (left.total - right.total) * direction || left.vehicle.localeCompare(right.vehicle));
-	}, [applied, rows, search, sortOrder]);
+	}, [applied.days, rows, search, sortOrder]);
 
 	const chartItems = useMemo(() => {
-		const items = reportType === "Day Wise"
+		const items = reportType === ReportType.DAY_WISE
 			? applied.days.map((day) => ({ id: day, label: day, km: filteredRows.reduce((sum, row) => sum + (row.byDay[day] ?? 0), 0) }))
 			: filteredRows.map((row) => ({ id: row.id, label: row.vehicle, km: row.total }));
-		if (!sortOrder || reportType !== "Day Wise") return items;
-		const direction = sortOrder === "Ascending" ? 1 : -1;
+		if (!sortOrder || reportType !== ReportType.DAY_WISE) return items;
+		const direction = sortOrder === SortOrder.ASCENDING ? 1 : -1;
 		return [...items].sort((left, right) => (left.km - right.km) * direction || left.label.localeCompare(right.label));
 	}, [applied.days, filteredRows, reportType, sortOrder]);
 
@@ -200,11 +205,11 @@ export default function DistanceReport() {
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 	const dayTotals = applied.days.map((day) => filteredRows.reduce((sum, row) => sum + (row.byDay[day] ?? 0), 0));
 	const grandTotal = filteredRows.reduce((sum, row) => sum + row.total, 0);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+	const visibleClients = clientMaster.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const visibleTransporters = transporterMaster.filter((option) => option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
+	const visibleVehicles = vehicleMaster.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 	const hasResult = searched && rows.length > 0;
-	const chartTitle = reportType === "Day Wise" ? "Total Distance Covered By Each Day In KM" : "Total Distance Covered By Each Vehicle In KM";
+	const chartTitle = reportType === ReportType.DAY_WISE ? "Total Distance Covered By Each Day In KM" : "Total Distance Covered By Each Vehicle In KM";
 
 	useEffect(() => {
 		if (!openMenu) return;
@@ -228,27 +233,71 @@ export default function DistanceReport() {
 		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
 	};
 
-	const applyFilters = () => {
+	const applyFilters = async () => {
+		if (selectedClients.length !== 1 || selectedTransporters.length !== 1 || selectedVehicles.length === 0) {
+			toast.error("Select one client, one transporter, and at least one vehicle.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
+
 		const days = daysInRange(from, to);
-		const ready = selectedClients.length > 0 && selectedTransporters.length > 0 && selectedVehicles.length > 0 && days.length > 0;
-		const matched = ready ? vehicles.filter((vehicle) => selectedVehicles.includes(vehicle.vehicle)) : [];
-		setRows(matched.map((vehicle) => {
-			const km = recordedKm(vehicle.kmSinceAc) || coveredByVehicle[vehicle.vehicle] || 0;
-			const byDay = Object.fromEntries(days.map((day, index) => [day, days.length === 1 || index === days.length - 1 ? km : 0]));
-			return {
-				id: vehicle.vehicle,
-				client: selectedClients[0] ?? "",
-				transporter: selectedTransporters.includes(vehicle.branch) ? vehicle.branch : selectedTransporters[0] ?? "",
-				vehicle: vehicle.vehicle,
-				alias: vehicle.branch || "—",
-				byDay,
-				total: km,
-			};
-		}));
-		setApplied({ clients: selectedClients, transporters: selectedTransporters, vehicles: selectedVehicles, days });
-		setSearched(true);
-		setOpenMenu(null);
-		setPage(0);
+		if (days.length === 0) {
+			toast.error("Invalid date range.");
+			return;
+		}
+
+		const client = selectedClients[0];
+		const transporter = selectedTransporters[0];
+		const apiFrom = toApiDateTime(from);
+		const apiTo = toApiDateTime(to);
+		const clientName = clientMaster.find((option) => option.id === client)?.name ?? "";
+		const transporterName = transporterMaster.find((option) => option.id === transporter)?.name ?? "";
+		const vehicleNameById = new Map(vehicleMaster.map((option) => [option.id, option.name]));
+
+		try {
+			const batches = await Promise.all(
+				selectedVehicles.map(async (vehicle) => {
+					const result = await fetchAnalytics({
+						client,
+						transporter,
+						vehicle,
+						from: apiFrom,
+						to: apiTo,
+					}).unwrap();
+					const vehicleName = vehicleNameById.get(vehicle) ?? vehicle;
+					const byDay = Object.fromEntries(days.map((day) => [day, 0]));
+					for (const point of result.chartData) {
+						const key = point.dayKey && days.includes(point.dayKey) ? point.dayKey : undefined;
+						if (key) byDay[key] = recordedKm(point.mileage);
+					}
+					const totalFromDays = days.reduce((sum, day) => sum + (byDay[day] ?? 0), 0);
+					return {
+						id: vehicle,
+						client: clientName,
+						transporter: transporterName,
+						vehicle: vehicleName,
+						alias: "—",
+						byDay,
+						total: recordedKm(result.totalDistanceKm) || totalFromDays,
+					} satisfies DistanceRow;
+				}),
+			);
+			setRows(batches);
+			setApplied({ days });
+			setSearched(true);
+			setOpenMenu(null);
+			setPage(0);
+			if (batches.every((row) => row.total <= 0 && Object.values(row.byDay).every((km) => km <= 0))) {
+				toast.message("No distance data for this range.");
+			} else {
+				toast.success("Distance report loaded");
+			}
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load distance report."));
+		}
 	};
 
 	const refresh = () => {
@@ -261,8 +310,8 @@ export default function DistanceReport() {
 		setSelectedVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [], days: [] });
-		setReportType("Vehicle Wise");
+		setApplied({ days: [] });
+		setReportType(ReportType.VEHICLE_WISE);
 		setSortOrder("");
 		setClientQuery("");
 		setTransporterQuery("");
@@ -281,13 +330,13 @@ export default function DistanceReport() {
 		emptyLabel: string,
 		selected: string[],
 		setSelected: (next: string[]) => void,
-		options: string[],
+		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -296,7 +345,7 @@ export default function DistanceReport() {
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
 					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
+						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
 							Select All
 						</button>
 						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
@@ -304,11 +353,11 @@ export default function DistanceReport() {
 						</button>
 					</div>
 					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
+						{options.map((option) => (
+							<li key={option.id}>
 								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
+									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
+									{option.name}
 								</label>
 							</li>
 						))}
@@ -358,7 +407,7 @@ export default function DistanceReport() {
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{hasResult ? filteredRows.length : 0} reports</p>
 					</div>
 					<button type="button" onClick={refresh} aria-label="Refresh distance report" title="Refresh distance report" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -372,8 +421,8 @@ export default function DistanceReport() {
 							<span className="text-slate-500">-</span>
 							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 						</div>
-						<button type="button" onClick={applyFilters} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							Search
+						<button type="button" onClick={() => void applyFilters()} disabled={isFetching} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							{isFetching ? "Searching..." : "Search"}
 						</button>
 					</div>
 				</section>

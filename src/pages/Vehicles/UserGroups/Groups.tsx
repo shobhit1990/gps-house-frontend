@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { Group } from "@/interfaces/Group";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useDeleteGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
+import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 type GroupRecord = {
 	id: string;
@@ -17,13 +18,8 @@ type GroupRecord = {
 	transporters: string;
 };
 
-const toRecord = (group: Group): GroupRecord => ({
-	id: group.externalId,
-	name: group.groupName ?? "",
-	assignedTo: groupAssignedToOptions.find((option) => option.value === group.assignedTo)?.label ?? group.assignedTo ?? "",
-	vehicles: "",
-	transporters: "",
-});
+const joinNames = (ids: string[] | undefined, names: Map<string, string>) =>
+	(ids ?? []).map((id) => names.get(id) ?? id).filter(Boolean).join(", ");
 
 type ColumnKey = "name" | "assignedTo" | "vehicles" | "transporters" | "delete";
 
@@ -42,8 +38,20 @@ export default function Groups() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: groups = [], isLoading, isFetching, isError, refetch } = useGetGroupsQuery();
+	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const [deleteGroup, { isLoading: isDeleting }] = useDeleteGroupMutation();
-	const rows = useMemo(() => groups.map(toRecord), [groups]);
+	const rows = useMemo(() => {
+		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
+		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
+		return groups.map((group: Group): GroupRecord => ({
+			id: group.externalId,
+			name: group.groupName ?? "",
+			assignedTo: groupAssignedToOptions.find((option) => option.value === group.assignedTo)?.label ?? group.assignedTo ?? "",
+			vehicles: joinNames(group.vehicles, vehicleNames),
+			transporters: joinNames(group.transporters, transporterNames),
+		}));
+	}, [groups, vehicles, transporters]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);

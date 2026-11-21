@@ -1,14 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
-import { toast } from "sonner";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import type { DriverDetail } from "@/interfaces/DriverDetail";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { Status } from "@/enums/Status";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
 import { useGetLicensesQuery } from "@/store/services/api/License";
-import { useUploadDocumentMutation } from "@/store/services/api/UploadDoc";
 
 export type DriverDocumentValues = {
 	id: number;
@@ -115,6 +113,12 @@ const detailDefaults = () => ({
 	reason: "",
 });
 
+/** API ISO / datetime → `YYYY-MM-DD` for `<input type="date">`. */
+const toDateInputValue = (value?: string) => {
+	const day = value?.trim().slice(0, 10) ?? "";
+	return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
+};
+
 const toFormValues = (driver: DriverDetail): ReturnType<typeof detailDefaults> => ({
 	...detailDefaults(),
 	client: String(driver.client ?? ""),
@@ -122,19 +126,19 @@ const toFormValues = (driver: DriverDetail): ReturnType<typeof detailDefaults> =
 	firstName: driver.firstName ?? "",
 	lastName: driver.lastName ?? "",
 	deviceId: driver.deviceId ?? "",
-	joiningDate: driver.dateOfJoining ?? "",
-	leavingDate: driver.dateOfLeaving ?? "",
-	dateOfBirth: driver.dateOfBirth ?? "",
+	joiningDate: toDateInputValue(driver.dateOfJoining) || today(),
+	leavingDate: toDateInputValue(driver.dateOfLeaving) || today(),
+	dateOfBirth: toDateInputValue(driver.dateOfBirth) || yearsAgo(18),
 	experience: String(driver.experience ?? 0),
 	salary: String(driver.salary ?? 0),
 	phone: driver.phoneNumber ?? "",
 	licenseNumber: driver.licenseNumber ?? "",
-	licenseIssue: driver.licenseIssueDate ?? "",
-	licenseExpiry: driver.licenseExpiryDate ?? "",
+	licenseIssue: toDateInputValue(driver.licenseIssueDate) || today(),
+	licenseExpiry: toDateInputValue(driver.licenseExpiryDate) || today(),
 	insuranceNo: driver.lifeInsuranceNumber ?? "",
-	insuranceExpiry: driver.lifeInsuranceExpiryDate ?? "",
+	insuranceExpiry: toDateInputValue(driver.lifeInsuranceExpiryDate) || today(),
 	mediclaimNo: driver.mediclaimNumber ?? "",
-	mediclaimExpiry: driver.mediclaimExpiryDate ?? "",
+	mediclaimExpiry: toDateInputValue(driver.mediclaimExpiryDate) || today(),
 	bloodGroup: driver.bloodGroup ?? "",
 	supervisorName: driver.supervisorName ?? "",
 	supervisorPhone: driver.supervisorPhoneNumber ?? "",
@@ -169,7 +173,6 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 	const [detailsSaved, setDetailsSaved] = useState(false);
 	const [savedDriverId, setSavedDriverId] = useState(driver?.externalId ?? "");
 	const [isSavingDetails, setIsSavingDetails] = useState(false);
-	const [uploadDocument, { isLoading: isUploading }] = useUploadDocumentMutation();
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -194,6 +197,8 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 		setFormError("");
 	};
 
+	const isEditMode = Boolean(driver?.externalId);
+
 	const addDocument = () => {
 		const id = nextDocumentId.current;
 		nextDocumentId.current += 1;
@@ -206,7 +211,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 		setFormError("");
 	};
 
-	const saveDetailsAndContinue = async () => {
+	const validateDetails = () => {
 		if (!values.client || !values.transporter || !values.firstName.trim() || !values.lastName.trim()) {
 			setActiveTab("Add Driver Detail");
 			setFormError("Client, Transporter, First Name, and Last Name are required.");
@@ -217,25 +222,41 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 			setFormError("Driver must be above 18 years");
 			return false;
 		}
-		if (!detailsSaved) {
-			setIsSavingDetails(true);
-			try {
-				const driverId = await onSubmit({
-					...values,
-					firstName: values.firstName.trim(),
-					lastName: values.lastName.trim(),
-					experience: values.experience.trim() || "0",
-					salary: values.salary.trim() || "0",
-					documents: [],
-				}, driver?.externalId || savedDriverId || undefined);
-				setSavedDriverId(driverId);
-				setDetailsSaved(true);
-			} catch (error) {
-				setFormError(apiErrorMessage(error, "Unable to save driver details."));
-				return false;
-			} finally {
-				setIsSavingDetails(false);
-			}
+		return true;
+	};
+
+	const detailPayload = (): DriverDetailFormValues => ({
+		...values,
+		firstName: values.firstName.trim(),
+		lastName: values.lastName.trim(),
+		experience: values.experience.trim() || "0",
+		salary: values.salary.trim() || "0",
+		documents: [],
+	});
+
+	/** New driver: create on Continue so Upload tab has an id. Edit: no API yet. */
+	const persistCreateDetails = async (): Promise<string | null> => {
+		if (isEditMode) return savedDriverId || driver?.externalId || null;
+		if (detailsSaved && savedDriverId) return savedDriverId;
+		setIsSavingDetails(true);
+		try {
+			const driverId = await onSubmit(detailPayload(), undefined);
+			setSavedDriverId(driverId);
+			setDetailsSaved(true);
+			return driverId;
+		} catch (error) {
+			setFormError(apiErrorMessage(error, "Unable to save driver details."));
+			return null;
+		} finally {
+			setIsSavingDetails(false);
+		}
+	};
+
+	const openUploadDocumentsTab = async () => {
+		if (!validateDetails()) return false;
+		if (!isEditMode) {
+			const driverId = await persistCreateDetails();
+			if (!driverId) return false;
 		}
 		setFormError("");
 		setActiveTab("Upload Documents");
@@ -247,14 +268,10 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 		setFormError("");
 
 		if (activeTab === "Add Driver Detail") {
-			await saveDetailsAndContinue();
+			await openUploadDocumentsTab();
 			return;
 		}
-		if (!savedDriverId) {
-			setFormError("Save driver details before uploading documents.");
-			setActiveTab("Add Driver Detail");
-			return;
-		}
+
 		if (documents.some((document) => !document.name.trim() || !document.fileName)) {
 			setFormError("Each document needs a name and a file.");
 			return;
@@ -264,19 +281,29 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 			return;
 		}
 
+		const driverId = savedDriverId || driver?.externalId || "";
+		if (!driverId) {
+			setFormError("Save driver details before uploading documents.");
+			setActiveTab("Add Driver Detail");
+			return;
+		}
+
 		try {
-			for (const document of documents) {
-				if (!document.file) continue;
-				await uploadDocument({
-					id: savedDriverId,
-					file: document.file,
-					documentName: document.name.trim(),
-				}).unwrap();
-			}
-			if (documents.length > 0) toast.success("Driver documents uploaded.");
+			// Upload Documents Save → PUT /driverDetail/update/{id}
+			setIsSavingDetails(true);
+			await onSubmit(
+				{
+					...detailPayload(),
+					documents,
+				},
+				driverId,
+			);
+			setDetailsSaved(true);
+			setIsSavingDetails(false);
 			onClose();
 		} catch (error) {
-			setFormError(apiErrorMessage(error, "Unable to upload driver documents."));
+			setIsSavingDetails(false);
+			setFormError(apiErrorMessage(error, "Unable to update driver details."));
 		}
 	};
 
@@ -348,10 +375,10 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							<button
 								key={tab}
 								type="button"
-								disabled={detailsSaved && tab === "Add Driver Detail"}
+								disabled={!isEditMode && detailsSaved && tab === "Add Driver Detail"}
 								onClick={() => {
 									if (tab === "Upload Documents") {
-										void saveDetailsAndContinue();
+										void openUploadDocumentsTab();
 									} else {
 										setActiveTab(tab);
 										setFormError("");
@@ -500,9 +527,9 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							Reset
 						</button>
 					)}
-					<button type="submit" disabled={isUploading || isSavingDetails} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-						{(isUploading || isSavingDetails) && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
-						{isUploading ? "Uploading..." : isSavingDetails ? "Saving..." : activeTab === "Add Driver Detail" ? "Save & Continue" : "Save"}
+					<button type="submit" disabled={isSavingDetails} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+						{isSavingDetails && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+						{isSavingDetails ? "Saving..." : activeTab === "Add Driver Detail" ? (isEditMode ? "Continue" : "Save & Continue") : "Save"}
 					</button>
 				</footer>
 			</form>

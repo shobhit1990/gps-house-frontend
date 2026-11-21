@@ -19,6 +19,11 @@ import "./services/api/User";
 import "./services/api/Vehicle";
 import "./services/api/VehicleHistoryTracking";
 import "./services/api/VehicleLiveTracking";
+import "./services/api/TravelSummaryReport";
+import "./services/api/StoppageSummaryReport";
+import "./services/api/AnalyticsDashboard";
+import "./services/api/DriverAssignmentReport";
+import "./services/api/VehicleLogReport";
 import authReducer from "./slices/authSlice";
 import globalLoaderReducer from "./slices/globalLoaderSlice";
 

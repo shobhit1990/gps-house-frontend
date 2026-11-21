@@ -176,25 +176,33 @@ export default function DriverDetails() {
 		if (!Number.isFinite(experience) || !Number.isFinite(salary)) {
 			throw new Error("Experience and salary must be valid numbers.");
 		}
+		/** `YYYY-MM-DD` (date input) → ISO 8601, e.g. `2026-11-21T00:00:00.000Z`. */
+		const toIsoDate = (value: string) => {
+			const day = value.trim().slice(0, 10);
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+				throw new Error(`Invalid date: ${value || "(empty)"}`);
+			}
+			return `${day}T00:00:00.000Z`;
+		};
 		const body: CreateDriverDetailRequest = {
 			client: values.client,
 			transporter: values.transporter,
 			firstName: values.firstName,
 			lastName: values.lastName,
 			deviceId: values.deviceId,
-			dateOfJoining: values.joiningDate,
-			dateOfBirth: values.dateOfBirth,
+			dateOfJoining: toIsoDate(values.joiningDate),
+			dateOfBirth: toIsoDate(values.dateOfBirth),
 			experience,
 			salary,
 			phoneNumber: values.phone,
 			licenseNumber: values.licenseNumber,
 			licenseToDrive: values.licenseToDrive.split(",").map((id) => id.trim()).filter(Boolean),
-			licenseIssueDate: values.licenseIssue,
-			licenseExpiryDate: values.licenseExpiry,
+			licenseIssueDate: toIsoDate(values.licenseIssue),
+			licenseExpiryDate: toIsoDate(values.licenseExpiry),
 			lifeInsuranceNumber: values.insuranceNo,
-			lifeInsuranceExpiryDate: values.insuranceExpiry,
+			lifeInsuranceExpiryDate: toIsoDate(values.insuranceExpiry),
 			mediclaimNumber: values.mediclaimNo,
-			mediclaimExpiryDate: values.mediclaimExpiry,
+			mediclaimExpiryDate: toIsoDate(values.mediclaimExpiry),
 			bloodGroup: values.bloodGroup,
 			supervisorName: values.supervisorName,
 			supervisorPhoneNumber: values.supervisorPhone,

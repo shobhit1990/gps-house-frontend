@@ -19,6 +19,7 @@ import {
   Radio,
   Route,
   Search,
+  SlidersHorizontal,
   Snowflake,
   UserRound,
   X,
@@ -27,12 +28,16 @@ import {
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  vehicles,
   type VehicleRow,
   type VehicleStatus,
 } from "@/components/data/vehicles";
+import {
+  DashboardFilterDialog,
+  type DashboardFilterValues,
+} from "@/components/Dashboard/DashboardFilterDialog";
 import { VehicleMap } from "@/pages/Dashboard/VehicleMap";
 import { VehicleGlyph } from "@/pages/Dashboard/VehicleGlyph";
+import { useGetVehicleLiveTrackingQuery } from "@/store/services/api/VehicleLiveTracking";
 
 type StatusFilter = "all" | VehicleStatus;
 type DetailTab = "overview" | "track" | "history" | "more";
@@ -279,7 +284,12 @@ function VehicleCard({
 
       <div className="p-3.5 pl-4">
         <div className="flex items-start gap-3">
-          <VehicleGlyph kind={vehicle.kind} color={accentColor} size="lg" />
+          <VehicleGlyph
+            kind={vehicle.kind}
+            status={vehicle.status}
+            color={accentColor}
+            size="lg"
+          />
 
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
@@ -399,6 +409,14 @@ export default function AdvanceDashboard() {
   const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme !== "light";
+  const { data: liveVehicles = [] } = useGetVehicleLiveTrackingQuery(undefined, {
+    pollingInterval: 15000,
+  });
+  const [filteredApiVehicles, setFilteredApiVehicles] = useState<VehicleRow[] | null>(null);
+  const [showFilterDialog, setShowFilterDialog] = useState(false);
+  const [filterValues, setFilterValues] = useState<DashboardFilterValues | null>(null);
+  const [enableGeofenceOnMap, setEnableGeofenceOnMap] = useState(false);
+  const vehicles = filteredApiVehicles ?? liveVehicles;
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -426,7 +444,7 @@ export default function AdvanceDashboard() {
     };
     for (const vehicle of vehicles) counts[vehicle.status] += 1;
     return counts;
-  }, []);
+  }, [vehicles]);
 
   const filteredVehicles = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -449,7 +467,7 @@ export default function AdvanceDashboard() {
           .includes(query);
       return matchesStatus && matchesKind && matchesSearch;
     });
-  }, [search, statusFilter, kindFilter]);
+  }, [vehicles, search, statusFilter, kindFilter]);
 
   useEffect(() => {
     if (
@@ -466,7 +484,7 @@ export default function AdvanceDashboard() {
   const fleetHealth = useMemo(() => {
     const online = vehicles.filter((v) => v.status !== "unreachable").length;
     return Math.round((online / Math.max(vehicles.length, 1)) * 100);
-  }, []);
+  }, [vehicles]);
 
   const handleSelectVehicle = (sn: number) => {
     setSelectedVehicleSn(sn);
@@ -475,6 +493,7 @@ export default function AdvanceDashboard() {
 
   const copyCoords = async () => {
     if (!selectedVehicle) return;
+    if (!Number.isFinite(selectedVehicle.lat) || !Number.isFinite(selectedVehicle.lng)) return;
     const text = `${selectedVehicle.lat}, ${selectedVehicle.lng}`;
     try {
       await navigator.clipboard.writeText(text);
@@ -605,6 +624,40 @@ export default function AdvanceDashboard() {
 
               <button
                 type="button"
+                onClick={() => setShowFilterDialog(true)}
+                aria-pressed={Boolean(filteredApiVehicles)}
+                className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-[11px] font-semibold uppercase tracking-[0.1em] transition ${
+                  filteredApiVehicles
+                    ? isDark
+                      ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                      : "border-cyan-200 bg-cyan-50 text-cyan-700"
+                    : isDark
+                      ? "border-white/[0.09] bg-white/[0.03] text-slate-300 hover:border-white/[0.16]"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                Filter
+              </button>
+              {filteredApiVehicles && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilteredApiVehicles(null);
+                    setFilterValues(null);
+                    setEnableGeofenceOnMap(false);
+                  }}
+                  className={`inline-flex h-10 items-center rounded-xl border px-3 text-[11px] font-semibold transition ${
+                    isDark
+                      ? "border-white/[0.08] text-slate-400 hover:text-white"
+                      : "border-slate-200 text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="button"
                 onClick={() => setShowFilters((value) => !value)}
                 className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-[11px] font-semibold uppercase tracking-[0.1em] transition ${
                   showFilters
@@ -616,7 +669,7 @@ export default function AdvanceDashboard() {
                       : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <Filter className="h-3.5 w-3.5" />
+                <SlidersHorizontal className="h-3.5 w-3.5" />
                 Type
               </button>
 
@@ -760,6 +813,18 @@ export default function AdvanceDashboard() {
                 lockFitOnSelect
               />
 
+              {enableGeofenceOnMap && (
+                <div
+                  className={`absolute right-3 top-3 z-[1100] rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] ${
+                    isDark
+                      ? "border-cyan-300/25 bg-[#07142f]/90 text-cyan-100"
+                      : "border-cyan-200 bg-white/95 text-cyan-700"
+                  }`}
+                >
+                  Geofence on map
+                </div>
+              )}
+
               {selectedVehicle && (
                 <div
                   className={`absolute left-3 top-3 z-[1100] w-[min(340px,calc(100%-1.5rem))] overflow-hidden rounded-[22px] border shadow-[0_28px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl sm:left-4 sm:top-4 ${
@@ -777,6 +842,7 @@ export default function AdvanceDashboard() {
                     <div className="relative flex items-start gap-3">
                       <VehicleGlyph
                         kind={selectedVehicle.kind}
+                        status={selectedVehicle.status}
                         color={
                           selectedVehicle.status === "running" ? "#34d399" : selectedVehicle.color
                         }
@@ -920,7 +986,11 @@ export default function AdvanceDashboard() {
                         />
                         <DetailRow
                           label="Coordinates"
-                          value={`${selectedVehicle.lat.toFixed(5)}, ${selectedVehicle.lng.toFixed(5)}`}
+                          value={
+                            Number.isFinite(selectedVehicle.lat) && Number.isFinite(selectedVehicle.lng)
+                              ? `${selectedVehicle.lat.toFixed(5)}, ${selectedVehicle.lng.toFixed(5)}`
+                              : "—"
+                          }
                           isDark={isDark}
                           accent
                         />
@@ -1045,6 +1115,20 @@ export default function AdvanceDashboard() {
             </section>
           </div>
         </section>
+
+        {showFilterDialog && (
+          <DashboardFilterDialog
+            isDark={isDark}
+            initialValues={filterValues ?? undefined}
+            onClose={() => setShowFilterDialog(false)}
+            onApplied={({ vehicles: nextVehicles, values }) => {
+              setFilteredApiVehicles(nextVehicles);
+              setFilterValues(values);
+              setEnableGeofenceOnMap(values.enableGeofenceOnMap);
+              setSelectedVehicleSn(null);
+            }}
+          />
+        )}
       </main>
     </div>
   );

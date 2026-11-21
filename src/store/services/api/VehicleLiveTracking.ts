@@ -46,7 +46,14 @@ const normalizeStatus = (gpsStatus?: string | null, speed?: number, overspeed?: 
   if (text.includes("over")) return "overspeed";
   if (text.includes("run") || text.includes("moving") || text.includes("motion")) return "running";
   if (text.includes("idle")) return "idle";
-  if (text.includes("unreach") || text.includes("offline") || text.includes("no gps")) return "unreachable";
+  if (
+    text.includes("inactive") ||
+    text.includes("unreach") ||
+    text.includes("offline") ||
+    text.includes("no gps")
+  ) {
+    return "unreachable";
+  }
   if (text.includes("new")) return "new";
   if (text.includes("stop") || text.includes("park")) return "stopped";
   return "stopped";

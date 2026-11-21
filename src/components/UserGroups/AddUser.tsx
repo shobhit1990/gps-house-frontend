@@ -6,12 +6,14 @@ import { groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
-import { useGetRoleMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetRoleMasterQuery, useGetTimezonesQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { useCreateUserMutation } from "@/store/services/api/User";
 
 export type UserGroupValues = {
 	name: string;
 	assignedTo: string;
+	vehicle: string;
+	transporter: string;
 };
 
 export type UserFormValues = {
@@ -40,7 +42,7 @@ type UserTab = (typeof tabs)[number];
 
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
 
-const emptyGroup = (): UserGroupValues => ({ name: "", assignedTo: "" });
+const emptyGroup = (): UserGroupValues => ({ name: "", assignedTo: "", vehicle: "", transporter: "" });
 
 const emptyUser = (): UserFormValues => ({
 	username: "",
@@ -69,6 +71,8 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
 	const { data: roles = [], isLoading: rolesLoading } = useGetRoleMasterQuery();
 	const { data: timezoneMaster = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
+	const { data: vehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
 	const timezones = timezoneMaster
 		.map((timezone) => ({ value: timezone.externalId ?? String(timezone.id ?? ""), label: timezone.timezone ?? "" }))
 		.filter((timezone) => timezone.value && timezone.label);
@@ -96,6 +100,11 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 		setFormError("");
 	};
 
+	const handleAssignedToChange = (assignedTo: string) => {
+		setGroupValues((current) => ({ ...current, assignedTo, vehicle: "", transporter: "" }));
+		setFormError("");
+	};
+
 	const update = <K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) => {
 		setValues((current) => ({ ...current, [key]: value }));
 		setFormError("");
@@ -120,12 +129,27 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 			setFormError("Group Name and Assigned To are required.");
 			return;
 		}
+		if (groupValues.assignedTo === "vehicle" && !groupValues.vehicle) {
+			setFormError("Please select a vehicle.");
+			return;
+		}
+		if (groupValues.assignedTo === "transporter" && !groupValues.transporter) {
+			setFormError("Please select a transporter.");
+			return;
+		}
 		if (groups.some((group) => group.groupName?.toLowerCase() === name.toLowerCase())) {
 			setFormError("A group with this name already exists.");
 			return;
 		}
 		try {
-			const group = await createGroup({ groupName: name, assignedTo: groupValues.assignedTo, status: Status.ACTIVE, reason: "Group created" }).unwrap();
+			const group = await createGroup({
+				groupName: name,
+				assignedTo: groupValues.assignedTo,
+				...(groupValues.assignedTo === "vehicle" ? { vehicle: groupValues.vehicle } : {}),
+				...(groupValues.assignedTo === "transporter" ? { transporter: groupValues.transporter } : {}),
+				status: Status.ACTIVE,
+				reason: "Group created",
+			}).unwrap();
 			toast.success(`${name} saved.`);
 			setValues((current) => ({ ...current, group: group.externalId }));
 			setGroupValues(emptyGroup());
@@ -239,13 +263,41 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 							<label className="block min-w-0">
 								<span className={labelClass}>Assigned To <span className="text-rose-400">*</span></span>
 								<span className="relative block">
-									<select required value={groupValues.assignedTo} onChange={(event) => updateGroup("assignedTo", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+									<select required value={groupValues.assignedTo} onChange={(event) => handleAssignedToChange(event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 										<option value="">Select</option>
 										{groupAssignedToOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 									</select>
 									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 								</span>
 							</label>
+							{groupValues.assignedTo === "vehicle" && (
+								<label className="block min-w-0 sm:col-span-2">
+									<span className={labelClass}>Vehicle <span className="text-rose-400">*</span></span>
+									<span className="relative block max-w-md">
+										<select required value={groupValues.vehicle} disabled={vehiclesLoading} onChange={(event) => updateGroup("vehicle", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">{vehiclesLoading ? "Loading vehicles…" : "Select Vehicle"}</option>
+											{vehicles.map((vehicle) => (
+												<option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>
+											))}
+										</select>
+										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+									</span>
+								</label>
+							)}
+							{groupValues.assignedTo === "transporter" && (
+								<label className="block min-w-0 sm:col-span-2">
+									<span className={labelClass}>Transporter <span className="text-rose-400">*</span></span>
+									<span className="relative block max-w-md">
+										<select required value={groupValues.transporter} disabled={transportersLoading} onChange={(event) => updateGroup("transporter", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">{transportersLoading ? "Loading transporters…" : "Select Transporter"}</option>
+											{transporters.map((transporter) => (
+												<option key={transporter.id} value={transporter.id}>{transporter.name}</option>
+											))}
+										</select>
+										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+									</span>
+								</label>
+							)}
 						</div>
 					) : (
 						<>

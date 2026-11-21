@@ -1,27 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-
-type TravelRow = {
-	id: string;
-	vehicle: string;
-	startAddress: string;
-	endAddress: string;
-	totalDistance: number;
-	runningMinutes: number;
-	idleMinutes: number;
-	stopMinutes: number;
-	overSpeedMinutes: number;
-	overSpeedCount: number;
-};
+import type { TravelSummary } from "@/interfaces/TravelSummaryReport";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
+import { useLazyGetTravelSummaryReportQuery } from "@/store/services/api/TravelSummaryReport";
 
 type ColumnKey = "sn" | "vehicle" | "startAddress" | "totalDistance" | "running" | "idle" | "stop" | "overSpeed" | "overSpeedCount" | "endAddress";
 type MenuKind = "client" | "transporter" | "vehicle";
-type AppliedFilters = { clients: string[]; transporters: string[]; vehicles: string[] };
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -36,18 +29,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "endAddress", label: "End Address" },
 ];
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-const knownVehicles = new Set(vehicleOptions);
-
-const dummyTravelSummaries: TravelRow[] = [
-	{ id: "UP32HN8013", vehicle: "UP32HN8013", startAddress: "Viraj Khand Rd, Gomti Nagar, Lucknow 226010", endAddress: "Hazratganj, Lucknow 226001", totalDistance: 86.4, runningMinutes: 310, idleMinutes: 80, stopMinutes: 45, overSpeedMinutes: 18, overSpeedCount: 3 },
-	{ id: "UP45AC5536", vehicle: "UP45AC5536", startAddress: "Eldeco Akbarpur Road, Nawsanda 224230", endAddress: "Akbarpur Market, Ambedkar Nagar 224122", totalDistance: 22.1, runningMinutes: 65, idleMinutes: 12, stopMinutes: 8, overSpeedMinutes: 0, overSpeedCount: 0 },
-	{ id: "UP32LU6158", vehicle: "UP32LU6158", startAddress: "LU New Campus Road, Aliganj, Lucknow 226026", endAddress: "Gomti Nagar Extension, Lucknow 226010", totalDistance: 140.2, runningMinutes: 400, idleMinutes: 120, stopMinutes: 130, overSpeedMinutes: 35, overSpeedCount: 6 },
-	{ id: "UP45AC6533", vehicle: "UP45AC6533", startAddress: "Harlalka Rd, Mirjapur Kodara 224122", endAddress: "Tanda Road, Ambedkar Nagar 224190", totalDistance: 54, runningMinutes: 195, idleMinutes: 40, stopMinutes: 25, overSpeedMinutes: 8, overSpeedCount: 1 },
-	{ id: "UPHK8143", vehicle: "UPHK8143", startAddress: "Arvindo Park Rd, Indira Nagar, Lucknow 226016", endAddress: "Faizabad Road, Chinhat, Lucknow 226028", totalDistance: 98.7, runningMinutes: 290, idleMinutes: 65, stopMinutes: 70, overSpeedMinutes: 22, overSpeedCount: 4 },
-	{ id: "UP32ER2711", vehicle: "UP32ER2711", startAddress: "Padera - Harchandpur Road, Mohanlalganj 226301", endAddress: "Mohanlalganj Bazaar, Lucknow 226301", totalDistance: 12, runningMinutes: 40, idleMinutes: 5, stopMinutes: 0, overSpeedMinutes: 0, overSpeedCount: 0 },
-];
-
 const pad = (value: number) => String(value).padStart(2, "0");
 
 const toInput = (date: Date, end: boolean) => {
@@ -60,7 +41,16 @@ const todayRange = () => {
 	return { from: toInput(now, false), to: toInput(now, true) };
 };
 
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
+/** datetime-local (YYYY-MM-DDTHH:mm) → API format DD/MM/YYYY HH:mm */
+const toApiDateTime = (value: string) => {
+	const [datePart, timePart = "00:00"] = value.split("T");
+	const [year, month, day] = datePart.split("-");
+	if (!year || !month || !day) return value;
+	return `${day}/${month}/${year} ${timePart}`;
+};
+
+const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
+	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
 
 const formatMinutes = (minutes: number) => {
 	const hours = Math.floor(minutes / 60);
@@ -74,9 +64,9 @@ const formatDistance = (value: number) => (Number.isInteger(value) ? String(valu
 
 export default function TravelSummaryReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const [fetchTravelSummary, { isFetching }] = useLazyGetTravelSummaryReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -84,7 +74,7 @@ export default function TravelSummaryReport() {
 	const clientRef = useRef<HTMLDivElement>(null);
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
-	const [rows, setRows] = useState<TravelRow[]>([]);
+	const [rows, setRows] = useState<TravelSummary[]>([]);
 	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -95,7 +85,6 @@ export default function TravelSummaryReport() {
 	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [] });
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
@@ -103,19 +92,32 @@ export default function TravelSummaryReport() {
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
+		if (!searched) return [];
 		const query = search.trim().toLowerCase();
-		return rows.filter((row) => {
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicle)) return false;
-			if (!query) return true;
-			return [row.vehicle, row.startAddress, row.endAddress, formatDistance(row.totalDistance), formatMinutes(row.runningMinutes), formatMinutes(row.idleMinutes), formatMinutes(row.stopMinutes), formatMinutes(row.overSpeedMinutes), String(row.overSpeedCount)].join(" ").toLowerCase().includes(query);
-		});
-	}, [applied, rows, search]);
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[
+				row.vehicle,
+				row.startAddress,
+				row.endAddress,
+				formatDistance(row.totalDistance),
+				formatMinutes(row.runningMinutes),
+				formatMinutes(row.idleMinutes),
+				formatMinutes(row.stopMinutes),
+				formatMinutes(row.overSpeedMinutes),
+				String(row.overSpeedCount),
+			]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search, searched]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+	const visibleClients = clientMaster.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const visibleTransporters = transporterMaster.filter((option) => option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
+	const visibleVehicles = vehicleMaster.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 
 	useEffect(() => {
 		if (!openMenu) return;
@@ -139,13 +141,41 @@ export default function TravelSummaryReport() {
 		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
 	};
 
-	const applyFilters = () => {
-		const ready = selectedClients.length > 0 && selectedTransporters.length > 0 && selectedVehicles.length > 0;
-		setRows(ready ? dummyTravelSummaries.filter((row) => knownVehicles.has(row.vehicle) && selectedVehicles.includes(row.vehicle)) : []);
-		setApplied({ clients: selectedClients, transporters: selectedTransporters, vehicles: selectedVehicles });
-		setSearched(true);
-		setOpenMenu(null);
-		setPage(0);
+	const applyFilters = async () => {
+		if (selectedClients.length !== 1 || selectedTransporters.length !== 1 || selectedVehicles.length === 0) {
+			toast.error("Select one client, one transporter, and at least one vehicle.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
+
+		const client = selectedClients[0];
+		const transporter = selectedTransporters[0];
+		const apiFrom = toApiDateTime(from);
+		const apiTo = toApiDateTime(to);
+
+		try {
+			const vehicleNameById = new Map(vehicleMaster.map((option) => [option.id, option.name]));
+			const batches = await Promise.all(
+				selectedVehicles.map(async (vehicle) => {
+					const data = await fetchTravelSummary({ client, transporter, vehicle, from: apiFrom, to: apiTo }).unwrap();
+					const vehicleName = vehicleNameById.get(vehicle) ?? "";
+					return data.map((row, index) => ({
+						...row,
+						id: row.id || `${vehicle}-${index}`,
+						vehicle: row.vehicle || vehicleName,
+					}));
+				}),
+			);
+			setRows(batches.flat());
+			setSearched(true);
+			setOpenMenu(null);
+			setPage(0);
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load travel summary report."));
+		}
 	};
 
 	const refresh = () => {
@@ -158,7 +188,6 @@ export default function TravelSummaryReport() {
 		setSelectedVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [] });
 		setClientQuery("");
 		setTransporterQuery("");
 		setVehicleQuery("");
@@ -177,13 +206,13 @@ export default function TravelSummaryReport() {
 		emptyLabel: string,
 		selected: string[],
 		setSelected: (next: string[]) => void,
-		options: string[],
+		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -192,7 +221,7 @@ export default function TravelSummaryReport() {
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
 					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
+						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
 							Select All
 						</button>
 						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
@@ -200,11 +229,11 @@ export default function TravelSummaryReport() {
 						</button>
 					</div>
 					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
+						{options.map((option) => (
+							<li key={option.id}>
 								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
+									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
+									{option.name}
 								</label>
 							</li>
 						))}
@@ -215,10 +244,10 @@ export default function TravelSummaryReport() {
 		</div>
 	);
 
-	const cell = (key: ColumnKey, row: TravelRow, serial: number) => {
+	const cell = (key: ColumnKey, row: TravelSummary, serial: number) => {
 		if (key === "sn") return String(serial);
-		if (key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicle}</span>;
-		if (key === "startAddress" || key === "endAddress") return <span className="block max-w-[280px] whitespace-normal leading-5">{row[key]}</span>;
+		if (key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicle || "—"}</span>;
+		if (key === "startAddress" || key === "endAddress") return <span className="block max-w-[280px] whitespace-normal leading-5">{row[key] || "—"}</span>;
 		if (key === "totalDistance") return formatDistance(row.totalDistance);
 		if (key === "running") return formatMinutes(row.runningMinutes);
 		if (key === "idle") return formatMinutes(row.idleMinutes);
@@ -245,7 +274,7 @@ export default function TravelSummaryReport() {
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{searched ? filteredRows.length : 0} reports</p>
 					</div>
 					<button type="button" onClick={refresh} aria-label="Refresh travel summary" title="Refresh travel summary" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
@@ -259,8 +288,8 @@ export default function TravelSummaryReport() {
 							<span className="text-slate-500">-</span>
 							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 						</div>
-						<button type="button" onClick={applyFilters} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							Search
+						<button type="button" onClick={() => void applyFilters()} disabled={isFetching} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							{isFetching ? "Searching..." : "Search"}
 						</button>
 					</div>
 				</section>
@@ -311,13 +340,13 @@ export default function TravelSummaryReport() {
 							</thead>
 							<tbody>
 								{pageRows.map((row, index) => (
-									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+									<tr key={`${row.id}-${index}`} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => <td key={column.key} className="px-3 py-3 align-top first:px-4">{cell(column.key, row, safePage * pageSize + index + 1)}</td>)}
 									</tr>
 								))}
 								{pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">No data available</td>
+										<td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-sm text-slate-500">{isFetching ? "Loading..." : "No data available"}</td>
 									</tr>
 								)}
 							</tbody>

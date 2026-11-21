@@ -3,11 +3,16 @@ import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { AddExpense, type ExpenseFormValues } from "@/components/Reports/AddExpense";
 import { useAuth } from "@/contexts/AuthContext";
+import { ExpenseFor } from "@/enums/ExpenseFor";
 import { Status } from "@/enums/Status";
-import { useGetClientMasterQuery, useGetExpenseTypeMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useGetClientMasterQuery,
+	useGetExpenseTypeMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
 import {
 	useCreateExpenseMutation,
 	useDeleteExpenseMutation,
@@ -82,8 +87,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "documents", label: "Documents" },
 ];
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-
 const pad = (value: number) => String(value).padStart(2, "0");
 
 const todayRange = () => {
@@ -125,26 +128,33 @@ const toIsoExpenseDate = (value: string) => {
 	return date.toISOString();
 };
 
-const buildExpensePayload = (values: ExpenseFormValues): CreateExpenseRequest => ({
-	client: values.client,
-	transporter: values.transporter,
-	expenseName: values.expenseName.trim() || undefined,
-	expenseType: values.expenseType,
-	amount: Number(values.amount),
-	expenseDate: toIsoExpenseDate(values.expenseDate),
-	odometer: optionalNumber(values.odometer),
-	engineHours: optionalNumber(values.engineHours),
-	description: values.description.trim() || undefined,
-	quantity: optionalNumber(values.quantity),
-	supplier: values.supplier.trim() || undefined,
-	buyer: values.buyer.trim() || undefined,
-	status: Status.ACTIVE,
-});
+const buildExpensePayload = (values: ExpenseFormValues): CreateExpenseRequest => {
+	const expenseFor = values.expenseFor || ExpenseFor.VEHICLE_WISE;
+	return {
+		client: values.client,
+		transporter: values.transporter,
+		expenseFor,
+		...(expenseFor === ExpenseFor.VEHICLE_WISE && values.vehicle ? { vehicle: values.vehicle } : {}),
+		...(expenseFor === ExpenseFor.DRIVER_WISE && values.driver ? { driver: values.driver } : {}),
+		expenseName: values.expenseName.trim() || undefined,
+		expenseType: values.expenseType,
+		amount: Number(values.amount),
+		expenseDate: toIsoExpenseDate(values.expenseDate),
+		odometer: optionalNumber(values.odometer),
+		engineHours: optionalNumber(values.engineHours),
+		description: values.description.trim() || undefined,
+		quantity: optionalNumber(values.quantity),
+		supplier: values.supplier.trim() || undefined,
+		buyer: values.buyer.trim() || undefined,
+		status: Status.ACTIVE,
+	};
+};
 
 export default function ExpenseReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
 	const { data: expenseData = [], isFetching, refetch } = useGetExpensesQuery();
 	const [createExpense, { isLoading: isCreating }] = useCreateExpenseMutation();
 	const [updateExpense, { isLoading: isUpdating }] = useUpdateExpenseMutation();
@@ -173,33 +183,39 @@ export default function ExpenseReport() {
 
 	const rows = useMemo<ExpenseRecord[]>(
 		() =>
-			expenseData.map((expense) => ({
-				client: masterId(expense.client, clientMaster),
-				transporter: masterId(expense.transporter, transporterMaster),
-				expenseFor: (expense.expenseFor as ExpenseFormValues["expenseFor"]) || "",
-				vehicle: expense.vehicle ?? "",
-				driver: expense.driver ?? "",
-				expenseName: expense.expenseName ?? "",
-				expenseType: masterId(expense.expenseType, expenseTypeMaster),
-				expenseTypeName: expense.expenseTypeName || expenseTypeMaster.find((option) => option.id === expense.expenseType)?.name || "",
-				amount: valueAsString(expense.amount),
-				expenseDate: dateTimeInputValue(expense.expenseDate),
-				odometer: valueAsString(expense.odometer),
-				engineHours: valueAsString(expense.engineHours),
-				description: expense.description ?? "",
-				quantity: valueAsString(expense.quantity),
-				supplier: expense.supplier ?? "",
-				buyer: expense.buyer ?? "",
-				id: expense.id,
-				externalId: expense.externalId,
-				vehicleNo: expense.vehicleNo ?? "",
-				driverName: expense.driverName ?? "",
-				tripName: expense.tripName ?? "",
-				added: expense.createdAt ?? "",
-				createdBy: expense.createdBy ?? "",
-				updated: expense.updatedAt ?? "",
-				documents: "",
-			})),
+			expenseData.map((expense) => {
+				const expenseTypeId = masterId(expense.expenseType, expenseTypeMaster);
+				return {
+					client: masterId(expense.client, clientMaster),
+					transporter: masterId(expense.transporter, transporterMaster),
+					expenseFor: (expense.expenseFor as ExpenseFormValues["expenseFor"]) || "",
+					vehicle: expense.vehicle ?? "",
+					driver: expense.driver ?? "",
+					expenseName: expense.expenseName ?? "",
+					expenseType: expenseTypeId,
+					expenseTypeName:
+						expense.expenseTypeName ||
+						expenseTypeMaster.find((option) => option.id === expenseTypeId)?.name ||
+						"",
+					amount: valueAsString(expense.amount),
+					expenseDate: dateTimeInputValue(expense.expenseDate),
+					odometer: valueAsString(expense.odometer),
+					engineHours: valueAsString(expense.engineHours),
+					description: expense.description ?? "",
+					quantity: valueAsString(expense.quantity),
+					supplier: expense.supplier ?? "",
+					buyer: expense.buyer ?? "",
+					id: expense.id,
+					externalId: expense.externalId,
+					vehicleNo: expense.vehicleNo ?? "",
+					driverName: expense.driverName ?? "",
+					tripName: expense.tripName ?? "",
+					added: expense.createdAt ?? "",
+					createdBy: expense.createdBy ?? "",
+					updated: expense.updatedAt ?? "",
+					documents: "",
+				};
+			}),
 		[clientMaster, expenseData, expenseTypeMaster, transporterMaster],
 	);
 	const clients = clientMaster;
@@ -208,12 +224,26 @@ export default function ExpenseReport() {
 		const fromTime = applied.from ? new Date(applied.from).getTime() : Number.NEGATIVE_INFINITY;
 		const toTime = applied.to ? new Date(applied.to).getTime() : Number.POSITIVE_INFINITY;
 		const query = search.trim().toLowerCase();
-		return rows.filter((row, index) => {
+		return rows.filter((row) => {
 			if (applied.clients.length > 0 && !applied.clients.includes(row.client)) return false;
 			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicleNo)) return false;
 			const expenseTime = new Date(row.expenseDate).getTime();
 			if (!Number.isNaN(expenseTime) && (expenseTime < fromTime || expenseTime > toTime)) return false;
 			if (!query) return true;
+			const haystack = [
+				row.vehicleNo,
+				row.driverName,
+				row.expenseTypeName,
+				row.expenseName,
+				row.amount,
+				row.supplier,
+				row.buyer,
+				row.description,
+				row.createdBy,
+			]
+				.join(" ")
+				.toLowerCase();
+			return haystack.includes(query);
 		});
 	}, [applied, rows, search]);
 	const totalExpense = filteredRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
@@ -221,6 +251,11 @@ export default function ExpenseReport() {
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 	const visibleClients = clients.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const vehicleOptions = useMemo(() => {
+		const fromMaster = vehicleMaster.map((option) => option.name).filter(Boolean);
+		const fromRows = rows.map((row) => row.vehicleNo).filter(Boolean);
+		return [...new Set([...fromMaster, ...fromRows])].sort((a, b) => a.localeCompare(b));
+	}, [rows, vehicleMaster]);
 	const visibleVehicles = vehicleOptions
 		.map((name) => ({ id: name, name }))
 		.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));

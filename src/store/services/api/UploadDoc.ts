@@ -8,7 +8,8 @@ type UploadDocumentRequest = {
 
 type UpdateDocumentRequest = {
 	externalId: string;
-	body: FormData;
+	file: File;
+	documentName: string;
 };
 
 export const uploadDocApi = api.injectEndpoints({
@@ -33,11 +34,17 @@ export const uploadDocApi = api.injectEndpoints({
 			},
 		}),
 		updateDocument: builder.mutation<unknown, UpdateDocumentRequest>({
-			query: ({ externalId, body }) => ({
-				url: `/uploadDocument/update/${encodeURIComponent(externalId)}`,
-				method: "PUT",
-				body,
-			}),
+			query: ({ externalId, file, documentName }) => {
+				const body = new FormData();
+				body.append("file", file);
+				body.append("documentName", documentName);
+
+				return {
+					url: `/uploadDocument/update/${encodeURIComponent(externalId)}`,
+					method: "PUT",
+					body,
+				};
+			},
 		}),
 		deleteDocument: builder.mutation<void, string>({
 			query: (externalId) => ({
