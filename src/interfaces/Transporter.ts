@@ -21,6 +21,7 @@ export interface CreateTransporterRequest {
   active: boolean;
   overwriteSubscription: boolean;
   inactiveAfterExpiry: boolean;
+  reason?: string;
   roles?: string[];
 }
 
@@ -32,6 +33,7 @@ export interface Transporter extends Omit<CreateTransporterRequest, "password" |
   password?: string;
   suspended?: boolean;
   inactiveDate?: string;
+  status?: string;
   createdAt?: string;
   updatedAt?: string;
 }

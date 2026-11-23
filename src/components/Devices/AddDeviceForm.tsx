@@ -29,6 +29,7 @@ const initialDevice = {
 	client: "",
 	password: "",
 	active: true,
+	reason: "",
 	ignitionPositive: false,
 	ignitionNotConnected: false,
 	acPositive: false,
@@ -271,6 +272,9 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 			deviceType: device.deviceType,
 			client: device.client,
 			password: device.password,
+			active: device.active,
+			status: device.active ? "active" : "inactive",
+			...(device.active ? {} : { reason: device.reason.trim() || undefined }),
 			ignitionWireConnected: device.ignitionPositive,
 			ignitionWireNotConnected: device.ignitionNotConnected,
 			airConditionWireConnected: device.acPositive,
@@ -484,12 +488,36 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 									type="checkbox"
 									className="h-4 w-4 shrink-0 accent-cyan-500"
 									checked={device[key]}
-									onChange={(event) => updateDevice(key, event.target.checked)}
+									onChange={(event) => {
+										updateDevice(key, event.target.checked);
+										if (key === "active" && event.target.checked) {
+											updateDevice("reason", "");
+										}
+									}}
 									disabled={isSaving}
 								/>
 								<span className={key === "active" ? "font-semibold" : ""}>{label}</span>
 							</label>
 						))}
+						{!device.active ? (
+							<label className="block max-w-xl">
+								<span
+									className={`mb-1.5 block text-[12px] font-medium ${
+										isDark ? "text-slate-300" : "text-slate-700"
+									}`}
+								>
+									Reason <span className="font-normal text-slate-500">(Optional)</span>
+								</span>
+								<textarea
+									value={device.reason}
+									onChange={(event) => updateDevice("reason", event.target.value)}
+									rows={3}
+									placeholder="Why is this device inactive?"
+									disabled={isSaving}
+									className={`${inputClass} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 					</div>
 				</section>
 			</div>

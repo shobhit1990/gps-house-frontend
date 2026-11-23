@@ -1,12 +1,13 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { ChevronDown, Info, Loader2, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Info, Loader2, X } from "lucide-react";
 import { groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { Status } from "@/enums/Status";
+import { UserType, userTypeOptions } from "@/enums/UserType";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
-import { useGetRoleMasterQuery, useGetTimezonesQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { useGetTimezonesQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { useCreateUserMutation } from "@/store/services/api/User";
 
 export type UserGroupValues = {
@@ -22,7 +23,7 @@ export type UserFormValues = {
 	confirmPassword: string;
 	contactPerson: string;
 	group: string;
-	role: string;
+	userType: string;
 	timezone: string;
 	company: string;
 	companyAddress: string;
@@ -68,6 +69,8 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 	const [groupValues, setGroupValues] = useState<UserGroupValues>(emptyGroup);
 	const [values, setValues] = useState<UserFormValues>(emptyUser);
 	const [formError, setFormError] = useState("");
+	const [showPassword, setShowPassword] = useState(false);
+	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
 	const { data: roles = [], isLoading: rolesLoading } = useGetRoleMasterQuery();
 	const { data: timezoneMaster = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
@@ -206,8 +209,13 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 		if (activeTab === "Add Group") setGroupValues(emptyGroup());
 		else setValues(emptyUser());
 	};
-
-	return (
+		if (activeTab === "Add Group") {
+			setGroupValues(emptyGroup());
+		} else {
+			setValues(emptyUser());
+			setShowPassword(false);
+			setShowConfirmPassword(false);
+		}
 		<div className="fixed inset-0 z-[800] flex items-center justify-center p-4 sm:p-6">
 			<button type="button" aria-label="Close user form" className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]" onClick={onClose} />
 			<form
@@ -306,8 +314,50 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 								{field("Password", <input required type="password" value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, true)}
 								{field("Confirm Password", <input required type="password" value={values.confirmPassword} placeholder="Confirm Password" onChange={(event) => update("confirmPassword", event.target.value)} className={inputClass} />, true)}
 								{field("Contact Person Name", <input value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, false, true)}
-								<label className="block min-w-0">
-									<span className={labelClass}>Group <span className="text-rose-400">*</span></span>
+								{field(
+									"Password",
+									<span className="relative block">
+										<input
+											required
+											type={showPassword ? "text" : "password"}
+											value={values.password}
+											placeholder="Password"
+											onChange={(event) => update("password", event.target.value)}
+											className={`${inputClass} pr-10`}
+										/>
+										<button
+											type="button"
+											onClick={() => setShowPassword((visible) => !visible)}
+											aria-label={showPassword ? "Hide password" : "Show password"}
+											className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}
+										>
+											{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+										</button>
+									</span>,
+									true,
+								)}
+								{field(
+									"Confirm Password",
+									<span className="relative block">
+										<input
+											required
+											type={showConfirmPassword ? "text" : "password"}
+											value={values.confirmPassword}
+											placeholder="Confirm Password"
+											onChange={(event) => update("confirmPassword", event.target.value)}
+											className={`${inputClass} pr-10`}
+										/>
+										<button
+											type="button"
+											onClick={() => setShowConfirmPassword((visible) => !visible)}
+											aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+											className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center ${isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"}`}
+										>
+											{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+										</button>
+									</span>,
+									true,
+								)}
 									<span className="relative block">
 										<select required value={values.group} disabled={groupsLoading} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 											<option value="">{groupsLoading ? "Loading groups…" : "Select Group"}</option>

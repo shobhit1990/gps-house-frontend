@@ -4,13 +4,18 @@ import { autoTable } from "jspdf-autotable";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status, statusLabel } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetClientMasterQuery, useGetLanguagesQuery } from "@/store/services/api/Master";
-import { useDeleteTransporterMutation, useGetTransportersQuery } from "@/store/services/api/Transporter";
+import {
+	useDeleteTransporterMutation,
+	useGetTransportersQuery,
+	useUpdateTransporterStatusMutation,
+} from "@/store/services/api/Transporter";
 
 type TransporterRecord = {
 	id: string;
@@ -134,6 +139,9 @@ export default function Transporter() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: languages = [] } = useGetLanguagesQuery();
 	const [deleteTransporter, { isLoading: isDeleting }] = useDeleteTransporterMutation();
+	const [updateTransporterStatus, { isLoading: isUpdatingStatus }] = useUpdateTransporterStatusMutation();
+	const [pendingStatusTransporter, setPendingStatusTransporter] = useState<TransporterRecord | null>(null);
+	const [statusReason, setStatusReason] = useState("");
 	const rows = useMemo<TransporterRecord[]>(() => {
 		const clientNames = new Map(clientMaster.map((client) => [client.id, client.name]));
 		const languageNames = new Map(
@@ -233,6 +241,37 @@ export default function Transporter() {
 		}
 	};
 
+	const closeStatusDialog = () => {
+		setPendingStatusTransporter(null);
+		setStatusReason("");
+	};
+
+	const confirmTransporterStatusChange = async () => {
+		if (!pendingStatusTransporter) return;
+		const nextStatus =
+			pendingStatusTransporter.status === "Active" ? Status.INACTIVE : Status.ACTIVE;
+		try {
+			await updateTransporterStatus({
+				externalId: pendingStatusTransporter.id,
+				status: nextStatus,
+				reason: statusReason,
+			}).unwrap();
+			toast.success(
+				`${pendingStatusTransporter.username || "Transporter"} is now ${statusLabel(nextStatus).toLowerCase()}.`,
+			);
+			closeStatusDialog();
+		} catch (error) {
+			console.error("Failed to update transporter status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the transporter status."));
+		}
+	};
+
+	const pendingNextStatus = pendingStatusTransporter
+		? pendingStatusTransporter.status === "Active"
+			? Status.INACTIVE
+			: Status.ACTIVE
+		: null;
+
 	const exportValue = (row: TransporterRecord, key: ColumnKey) => {
 		if (key === "sn") return String(row.sn);
 		if (key === "showPassword" || key === "resetPassword" || key === "edit" || key === "delete") return "";
@@ -273,15 +312,30 @@ export default function Transporter() {
 		}
 		if (key === "edit") {
 			return (
-				<button
-					type="button"
-					title="Edit transporter"
-					aria-label={`Edit ${row.username}`}
-					onClick={() => openEditTransporter(row)}
-					className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}
-				>
-					<Pencil className="h-3.5 w-3.5" />
-				</button>
+				<div className="flex items-center gap-1.5">
+					<button
+						type="button"
+						title="Edit transporter"
+						aria-label={`Edit ${row.username}`}
+						onClick={() => openEditTransporter(row)}
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}
+					>
+						<Pencil className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
+						title="Change status"
+						aria-label={`Change status of ${row.username}`}
+						onClick={() => {
+							setStatusReason("");
+							setPendingStatusTransporter(row);
+						}}
+						disabled={isUpdatingStatus}
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+					>
+						<Power className="h-3.5 w-3.5" />
+					</button>
+				</div>
 			);
 		}
 		if (key === "delete") {
@@ -456,6 +510,83 @@ export default function Transporter() {
 					onSave={saveTransporter}
 				/>
 			)}
+
+			{pendingStatusTransporter && pendingNextStatus ? (
+				<div
+					className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
+						isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
+					}`}
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget && !isUpdatingStatus) closeStatusDialog();
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="transporter-status-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
+							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+						}`}
+					>
+						<h3
+							id="transporter-status-title"
+							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
+						>
+							Change transporter status?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Change the status of{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>
+								{pendingStatusTransporter.username || "this transporter"}
+							</strong>{" "}
+							to {statusLabel(pendingNextStatus)}?
+						</p>
+						{pendingNextStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span
+									className={`mb-1.5 block text-[12px] font-medium ${
+										isDark ? "text-slate-300" : "text-slate-700"
+									}`}
+								>
+									Reason <span className="font-normal text-slate-500">(Optional)</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder="Why is this transporter being deactivated?"
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmTransporterStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Confirm
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }

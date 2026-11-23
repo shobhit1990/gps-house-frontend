@@ -1,28 +1,38 @@
 import { api } from "../api";
 import { Status } from "@/enums/Status";
-import type { CreateRoleRequest, RoleApiRecord, RoleRecord, UpdateRoleRequest } from "@/interfaces/RoleManagement";
+import type {
+	CreateRoleRequest,
+	RoleApiRecord,
+	RoleRecord,
+	UpdateRoleRequest,
+	UpdateRoleStatusRequest,
+} from "@/interfaces/RoleManagement";
+import { normalizeReason, statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 const normalizeStatus = (status?: string): Status => {
 	const value = status?.toLowerCase();
-	return Object.values(Status).includes(value as Status) ? value as Status : Status.ACTIVE;
+	return Object.values(Status).includes(value as Status) ? (value as Status) : Status.ACTIVE;
 };
 
-const normalizeRole = (role: RoleApiRecord): RoleRecord => ({
-	id: role.id ?? role.externalId ?? "",
-	externalId: String(role.externalId ?? role.id ?? ""),
-	roleCode: role.roleCode ?? "",
-	name: role.name ?? "",
-	status: normalizeStatus(role.status),
-	createdAt: role.createdAt,
-	updatedAt: role.updatedAt,
-});
+const normalizeRole = (role: RoleApiRecord): RoleRecord => {
+	const id = String(role.id ?? "");
+	return {
+		id,
+		externalId: id,
+		roleCode: role.roleCode ?? "",
+		name: role.name ?? "",
+		status: normalizeStatus(role.status),
+		reason: normalizeReason(role.reason),
+	};
+};
 
 export const roleApi = api.injectEndpoints({
 	endpoints: (builder) => ({
 		getRoles: builder.query<RoleRecord[], void>({
 			query: () => "/role/get-all",
-			transformResponse: (response: ApiEnvelope<RoleApiRecord[]>) => unwrapList(response).map(normalizeRole),
+			transformResponse: (response: ApiEnvelope<RoleApiRecord[]>) =>
+				unwrapList(response).map(normalizeRole),
 			providesTags: (result) => [
 				{ type: "Roles", id: "LIST" },
 				...(result ?? []).map((role) => ({ type: "Roles" as const, id: role.externalId })),
@@ -30,7 +40,8 @@ export const roleApi = api.injectEndpoints({
 		}),
 		getRoleById: builder.query<RoleRecord, string>({
 			query: (externalId) => `/role/get-by-id/${encodeURIComponent(externalId)}`,
-			transformResponse: (response: ApiEnvelope<RoleApiRecord>) => normalizeRole(unwrapResponse(response) ?? {}),
+			transformResponse: (response: ApiEnvelope<RoleApiRecord>) =>
+				normalizeRole(unwrapResponse(response) ?? {}),
 			providesTags: (_result, _error, externalId) => [{ type: "Roles", id: externalId }],
 		}),
 		createRole: builder.mutation<RoleRecord, CreateRoleRequest>({
@@ -39,16 +50,32 @@ export const roleApi = api.injectEndpoints({
 				method: "POST",
 				body,
 			}),
-			transformResponse: (response: ApiEnvelope<RoleApiRecord>) => normalizeRole(unwrapResponse(response) ?? {}),
+			transformResponse: (response: ApiEnvelope<RoleApiRecord>) =>
+				normalizeRole(unwrapResponse(response) ?? {}),
 			invalidatesTags: [{ type: "Roles", id: "LIST" }, { type: "Roles", id: "MASTER" }],
 		}),
 		updateRole: builder.mutation<RoleRecord, UpdateRoleRequest>({
-			query: ({ externalId, ...body }) => ({
+			query: ({ externalId, roleCode, name, status }) => ({
 				url: `/role/update/${encodeURIComponent(externalId)}`,
 				method: "PUT",
-				body,
+				body: { roleCode, name, status },
 			}),
-			transformResponse: (response: ApiEnvelope<RoleApiRecord>) => normalizeRole(unwrapResponse(response) ?? {}),
+			transformResponse: (response: ApiEnvelope<RoleApiRecord>) =>
+				normalizeRole(unwrapResponse(response) ?? {}),
+			invalidatesTags: (_result, _error, { externalId }) => [
+				{ type: "Roles", id: externalId },
+				{ type: "Roles", id: "LIST" },
+				{ type: "Roles", id: "MASTER" },
+			],
+		}),
+		updateRoleStatus: builder.mutation<RoleRecord, UpdateRoleStatusRequest>({
+			query: ({ externalId, status, reason }) => ({
+				url: `/role/update/${encodeURIComponent(externalId)}`,
+				method: "PUT",
+				body: statusChangeBody(status, reason),
+			}),
+			transformResponse: (response: ApiEnvelope<RoleApiRecord>) =>
+				normalizeRole(unwrapResponse(response) ?? {}),
 			invalidatesTags: (_result, _error, { externalId }) => [
 				{ type: "Roles", id: externalId },
 				{ type: "Roles", id: "LIST" },
@@ -75,5 +102,6 @@ export const {
 	useGetRoleByIdQuery,
 	useCreateRoleMutation,
 	useUpdateRoleMutation,
+	useUpdateRoleStatusMutation,
 	useDeleteRoleMutation,
 } = roleApi;

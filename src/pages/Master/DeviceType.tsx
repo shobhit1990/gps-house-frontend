@@ -5,7 +5,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddDeviceTypeDialog } from "@/components/Master/AddDeviceType";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
+import { Status, StatusFilter, statusFilters, statusLabel } from "@/enums/Status";
 import type { DeviceType } from "@/interfaces/Devicetype";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
@@ -15,7 +15,6 @@ import {
 } from "@/store/services/api/DeviceType";
 
 type ColumnKey = "sn" | "deviceName" | "status" | "reason";
-type StatusFilter = "all" | Status.ACTIVE | Status.INACTIVE;
 type PendingAction = { type: "status" | "delete"; deviceType: DeviceType };
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -24,14 +23,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "status", label: "Status" },
 	{ key: "reason", label: "Reason" },
 ];
-
-const statusFilters: { id: StatusFilter; label: string }[] = [
-	{ id: "all", label: "All Status" },
-	{ id: Status.ACTIVE, label: "Active" },
-	{ id: Status.INACTIVE, label: "Inactive" },
-];
-
-const statusLabel = (status: Status) => status.charAt(0).toUpperCase() + status.slice(1);
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -59,7 +50,7 @@ export default function DeviceTypePage() {
 	const [deleteDeviceType, { isLoading: isDeleting }] = useDeleteDeviceTypeMutation();
 
 	const [search, setSearch] = useState("");
-	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>(StatusFilter.ALL);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -75,7 +66,7 @@ export default function DeviceTypePage() {
 		return deviceTypes.filter(
 			(item) =>
 				(!query || item.deviceName.toLowerCase().includes(query)) &&
-				(statusFilter === "all" || item.status === statusFilter),
+				(statusFilter === StatusFilter.ALL || item.status === statusFilter),
 		);
 	}, [deviceTypes, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredDeviceTypes.length / pageSize));

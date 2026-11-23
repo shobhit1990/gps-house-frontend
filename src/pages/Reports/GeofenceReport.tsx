@@ -5,7 +5,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-
+import { Duration } from "@/enums/duration";
 type GeofenceReportRecord = {
 	id: number;
 	client: string;
@@ -50,13 +50,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-const durations = [
-	"All",
-	"Less than 5 minutes",
-	"Greater Than 5 minutes and less than 10 minutes",
-	"Greater Than 10 minutes and less than 30 minutes",
-    "More Than 1 hours",
-];
+const durations = Object.values(Duration);
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -78,12 +72,13 @@ const haltMinutes = (value: string) => {
 };
 
 const matchesDuration = (haltTime: string, duration: string) => {
-	if (!duration || duration === "All") return true;
+	if (!duration || duration === Duration.ALL) return true;
 	const minutes = haltMinutes(haltTime);
 	if (Number.isNaN(minutes)) return false;
-	if (duration === "Less than 5 minutes") return minutes < 5;
-	if (duration === "Greater Than 5 minutes and less than 10 minutes") return minutes > 5 && minutes < 10;
-	if (duration === "Greater Than 10 minutes and less than 30 minutes") return minutes > 10 && minutes < 30;
+	if (duration === Duration.LESS_THAN_5_MINUTES) return minutes < 5;
+	if (duration === Duration.GREATER_THAN_5_AND_LESS_THAN_10_MINUTES) return minutes > 5 && minutes < 10;
+	if (duration === Duration.GREATER_THAN_10_AND_LESS_THAN_30_MINUTES) return minutes > 10 && minutes < 30;
+	if (duration === Duration.MORE_THAN_1_HOUR) return minutes > 60;
 	return true;
 };
 
@@ -111,10 +106,10 @@ export default function GeofenceReport() {
 	const [selectedClients, setSelectedClients] = useState<string[]>([]);
 	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
 	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
-	const [duration, setDuration] = useState("All");
+	const [duration, setDuration] = useState(Duration.ALL);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], duration: "All", from: initialRange.from, to: initialRange.to });
+	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], duration: Duration.ALL, from: initialRange.from, to: initialRange.to });
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
@@ -232,10 +227,10 @@ export default function GeofenceReport() {
 		setSelectedClients([]);
 		setSelectedTransporters([]);
 		setSelectedVehicles([]);
-		setDuration("All");
+		setDuration(Duration.ALL);
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [], duration: "All", from: range.from, to: range.to });
+		setApplied({ clients: [], transporters: [], vehicles: [], duration: Duration.ALL, from: range.from, to: range.to });
 		setClientQuery("");
 		setTransporterQuery("");
 		setVehicleQuery("");
@@ -274,7 +269,7 @@ export default function GeofenceReport() {
 						{multiSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
 						<div ref={durationRef} className="relative min-w-0 flex-1 sm:max-w-[210px]">
 							<button type="button" aria-expanded={openMenu === "duration"} aria-haspopup="listbox" aria-label="Select Duration" onClick={() => setOpenMenu((current) => (current === "duration" ? null : "duration"))} className={controlClass}>
-								<span className={`truncate ${duration === "All" ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{duration === "All" ? "Select Duration" : duration}</span>
+								<span className={`truncate ${duration === Duration.ALL ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{duration === Duration.ALL ? "Select Duration" : duration}</span>
 								<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === "duration" ? "rotate-180" : ""}`} />
 							</button>
 							{openMenu === "duration" && (

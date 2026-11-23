@@ -6,17 +6,18 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { AddUser } from "@/components/UserGroups/AddUser";
 import { useAuth } from "@/contexts/AuthContext";
 import { Status } from "@/enums/Status";
+import { userTypeLabel } from "@/enums/UserType";
 import type { User as UserEntity } from "@/interfaces/User";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetGroupsQuery } from "@/store/services/api/Group";
-import { useGetRoleMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
+import { useGetTimezonesQuery } from "@/store/services/api/Master";
 import { useDeleteUserMutation, useGetUsersQuery } from "@/store/services/api/User";
 
 type UserRecord = {
 	id: string;
 	username: string;
 	group: string;
-	role: string;
+	userType: string;
 	company: string;
 	contactPerson: string;
 	phone: string;
@@ -27,12 +28,12 @@ type UserRecord = {
 	password: string;
 };
 
-type ColumnKey = "username" | "group" | "role" | "company" | "contactPerson" | "phone" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
+type ColumnKey = "username" | "group" | "userType" | "company" | "contactPerson" | "phone" | "address" | "timezone" | "status" | "added" | "password" | "resetPassword" | "delete";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "username", label: "Username" },
 	{ key: "group", label: "Group" },
-	{ key: "role", label: "Role" },
+	{ key: "userType", label: "User Type" },
 	{ key: "company", label: "Company" },
 	{ key: "contactPerson", label: "Contact Person" },
 	{ key: "phone", label: "Phone No." },
@@ -62,22 +63,20 @@ export default function User() {
 	const isDark = theme !== "light";
 	const { data: users = [], isLoading, isFetching, isError, refetch } = useGetUsersQuery();
 	const { data: groups = [] } = useGetGroupsQuery();
-	const { data: roles = [] } = useGetRoleMasterQuery();
 	const { data: timezones = [] } = useGetTimezonesQuery();
 	const [deleteUser, { isLoading: isDeleting }] = useDeleteUserMutation();
 	const rows = useMemo(() => {
 		const groupNames = new Map(groups.map((group) => [group.externalId, group.groupName]));
-		const roleNames = new Map(roles.map((role) => [role.id, role.name]));
 		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
 		return users.map((user: UserEntity): UserRecord => {
 			const groupId = user.group != null ? String(user.group) : "";
-			const roleId = user.role != null ? String(user.role) : "";
 			const timezoneId = user.timezone != null ? String(user.timezone) : "";
+			const rawUserType = String(user.userType ?? user.role ?? "").trim();
 			return {
 				id: user.externalId,
 				username: user.userName ?? "",
 				group: groupNames.get(groupId) ?? groupId,
-				role: roleNames.get(roleId) ?? roleId,
+				userType: rawUserType ? userTypeLabel(rawUserType) : "",
 				company: user.companyName ?? "",
 				contactPerson: user.contactPersonName ?? "",
 				phone: user.phone != null ? String(user.phone) : "",
@@ -88,7 +87,7 @@ export default function User() {
 				password: user.password ?? "",
 			};
 		});
-	}, [users, groups, roles, timezones]);
+	}, [users, groups, timezones]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -100,7 +99,7 @@ export default function User() {
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.username, row.group, row.role, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) => [row.username, row.group, row.userType, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone].join(" ").toLowerCase().includes(query));
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);

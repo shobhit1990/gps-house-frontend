@@ -5,6 +5,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pe
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddClientForm } from "@/components/Client/AddClientForm";
 import { useAuth } from "@/contexts/AuthContext";
+import { StatusFilter, statusFilters } from "@/enums/Status";
 import type { Client as ClientEntity } from "@/interfaces/Client";
 import { useDeleteClientMutation, useGetClientsQuery, useUpdateClientMutation } from "@/store/services/api/Client";
 
@@ -29,7 +30,6 @@ type ClientRecord = {
 };
 
 type ColumnKey = Exclude<keyof ClientRecord, "active" | "source"> | "accountStatus";
-type StatusFilter = "all" | "active" | "inactive";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "id", label: "SN" },
@@ -105,7 +105,7 @@ export default function Client() {
 	const [updateClient] = useUpdateClientMutation();
 	const [deleteClient, { isLoading: isDeleting }] = useDeleteClientMutation();
 	const rows = useMemo(() => clients.map(toRecord), [clients]);
-	const [status, setStatus] = useState<StatusFilter>("all");
+	const [status, setStatus] = useState<StatusFilter>(StatusFilter.ALL);
 	const [month, setMonth] = useState("");
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -121,7 +121,7 @@ export default function Client() {
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		return rows.filter((row) => {
-			const matchesStatus = status === "all" || (status === "inactive" ? !row.active : row.active);
+			const matchesStatus = status === StatusFilter.ALL || (status === StatusFilter.INACTIVE ? !row.active : row.active);
 			const matchesMonth = !month || row.added.startsWith(month);
 			const matchesSearch = !query || [row.username, row.name, row.phone, row.email, row.company, row.language, row.timezone, row.owner, row.address].join(" ").toLowerCase().includes(query);
 			return matchesStatus && matchesMonth && matchesSearch;
@@ -136,7 +136,7 @@ export default function Client() {
 	};
 
 	const resetFilters = () => {
-		setStatus("all");
+		setStatus(StatusFilter.ALL);
 		setMonth("");
 		setPage(0);
 	};
@@ -197,9 +197,7 @@ export default function Client() {
 					<div className="flex flex-wrap items-center gap-2">
 						<label className="sr-only" htmlFor="client-status-filter">Status</label>
 						<select id="client-status-filter" value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(0); }} className={`${inputClass(isDark)} w-full sm:w-[180px]`}>
-							<option value="all">ALL</option>
-							<option value="active">Active</option>
-							<option value="inactive">Inactive</option>
+							{statusFilters.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
 						</select>
 						<label className="sr-only" htmlFor="client-month-filter">Month</label>
 						<input id="client-month-filter" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setPage(0); }} className={`${inputClass(isDark)} w-full sm:w-[220px] ${isDark ? "[color-scheme:dark]" : ""}`} />

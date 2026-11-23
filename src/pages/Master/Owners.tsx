@@ -5,12 +5,11 @@ import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddOwnerDialog } from "@/components/Owner/AddOwnerDialog";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
+import { Status, StatusFilter, statusFilters, statusLabel } from "@/enums/Status";
 import type { Owner } from "@/interfaces/Owner";
 import { useDeleteOwnerMutation, useGetOwnersQuery, useUpdateOwnerStatusMutation } from "@/store/services/api/Owner";
 
 type ColumnKey = "sn" | "ownerName" | "status" | "reason";
-type StatusFilter = "all" | Status.ACTIVE | Status.INACTIVE;
 type PendingAction = { type: "status" | "delete"; owner: Owner };
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -19,14 +18,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "status", label: "Status" },
 	{ key: "reason", label: "Reason" },
 ];
-
-const statusFilters: { id: StatusFilter; label: string }[] = [
-	{ id: "all", label: "All Status" },
-	{ id: Status.ACTIVE, label: "Active" },
-	{ id: Status.INACTIVE, label: "Inactive" },
-];
-
-const statusLabel = (status: Status) => status.charAt(0).toUpperCase() + status.slice(1);
 
 const apiErrorMessage = (error: unknown, fallback: string) => {
 	const data = (error as { data?: { message?: string } })?.data;
@@ -60,7 +51,7 @@ export default function Owners() {
 	const [deleteOwner, { isLoading: isDeleting }] = useDeleteOwnerMutation();
 
 	const [search, setSearch] = useState("");
-	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>(StatusFilter.ALL);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -76,7 +67,7 @@ export default function Owners() {
 		return owners.filter(
 			(owner) =>
 				(!query || owner.ownerName.toLowerCase().includes(query)) &&
-				(statusFilter === "all" || owner.status === statusFilter),
+				(statusFilter === StatusFilter.ALL || owner.status === statusFilter),
 		);
 	}, [owners, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredOwners.length / pageSize));

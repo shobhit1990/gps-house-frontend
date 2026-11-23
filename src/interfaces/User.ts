@@ -1,4 +1,5 @@
 import type { Status } from "@/enums/Status";
+import type { UserType } from "@/enums/UserType";
 
 export interface CreateUserRequest {
   userName: string;
@@ -6,8 +7,7 @@ export interface CreateUserRequest {
   confirmPassword: string;
   /** Group externalId. */
   group: string;
-  /** Role externalId. */
-  role: string;
+  userType: UserType;
   /** Timezone externalId. */
   timezone: string;
   companyName: string;
@@ -22,10 +22,13 @@ export interface CreateUserRequest {
 
 export type UpdateUserRequest = Partial<CreateUserRequest>;
 
-export interface User extends Omit<CreateUserRequest, "password" | "confirmPassword"> {
+export interface User extends Omit<CreateUserRequest, "password" | "confirmPassword" | "userType"> {
   id: string | number;
   externalId: string;
   password?: string;
+  userType?: UserType | string;
+  /** Legacy field — prefer `userType`. */
+  role?: string;
   createdAt?: string;
   updatedAt?: string;
 }

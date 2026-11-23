@@ -1,5 +1,7 @@
 import { api } from "../api";
 import type { Transporter, CreateTransporterRequest, UpdateTransporterRequest } from "@/interfaces/Transporter";
+import { Status } from "@/enums/Status";
+import { statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type TransporterApiRecord = Omit<Transporter, "externalId"> & { externalId?: string };
@@ -69,6 +71,23 @@ export const transporterApi = api.injectEndpoints({
       ],
     }),
 
+    updateTransporterStatus: builder.mutation<
+      Transporter,
+      { externalId: string; status: Status; reason?: string }
+    >({
+      query: ({ externalId, status, reason }) => ({
+        url: `/transporter/update/${encodeURIComponent(externalId)}`,
+        method: "PUT",
+        body: statusChangeBody(status, reason, { active: status === Status.ACTIVE }),
+      }),
+      transformResponse: (response: ApiEnvelope<TransporterApiRecord>) =>
+        normalizeTransporter(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "Transporters", id: externalId },
+        { type: "Transporters", id: "LIST" },
+      ],
+    }),
+
     deleteTransporter: builder.mutation<void, string>({
       query: (externalId) => ({
         url: `/transporter/delete/${externalId}`,
@@ -89,5 +108,6 @@ export const {
   useLazyGetTransporterByIdQuery,
   useCreateTransporterMutation,
   useUpdateTransporterMutation,
+  useUpdateTransporterStatusMutation,
   useDeleteTransporterMutation,
 } = transporterApi;
