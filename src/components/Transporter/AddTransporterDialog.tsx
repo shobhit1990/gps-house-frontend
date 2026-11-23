@@ -74,6 +74,7 @@ type FormState = {
     minAddressDistance: string;
     dataRestriction: string;
     active: string;
+    reason: string;
     overwriteSubscription: string;
     inactiveAfterExpiry: string;
     billingCompanyName: string;
@@ -115,6 +116,7 @@ function createEmptyForm(timezone: string, language: string): FormState {
         minAddressDistance: "",
         dataRestriction: "",
         active: "true",
+        reason: "",
         overwriteSubscription: "false",
         inactiveAfterExpiry: "false",
         billingCompanyName: "",
@@ -161,6 +163,7 @@ const transporterToFormState = (transporter: Transporter, timezone: string, lang
     minAddressDistance: transporter.minimumDistanceForAddress ?? "",
     dataRestriction: transporter.dataRestriction === "disabled" ? "" : String(transporter.dataRestriction ?? ""),
     active: String(transporter.active ?? true),
+    reason: transporter.reason ?? "",
     overwriteSubscription: String(transporter.overwriteSubscription ?? false),
     inactiveAfterExpiry: String(transporter.inactiveAfterExpiry ?? false),
 });
@@ -652,9 +655,29 @@ export function AddTransporterDialog({
                             </div>
                             <div className="mt-5 flex flex-col items-start gap-3">
                                 <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                    <input type="checkbox" checked={values.active === "true"} onChange={(event) => update("active", String(event.target.checked))} className="h-4 w-4 accent-cyan-500" />
+                                    <input
+                                        type="checkbox"
+                                        checked={values.active === "true"}
+                                        onChange={(event) => {
+                                            update("active", String(event.target.checked));
+                                            if (event.target.checked) update("reason", "");
+                                        }}
+                                        className="h-4 w-4 accent-cyan-500"
+                                    />
                                     Active
                                 </label>
+                                {values.active !== "true" ? (
+                                    <label className="w-full max-w-xl">
+                                        <FieldLabel label="Reason" optional isDark={isDark} />
+                                        <textarea
+                                            value={values.reason}
+                                            onChange={(event) => update("reason", event.target.value)}
+                                            rows={3}
+                                            placeholder="Why is this transporter inactive?"
+                                            className={`${inputClass} h-auto resize-none py-2`}
+                                        />
+                                    </label>
+                                ) : null}
                                 <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                                     <input
                                         type="checkbox"

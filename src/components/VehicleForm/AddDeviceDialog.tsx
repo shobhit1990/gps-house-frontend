@@ -21,8 +21,8 @@ type AddDeviceDialogProps = {
     deviceId?: string;
 };
 
-const emptyValues = (): Record<string, string> =>
-    Object.fromEntries(
+const emptyValues = (): Record<string, string> => ({
+    ...Object.fromEntries(
         addDeviceFields.map((field) => [
             field.name,
             field.name === "simOperator" || field.name === "secondarySimOperator"
@@ -31,7 +31,10 @@ const emptyValues = (): Record<string, string> =>
                     ? "false"
                     : "",
         ]),
-    );
+    ),
+    active: "true",
+    reason: "",
+});
 
 const refId = (value: unknown): string => {
     if (typeof value === "string" || typeof value === "number") return String(value);
@@ -53,6 +56,8 @@ const deviceToFormValues = (device: Device): Record<string, string> => ({
     deviceType: refId(device.deviceType),
     deviceClient: refId(device.client),
     devicePassword: device.password ?? "",
+    active: String(device.active !== false),
+    reason: device.reason ?? "",
     ignitionPositive: String(device.ignitionWireConnected ?? false),
     ignitionDisconnected: String(device.ignitionWireNotConnected ?? false),
     airConditionPositive: String(device.airConditionWireConnected ?? false),
@@ -217,6 +222,38 @@ export function AddDeviceDialog({ isDark, onClose, onSaved, deviceId }: AddDevic
                         ))}
                     </div>
                     <div className="mt-5 flex flex-col gap-3">
+                        <label className={`flex items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                            <input
+                                type="checkbox"
+                                checked={values.active !== "false"}
+                                onChange={(event) =>
+                                    setValues((current) => ({
+                                        ...current,
+                                        active: String(event.target.checked),
+                                        ...(event.target.checked ? { reason: "" } : {}),
+                                    }))
+                                }
+                                className="h-4 w-4 accent-cyan-500"
+                            />
+                            <span className="font-semibold">Active</span>
+                        </label>
+                        {values.active === "false" ? (
+                            <label className="block max-w-xl">
+                                <span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                                    Reason <span className="font-normal text-slate-500">(Optional)</span>
+                                </span>
+                                <textarea
+                                    value={values.reason ?? ""}
+                                    onChange={(event) => {
+                                        setValues((current) => ({ ...current, reason: event.target.value }));
+                                        setFormError("");
+                                    }}
+                                    rows={3}
+                                    placeholder="Why is this device inactive?"
+                                    className={`${inputClass} h-auto resize-none py-2`}
+                                />
+                            </label>
+                        ) : null}
                         {addDeviceFields.filter((field) => field.type === "checkbox").map((field) => (
                             <label key={field.name} className={`flex items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                                 <input

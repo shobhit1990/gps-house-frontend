@@ -1,6 +1,7 @@
 import { api } from "../api";
 import type { Vehicle, CreateVehicleRequest, UpdateVehicleRequest } from "@/interfaces/Vehicle";
 import { Status } from "@/enums/Status";
+import { statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type VehicleApiRecord = Omit<Vehicle, "externalId"> & { externalId?: string };
@@ -264,6 +265,23 @@ export const vehicleApi = api.injectEndpoints({
       ],
     }),
 
+    updateVehicleStatus: builder.mutation<
+      Vehicle,
+      { externalId: string; status: Status; reason?: string }
+    >({
+      query: ({ externalId, status, reason }) => ({
+        url: `/vehicle/update/${encodeURIComponent(externalId)}`,
+        method: "PUT",
+        body: statusChangeBody(status, reason),
+      }),
+      transformResponse: (response: ApiEnvelope<VehicleApiRecord>) =>
+        normalizeVehicle(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "Vehicles", id: externalId },
+        { type: "Vehicles", id: "LIST" },
+      ],
+    }),
+
     deleteVehicle: builder.mutation<void, string>({
       query: (externalId) => ({
         url: `/vehicle/delete/${externalId}`,
@@ -288,5 +306,6 @@ export const {
   useLazyGetSubscriptionChangedVehiclesQuery,
   useCreateVehicleMutation,
   useUpdateVehicleMutation,
+  useUpdateVehicleStatusMutation,
   useDeleteVehicleMutation,
 } = vehicleApi;

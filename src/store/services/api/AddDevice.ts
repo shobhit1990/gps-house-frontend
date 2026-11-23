@@ -1,5 +1,7 @@
 import { api } from "../api";
 import type { CreateDeviceRequest, Device, DeviceInventoryRecord, UpdateDeviceRequest } from "@/interfaces/AddDevice";
+import { Status } from "@/enums/Status";
+import { statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type DeviceApiRecord = Omit<Device, "externalId"> & { externalId?: string };
@@ -59,6 +61,23 @@ export const deviceApi = api.injectEndpoints({
 			],
 		}),
 
+		updateDeviceStatus: builder.mutation<
+			Device,
+			{ externalId: string; status: Status; reason?: string }
+		>({
+			query: ({ externalId, status, reason }) => ({
+				url: `/device/update/${encodeURIComponent(externalId)}`,
+				method: "PUT",
+				body: statusChangeBody(status, reason, { active: status === Status.ACTIVE }),
+			}),
+			transformResponse: (response: ApiEnvelope<DeviceApiRecord>) =>
+				normalizeDevice(requireResponse(response, "device")),
+			invalidatesTags: (_result, _error, { externalId }) => [
+				{ type: "Devices", id: externalId },
+				{ type: "Devices", id: "LIST" },
+			],
+		}),
+
 		deleteDevice: builder.mutation<void, string>({
 			query: (externalId) => ({
 				url: `/device/delete/${encodeURIComponent(externalId)}`,
@@ -90,6 +109,7 @@ export const {
 	useLazyGetDeviceByIdQuery,
 	useCreateDeviceMutation,
 	useUpdateDeviceMutation,
+	useUpdateDeviceStatusMutation,
 	useDeleteDeviceMutation,
 	useLazyGetAvailableDeviceInventoryQuery,
 	useLazyGetDeviceInventoryByImeiQuery,

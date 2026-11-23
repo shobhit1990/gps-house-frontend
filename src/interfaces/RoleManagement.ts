@@ -1,23 +1,21 @@
 import { Status } from "@/enums/Status";
 
+/** Matches `/role/get-all` records. */
 export interface RoleApiRecord {
 	id?: string | number;
-	externalId?: string;
 	roleCode?: string;
 	name?: string;
 	status?: string;
-	createdAt?: string;
-	updatedAt?: string;
+	reason?: string | null;
 }
 
 export interface RoleRecord {
-	id: string | number;
+	id: string;
 	externalId: string;
 	roleCode: string;
 	name: string;
 	status: Status;
-	createdAt?: string;
-	updatedAt?: string;
+	reason: string;
 }
 
 export interface RoleMasterRecord {
@@ -26,8 +24,6 @@ export interface RoleMasterRecord {
 	roleCode?: string;
 	name?: string;
 	status?: Status;
-	createdAt?: string;
-	updatedAt?: string;
 }
 
 export interface CreateRoleRequest {
@@ -36,6 +32,15 @@ export interface CreateRoleRequest {
 	status: Status;
 }
 
-export interface UpdateRoleRequest extends CreateRoleRequest {
+export interface UpdateRoleRequest {
 	externalId: string;
+	roleCode: string;
+	name: string;
+	status: Status;
+}
+
+export interface UpdateRoleStatusRequest {
+	externalId: string;
+	status: Status;
+	reason?: string;
 }

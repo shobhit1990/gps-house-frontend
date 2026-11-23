@@ -93,13 +93,13 @@ export function AddRoleDialog({ isDark, role, onClose }: AddRoleDialogProps) {
 						<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>Name<span className="text-rose-400"> *</span></span>
 						<input value={values.name} onChange={(event) => { setValues((current) => ({ ...current, name: event.target.value })); setFormError(""); }} placeholder="Enter role name" aria-invalid={Boolean(formError)} className={inputClass} />
 					</label>
-					<label className="block">
+					{/* <label className="block">
 						<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>Status</span>
 						<select value={values.status} onChange={(event) => setValues((current) => ({ ...current, status: event.target.value as Status }))} className={inputClass}>
 							<option value={Status.ACTIVE}>Active</option>
 							<option value={Status.INACTIVE}>Inactive</option>
 						</select>
-					</label>
+					</label> */}
 					{formError && <p role="alert" className={`text-[11px] ${isDark ? "text-rose-300" : "text-rose-600"}`}>{formError}</p>}
 				</div>
 

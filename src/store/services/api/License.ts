@@ -1,17 +1,27 @@
 import { api } from "../api";
+import { Status } from "@/enums/Status";
+import { normalizeReason, statusChangeBody } from "@/lib/statusPayload";
 import type {
   CreateLicenseRequest,
   License,
   LicenseApiRecord,
   UpdateLicenseRequest,
+  UpdateLicenseStatusRequest,
 } from "@/interfaces/License";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
+
+function normalizeStatus(status?: string): Status {
+  const value = status?.toLowerCase();
+  return Object.values(Status).includes(value as Status) ? (value as Status) : Status.ACTIVE;
+}
 
 function normalizeLicense(record: LicenseApiRecord): License {
   return {
     id: record.id,
     externalId: String(record.externalId ?? record.id ?? ""),
     license: record.license ?? record.name ?? "",
+    status: normalizeStatus(record.status),
+    reason: normalizeReason(record.reason) || undefined,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
@@ -72,6 +82,21 @@ export const licenseApi = api.injectEndpoints({
       ],
     }),
 
+    updateLicenseStatus: builder.mutation<License, UpdateLicenseStatusRequest>({
+      query: ({ externalId, status, reason }) => ({
+        url: `/license/update/${encodeURIComponent(externalId)}`,
+        method: "PUT",
+        body: statusChangeBody(status, reason),
+      }),
+      transformResponse: (response: ApiEnvelope<LicenseApiRecord>) =>
+        normalizeLicense(requireLicense(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "Licenses", id: externalId },
+        { type: "Licenses", id: "LIST" },
+        { type: "Master", id: "LICENSE" },
+      ],
+    }),
+
     deleteLicense: builder.mutation<void, string>({
       query: (externalId) => ({
         url: `/license/delete/${encodeURIComponent(externalId)}`,
@@ -92,5 +117,6 @@ export const {
   useGetLicenseByIdQuery,
   useCreateLicenseMutation,
   useUpdateLicenseMutation,
+  useUpdateLicenseStatusMutation,
   useDeleteLicenseMutation,
 } = licenseApi;

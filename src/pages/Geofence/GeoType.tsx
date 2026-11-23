@@ -5,7 +5,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddGeoTypeDialog } from "@/components/Geofence/AddGeoType";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
+import { Status, StatusFilter, statusFilters, statusLabel } from "@/enums/Status";
 import type { GeoType } from "@/interfaces/GeoType";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
@@ -15,7 +15,6 @@ import {
 } from "@/store/services/api/GeoType";
 
 type ColumnKey = "sn" | "geofType" | "status" | "reason";
-type StatusFilter = "all" | Status.ACTIVE | Status.INACTIVE;
 type PendingAction = { type: "status" | "delete"; geoType: GeoType };
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -24,14 +23,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "status", label: "Status" },
 	{ key: "reason", label: "Reason" },
 ];
-
-const statusFilters: { id: StatusFilter; label: string }[] = [
-	{ id: "all", label: "All Status" },
-	{ id: Status.ACTIVE, label: "Active" },
-	{ id: Status.INACTIVE, label: "Inactive" },
-];
-
-const statusLabel = (status: Status) => status.charAt(0).toUpperCase() + status.slice(1);
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -59,7 +50,7 @@ export default function GeoTypePage() {
 	const [deleteGeoType, { isLoading: isDeleting }] = useDeleteGeoTypeMutation();
 
 	const [search, setSearch] = useState("");
-	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>(StatusFilter.ALL);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -75,7 +66,7 @@ export default function GeoTypePage() {
 		return geoTypes.filter(
 			(item) =>
 				(!query || item.geofType.toLowerCase().includes(query)) &&
-				(statusFilter === "all" || item.status === statusFilter),
+				(statusFilter === StatusFilter.ALL || item.status === statusFilter),
 		);
 	}, [geoTypes, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredGeoTypes.length / pageSize));

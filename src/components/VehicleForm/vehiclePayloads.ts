@@ -174,6 +174,7 @@ export function buildTransporterPayload(
         active: flag(values.active),
         overwriteSubscription: flag(values.overwriteSubscription),
         inactiveAfterExpiry: flag(values.inactiveAfterExpiry),
+        ...(flag(values.active) ? {} : { reason: text(values.reason) }),
         ...(includeRoles ? { roles } : {}),
     };
 }
@@ -230,6 +231,7 @@ export function buildVehicleLinkPayload(
 }
 
 export function buildDevicePayload(values: FormValues): CreateDeviceRequest {
+    const active = values.active == null ? true : flag(values.active);
     return {
         imei: values.imei.trim(),
         simNumber: values.sim.trim(),
@@ -239,6 +241,9 @@ export function buildDevicePayload(values: FormValues): CreateDeviceRequest {
         deviceType: values.deviceType,
         client: values.deviceClient,
         password: values.devicePassword ?? "",
+        active,
+        status: active ? Status.ACTIVE : Status.INACTIVE,
+        ...(active ? {} : { reason: text(values.reason) }),
         ignitionWireConnected: flag(values.ignitionPositive),
         ignitionWireNotConnected: flag(values.ignitionDisconnected),
         airConditionWireConnected: flag(values.airConditionPositive),

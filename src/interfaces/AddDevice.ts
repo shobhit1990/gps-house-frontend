@@ -7,6 +7,9 @@ export interface CreateDeviceRequest {
 	deviceType: string;
 	client: string;
 	password: string;
+	active?: boolean;
+	status?: string;
+	reason?: string;
 	ignitionWireConnected: boolean;
 	ignitionWireNotConnected: boolean;
 	airConditionWireConnected: boolean;
@@ -24,7 +27,6 @@ type InventoryReference = {
 export interface Device extends CreateDeviceRequest {
 	id?: string | number;
 	externalId: string;
-	active?: boolean;
 	createdAt?: string;
 	updatedAt?: string;
 }
