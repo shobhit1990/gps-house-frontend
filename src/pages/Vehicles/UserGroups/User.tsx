@@ -67,21 +67,29 @@ export default function User() {
 	const [deleteUser, { isLoading: isDeleting }] = useDeleteUserMutation();
 	const rows = useMemo(() => {
 		const groupNames = new Map(groups.map((group) => [group.externalId, group.groupName]));
-		const timezoneNames = new Map(timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]));
+		const timezoneNames = new Map(
+			timezones.flatMap((timezone) => {
+				const label = timezone.timezone ?? "";
+				const ids = [timezone.externalId, timezone.id]
+					.map((id) => (id == null ? "" : String(id)))
+					.filter(Boolean);
+				return ids.map((id) => [id, label] as const);
+			}),
+		);
 		return users.map((user: UserEntity): UserRecord => {
-			const groupId = user.group != null ? String(user.group) : "";
-			const timezoneId = user.timezone != null ? String(user.timezone) : "";
-			const rawUserType = String(user.userType ?? user.role ?? "").trim();
+			const groupId = user.group ?? "";
+			const timezoneId = user.timezone ?? "";
+			const rawUserType = String(user.userType ?? "").trim();
 			return {
 				id: user.externalId,
 				username: user.userName ?? "",
-				group: groupNames.get(groupId) ?? groupId,
+				group: user.groupName || groupNames.get(groupId) || groupId,
 				userType: rawUserType ? userTypeLabel(rawUserType) : "",
 				company: user.companyName ?? "",
 				contactPerson: user.contactPersonName ?? "",
 				phone: user.phone != null ? String(user.phone) : "",
 				companyAddress: user.companyAddress ?? "",
-				timezone: timezoneNames.get(timezoneId) ?? timezoneId,
+				timezone: user.timezoneName || timezoneNames.get(timezoneId) || timezoneId,
 				active: user.status !== Status.INACTIVE,
 				added: dateLabel(user.createdAt),
 				password: user.password ?? "",

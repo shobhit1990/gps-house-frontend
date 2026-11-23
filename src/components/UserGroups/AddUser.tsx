@@ -51,7 +51,7 @@ const emptyUser = (): UserFormValues => ({
 	confirmPassword: "",
 	contactPerson: "",
 	group: "",
-	role: "",
+	userType: "",
 	timezone: "",
 	company: "",
 	companyAddress: "",
@@ -72,12 +72,14 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
-	const { data: roles = [], isLoading: rolesLoading } = useGetRoleMasterQuery();
 	const { data: timezoneMaster = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 	const { data: vehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
 	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
 	const timezones = timezoneMaster
-		.map((timezone) => ({ value: timezone.externalId ?? String(timezone.id ?? ""), label: timezone.timezone ?? "" }))
+		.map((timezone) => ({
+			value: String(timezone.id ?? timezone.externalId ?? ""),
+			label: timezone.timezone ?? "",
+		}))
 		.filter((timezone) => timezone.value && timezone.label);
 	const [createGroup, { isLoading: creatingGroup }] = useCreateGroupMutation();
 	const [createUser, { isLoading: creatingUser }] = useCreateUserMutation();
@@ -166,8 +168,8 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 
 	const submitUser = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.group || !values.role || !values.timezone || !values.company.trim()) {
-			setFormError("Username, Password, Confirm Password, Group, Role, Timezone, and Company Name are required.");
+		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.group || !values.userType || !values.timezone || !values.company.trim()) {
+			setFormError("Username, Password, Confirm Password, Group, User Type, Timezone, and Company Name are required.");
 			return;
 		}
 		if (!usernamePattern.test(values.username.trim())) {
@@ -178,6 +180,10 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
+		if (!Object.values(UserType).includes(values.userType as UserType)) {
+			setFormError("Please select a valid user type.");
+			return;
+		}
 		const text = (value: string) => value.trim() || undefined;
 		try {
 			await createUser({
@@ -185,7 +191,7 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 				password: values.password,
 				confirmPassword: values.confirmPassword,
 				group: values.group,
-				role: values.role,
+				userType: values.userType as UserType,
 				timezone: values.timezone,
 				companyName: values.company.trim(),
 				contactPersonName: text(values.contactPerson),
@@ -206,9 +212,6 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 
 	const resetCurrent = () => {
 		setFormError("");
-		if (activeTab === "Add Group") setGroupValues(emptyGroup());
-		else setValues(emptyUser());
-	};
 		if (activeTab === "Add Group") {
 			setGroupValues(emptyGroup());
 		} else {
@@ -216,6 +219,9 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 			setShowPassword(false);
 			setShowConfirmPassword(false);
 		}
+	};
+
+	return (
 		<div className="fixed inset-0 z-[800] flex items-center justify-center p-4 sm:p-6">
 			<button type="button" aria-label="Close user form" className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]" onClick={onClose} />
 			<form
@@ -311,9 +317,6 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 						<>
 							<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 								{field("Username", <input required value={values.username} placeholder="Username" onChange={(event) => update("username", event.target.value)} className={inputClass} />, true, false, "Only contains [ A-z, 0-9, _, -, ., *, @ ]")}
-								{field("Password", <input required type="password" value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, true)}
-								{field("Confirm Password", <input required type="password" value={values.confirmPassword} placeholder="Confirm Password" onChange={(event) => update("confirmPassword", event.target.value)} className={inputClass} />, true)}
-								{field("Contact Person Name", <input value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, false, true)}
 								{field(
 									"Password",
 									<span className="relative block">
@@ -358,6 +361,9 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 									</span>,
 									true,
 								)}
+								{field("Contact Person Name", <input value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, false, true)}
+								<label className="block min-w-0">
+									<span className={labelClass}>Group <span className="text-rose-400">*</span></span>
 									<span className="relative block">
 										<select required value={values.group} disabled={groupsLoading} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 											<option value="">{groupsLoading ? "Loading groups…" : "Select Group"}</option>
@@ -367,11 +373,13 @@ export function AddUser({ onClose, onSubmit }: AddUserProps) {
 									</span>
 								</label>
 								<label className="block min-w-0">
-									<span className={labelClass}>Role <span className="text-rose-400">*</span></span>
+									<span className={labelClass}>User Type <span className="text-rose-400">*</span></span>
 									<span className="relative block">
-										<select required value={values.role} disabled={rolesLoading} onChange={(event) => update("role", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
-											<option value="">{rolesLoading ? "Loading roles…" : "Select Role"}</option>
-											{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+										<select required value={values.userType} onChange={(event) => update("userType", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+											<option value="">Select User Type</option>
+											{userTypeOptions.map((option) => (
+												<option key={option.value} value={option.value}>{option.label}</option>
+											))}
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</span>
