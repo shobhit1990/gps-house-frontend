@@ -1,13 +1,15 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronDown, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { SimOperator } from "@/enums/SimOperator";
-import type { CreateDeviceRequest } from "@/interfaces/AddDevice";
+import type { CreateDeviceRequest, Device } from "@/interfaces/AddDevice";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
 	useCreateDeviceMutation,
 	useLazyGetAvailableDeviceInventoryQuery,
+	useLazyGetDeviceByIdQuery,
 	useLazyGetDeviceInventoryByImeiQuery,
+	useUpdateDeviceMutation,
 } from "@/store/services/api/AddDevice";
 import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
 
@@ -15,6 +17,8 @@ type AddDeviceFormProps = {
 	isDark: boolean;
 	onClose?: () => void;
 	onSaved?: (externalId: string) => void;
+	/** When set, form opens in edit mode and loads `/device/getById/:id`. */
+	deviceId?: string;
 };
 
 const simOperators = Object.values(SimOperator);
@@ -117,19 +121,69 @@ function SelectField({
 	);
 }
 
-export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFormProps) {
+const deviceToFormState = (record: Device) => ({
+	imei: record.imei ?? "",
+	simNumber: record.simNumber ?? "",
+	simOperator: (record.simOperator as SimOperator) || SimOperator.AIRTEL_GPRS,
+	secondarySimNumber: record.secondarySimNumber ?? "",
+	secondarySimOperator:
+		(record.secondarySimOperator as SimOperator) || SimOperator.AIRTEL_GPRS,
+	deviceType: refId(record.deviceType),
+	client: refId(record.client),
+	password: record.password ?? "",
+	active: record.active !== false,
+	reason: record.reason ?? "",
+	ignitionPositive: Boolean(record.ignitionWireConnected),
+	ignitionNotConnected: Boolean(record.ignitionWireNotConnected),
+	acPositive: Boolean(record.airConditionWireConnected),
+	attendance: Boolean(record.attendance),
+	timezone: Boolean(record.timezoneSetting),
+});
+
+export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: AddDeviceFormProps) {
+	const isEditMode = Boolean(deviceId);
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
 	const { data: deviceTypes = [], isLoading: deviceTypesLoading } = useGetDeviceTypeMasterQuery();
-	const [createDevice, { isLoading: isSaving }] = useCreateDeviceMutation();
+	const [createDevice, { isLoading: isCreating }] = useCreateDeviceMutation();
+	const [updateDeviceMutation, { isLoading: isUpdating }] = useUpdateDeviceMutation();
+	const [loadDevice, { isFetching: isLoadingDevice }] = useLazyGetDeviceByIdQuery();
 	const [getAvailableInventory, { data: availableInventory = [], isFetching: isLoadingInventory }] =
 		useLazyGetAvailableDeviceInventoryQuery();
 	const [getInventoryByImei, { isFetching: isImporting }] = useLazyGetDeviceInventoryByImeiQuery();
+	const isSaving = isCreating || isUpdating;
 
 	const [showInventory, setShowInventory] = useState(false);
 	const [inventoryImei, setInventoryImei] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
 	const [formError, setFormError] = useState("");
 	const [device, setDevice] = useState(initialDevice);
+
+	useEffect(() => {
+		if (!deviceId) {
+			setDevice(initialDevice);
+			setFormError("");
+			return;
+		}
+		let cancelled = false;
+		const load = async () => {
+			try {
+				const record = await loadDevice(deviceId).unwrap();
+				if (!cancelled) {
+					setDevice(deviceToFormState(record));
+					setFormError("");
+				}
+			} catch (error) {
+				console.error("Failed to load device.", error);
+				if (!cancelled) {
+					setFormError(apiErrorMessage(error, "Could not load device details."));
+				}
+			}
+		};
+		void load();
+		return () => {
+			cancelled = true;
+		};
+	}, [deviceId, loadDevice]);
 
 	const deviceTypeOptions = useMemo(
 		() =>
@@ -283,13 +337,24 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 		};
 
 		try {
-			const saved = await createDevice(body).unwrap();
-			toast.success("Device added.");
-			onSaved?.(saved.externalId);
+			if (isEditMode && deviceId) {
+				const saved = await updateDeviceMutation({ externalId: deviceId, body }).unwrap();
+				toast.success("Device updated.");
+				onSaved?.(saved.externalId || deviceId);
+			} else {
+				const saved = await createDevice(body).unwrap();
+				toast.success("Device added.");
+				onSaved?.(saved.externalId);
+			}
 			onClose?.();
 		} catch (error) {
-			console.error("Failed to create device.", error);
-			setFormError(apiErrorMessage(error, "Could not create the device. Please try again."));
+			console.error(`Failed to ${isEditMode ? "update" : "create"} device.`, error);
+			setFormError(
+				apiErrorMessage(
+					error,
+					`Could not ${isEditMode ? "update" : "create"} the device. Please try again.`,
+				),
+			);
 		}
 	};
 
@@ -323,13 +388,13 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 					>
 						Fleet operations
 					</p>
-					<h2 className="text-[15px] font-semibold">Add Device</h2>
+					<h2 className="text-[15px] font-semibold">{isEditMode ? "Edit Device" : "Add Device"}</h2>
 				</div>
 				{onClose ? (
 					<button
 						type="button"
 						onClick={onClose}
-						disabled={isSaving}
+						disabled={isSaving || isLoadingDevice}
 						aria-label="Close device form"
 						className={`rounded-lg p-1.5 transition disabled:opacity-40 ${
 							isDark
@@ -356,6 +421,14 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 					</p>
 				) : null}
 
+				{isLoadingDevice ? (
+					<div className="flex flex-col items-center justify-center py-16">
+						<Loader2 className={`h-5 w-5 animate-spin ${isDark ? "text-cyan-300" : "text-cyan-600"}`} />
+						<p className={`mt-3 text-sm ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+							Loading device...
+						</p>
+					</div>
+				) : (
 				<section className="space-y-7">
 					<div className="grid grid-cols-1 items-start gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-4">
 						<Field
@@ -364,16 +437,18 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 							hint="Max 15 characters allowed"
 							isDark={isDark}
 							action={
-								<button
-									type="button"
-									className={`shrink-0 text-[11px] font-medium underline ${
-										isDark ? "text-cyan-300" : "text-cyan-700"
-									}`}
-									onClick={openInventory}
-									disabled={isSaving}
-								>
-									Import from Inventory
-								</button>
+								!isEditMode ? (
+									<button
+										type="button"
+										className={`shrink-0 text-[11px] font-medium underline ${
+											isDark ? "text-cyan-300" : "text-cyan-700"
+										}`}
+										onClick={openInventory}
+										disabled={isSaving}
+									>
+										Import from Inventory
+									</button>
+								) : undefined
 							}
 						>
 							<input
@@ -523,6 +598,7 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 						) : null}
 					</div>
 				</section>
+				)}
 			</div>
 
 			<footer
@@ -530,12 +606,18 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 					isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
 				}`}
 			>
-				<button type="button" className={secondaryBtn} onClick={resetForm} disabled={isSaving}>
-					Reset
-				</button>
-				<button type="submit" className={primaryBtn} disabled={isSaving}>
-					{isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-					Save
+				{!isEditMode ? (
+					<button type="button" className={secondaryBtn} onClick={resetForm} disabled={isSaving}>
+						Reset
+					</button>
+				) : null}
+				<button
+					type="submit"
+					className={primaryBtn}
+					disabled={isSaving || isLoadingDevice}
+				>
+					{isSaving || isLoadingDevice ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+					{isEditMode ? "Update" : "Save"}
 				</button>
 			</footer>
 

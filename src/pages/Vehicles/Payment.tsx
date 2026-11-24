@@ -101,6 +101,9 @@ export default function Payment() {
 		return map;
 	}, [transporterMaster]);
 
+	const resolveTransporterName = (row: PaymentDetails) =>
+		transporterDisplayName(row, transporterNameById);
+
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
@@ -190,13 +193,13 @@ export default function Payment() {
 		if (key === "transporter") {
 			return (
 				<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>
-					{textValue(resolveTransporterName(row))}
+					{displayText(resolveTransporterName(row))}
 				</span>
 			);
 		}
-		if (key === "installationDate" || key === "rentalDueDate") return displayDate(row[key]);
-		if (key === "sellingPrice" || key === "rental") return textValue(row[key]);
-		if (key === "paymentTerm") return textValue(paymentTermLabel[row.paymentTerm] ?? row.paymentTerm);
+		if (key === "installationDate" || key === "rentalDueDate") return toDateDisplay(row[key]);
+		if (key === "sellingPrice" || key === "rental") return displayText(row[key]);
+		if (key === "paymentTerm") return displayText(paymentTermLabel[row.paymentTerm] ?? row.paymentTerm);
 		if (key === "status") {
 			const active = String(row.status).toLowerCase() === Status.ACTIVE;
 			return (
@@ -241,11 +244,11 @@ export default function Payment() {
 				</div>
 			);
 		}
-		if (key === "vehicle") return textValue(row.vehicle);
-		if (key === "invoice") return textValue(row.invoice);
-		if (key === "technicianName") return textValue(row.technicianName);
-		if (key === "remark") return textValue(row.remark);
-		if (key === "reason") return textValue(row.reason);
+		if (key === "vehicle") return displayText(row.vehicle);
+		if (key === "invoice") return displayText(row.invoice);
+		if (key === "technicianName") return displayText(row.technicianName);
+		if (key === "remark") return displayText(row.remark);
+		if (key === "reason") return displayText(row.reason);
 		return "—";
 	};
 

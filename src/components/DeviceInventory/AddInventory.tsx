@@ -71,7 +71,28 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 	} = useGetDeviceTypeMasterQuery();
 	const isDark = theme !== "light";
 	const titleId = useId();
-	const [values, setValues] = useState<InventoryFormValues>(() => ({ ...emptyValues(), ...initialValues }));
+	const mergeValues = (incoming?: Partial<InventoryFormValues>): InventoryFormValues => {
+		const base = emptyValues();
+		if (!incoming) return base;
+		return {
+			...base,
+			inventoryType: incoming.inventoryType ?? base.inventoryType,
+			imei: incoming.imei ?? base.imei,
+			sim: incoming.sim ?? base.sim,
+			operator: incoming.operator ?? base.operator,
+			secondarySim: incoming.secondarySim ?? base.secondarySim,
+			secondarySimOperator: incoming.secondarySimOperator ?? base.secondarySimOperator,
+			deviceType: incoming.deviceType ?? base.deviceType,
+			assignType: incoming.assignType ?? base.assignType,
+			client: incoming.client ?? base.client,
+			password: incoming.password ?? base.password,
+			active: incoming.active ?? base.active,
+			ignitionWire: incoming.ignitionWire ?? base.ignitionWire,
+			airConditionWire: incoming.airConditionWire ?? base.airConditionWire,
+			analogSensor: incoming.analogSensor ?? base.analogSensor,
+		};
+	};
+	const [values, setValues] = useState<InventoryFormValues>(() => mergeValues(initialValues));
 	const [formError, setFormError] = useState("");
 	const deviceTypes = deviceTypeMaster
 		.map((deviceType) => ({
@@ -179,10 +200,10 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 						{field("Inventory Type", select("inventoryType", "Inventory Type", inventoryTypes, true), true)}
-						{field("Imei", <input value={values.imei} inputMode="numeric" maxLength={30} placeholder="Device Imei" onChange={(event) => update("imei", digitsOnly(event.target.value, 30))} className={inputClass} />, false, "Max 30 digits allowed")}
-						{field("Sim Number", <input value={values.sim} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("sim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
+						{field("Imei", <input value={values.imei ?? ""} inputMode="numeric" maxLength={30} placeholder="Device Imei" onChange={(event) => update("imei", digitsOnly(event.target.value, 30))} className={inputClass} />, false, "Max 24 digits allowed")}
+						{field("Sim Number", <input value={values.sim ?? ""} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("sim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
 						{field("Sim Operator", select("operator", "Select", operators, true), true)}
-						{field("Secondary Sim Number", <input value={values.secondarySim} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("secondarySim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
+						{field("Secondary Sim Number", <input value={values.secondarySim ?? ""} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("secondarySim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
 						{field("Secondary Sim Operator", select("secondarySimOperator", "Select", operators))}
 						{field(
 							"Device Type",
@@ -202,7 +223,7 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 						)}
 						{field("Select Assign Type", select("assignType", "Select", assignTypes, true), true)}
 						{field("Client", select("client", "Select Client", clients.map((client) => ({ value: client.id, label: client.name })), true), true)}
-						{field("Password", <input type="password" value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, false, undefined, true)}
+						{field("Password", <input type="password" value={values.password ?? ""} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, false, undefined, true)}
 					</div>
 					<div className="mt-5 flex flex-col gap-2.5">
 						{check("active", "Active")}
@@ -213,7 +234,7 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 				</div>
 
 				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="button" onClick={() => { setValues({ ...emptyValues(), ...initialValues }); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+					<button type="button" onClick={() => { setValues(mergeValues(initialValues)); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
 					<button type="submit" disabled={isSaving} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>

@@ -74,6 +74,30 @@ const dateLabel = (value?: string) => {
 	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
+const refId = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as { id?: string | number; externalId?: string };
+		return String(record.externalId ?? record.id ?? "");
+	}
+	return "";
+};
+
+const refLabel = (value: unknown, ...keys: string[]): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		for (const key of keys) {
+			const label = record[key];
+			if (typeof label === "string" || typeof label === "number") {
+				const text = String(label).trim();
+				if (text) return text;
+			}
+		}
+	}
+	return "";
+};
+
 export default function ParkScheduler() {
 	const { data: clients = [] } = useGetClientMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
@@ -87,16 +111,26 @@ export default function ParkScheduler() {
 	const rows = useMemo<ParkedRow[]>(() => {
 		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
 		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
-		return schedulesData.map((schedule) => ({
-			id: schedule.externalId,
-			transporter: transporterNames.get(schedule.transporter) ?? schedule.transporter ?? "",
-			vehicles: vehicleNames.get(schedule.vehicle) ?? schedule.vehicle ?? "",
-			scheduled: schedule.scheduled ?? "",
-			parkedStartDate: dateLabel(schedule.startDate),
-			parkedEndDate: dateLabel(schedule.endDate),
-			startTime: schedule.scheduledFrom ?? "",
-			endTime: schedule.scheduledTill ?? "",
-		}));
+		return schedulesData.map((schedule) => {
+			const transporterId = refId(schedule.transporter);
+			const vehicleId = refId(schedule.vehicle);
+			return {
+				id: schedule.externalId,
+				transporter:
+					transporterNames.get(transporterId) ||
+					refLabel(schedule.transporter, "companyName", "name") ||
+					transporterId,
+				vehicles:
+					vehicleNames.get(vehicleId) ||
+					refLabel(schedule.vehicle, "vehicle", "vehicleNo", "name") ||
+					vehicleId,
+				scheduled: schedule.scheduled ?? "",
+				parkedStartDate: dateLabel(schedule.startDate),
+				parkedEndDate: dateLabel(schedule.endDate),
+				startTime: schedule.scheduledFrom ?? "",
+				endTime: schedule.scheduledTill ?? "",
+			};
+		});
 	}, [schedulesData, transporters, vehicles]);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(0);

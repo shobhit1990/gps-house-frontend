@@ -98,7 +98,7 @@ export const inventoryApi = api.injectEndpoints({
 
 		createInventory: builder.mutation<Inventory, CreateInventoryRequest>({
 			query: (body) => ({
-				url: "/addInventory/",
+				url: "/addInventory",
 				method: "POST",
 				body,
 			}),
