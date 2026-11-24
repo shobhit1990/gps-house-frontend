@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { X } from "lucide-react";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { ServiceMaintenanceForm, type ServiceMaintenanceHandle, type ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
+import { digitsOnly } from "@/lib/formValidation";
 
 export type VehicleDetailFormValues = {
 	client: string;
@@ -193,7 +194,7 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 							{field("Vehicle Brand", <input value={values.vehicleBrand} placeholder="Vehicle Brand" onChange={(event) => update("vehicleBrand", event.target.value)} className={inputClass} />)}
 							{field("Vehicle Model", <input value={values.vehicleModel} placeholder="Vehicle Model" onChange={(event) => update("vehicleModel", event.target.value)} className={inputClass} />)}
 							{field("Vehicle Body", select("vehicleBody", "Select", bodyOptions))}
-							{field("Capacity", <input type="number" min={0} value={values.capacity} onChange={(event) => update("capacity", event.target.value)} className={inputClass} />)}
+							{field("Capacity", <input type="text" inputMode="numeric" value={values.capacity} onChange={(event) => update("capacity", digitsOnly(event.target.value))} className={inputClass} />)}
 							{field("Manufacture Date", <input type="date" value={values.manufactureDate} onChange={(event) => update("manufactureDate", event.target.value)} className={inputClass} />)}
 							{field("Purchase Date", <input type="date" value={values.purchaseDate} onChange={(event) => update("purchaseDate", event.target.value)} className={inputClass} />)}
 						</div>

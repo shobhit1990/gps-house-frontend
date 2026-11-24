@@ -1,11 +1,17 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, Loader2, X } from "lucide-react";
 import { Status } from "@/enums/Status";
+import type { JobSheet } from "@/interfaces/JobSheet";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useCreateJobSheetMutation } from "@/store/services/api/JobSheet";
+import { digitsOnly, isValidPhone, PHONE_MAX_LENGTH, phoneErrorMessage } from "@/lib/formValidation";
+import {
+	useCreateJobSheetMutation,
+	useLazyGetJobSheetByIdQuery,
+	useUpdateJobSheetMutation,
+} from "@/store/services/api/JobSheet";
 import { useGetTechnicianMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 export type JobSheetFormValues = {
@@ -21,6 +27,8 @@ type AddJobSheetProps = {
 	onClose: () => void;
 	onSaved: () => void;
 	initialVehicleId?: string;
+	/** When set, dialog opens in edit mode and saves via PUT `/jobsheet/update/:externalId`. */
+	jobSheet?: JobSheet | null;
 };
 
 const emptyValues = (): JobSheetFormValues => ({
@@ -32,18 +40,86 @@ const emptyValues = (): JobSheetFormValues => ({
 	instruction: "",
 });
 
-export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetProps) {
+/** Map API vehicle/technician ids onto master dropdown option ids. */
+const resolveMasterId = (options: MasterOption[], value: string, fallbackLabel = "") => {
+	const raw = String(value ?? "").trim();
+	if (!raw) return "";
+	const byId = options.find((option) => option.id === raw || option.externalId === raw);
+	if (byId) return byId.id;
+	if (fallbackLabel) {
+		const byName = options.find((option) => option.name.trim().toLowerCase() === fallbackLabel.trim().toLowerCase());
+		if (byName) return byName.id;
+	}
+	return raw;
+};
+
+const valuesFromJobSheet = (
+	job: JobSheet,
+	vehicles: MasterOption[],
+	technicians: MasterOption[],
+): JobSheetFormValues => ({
+	vehicle: resolveMasterId(vehicles, job.vehicle ?? "", job.vehicleNo ?? ""),
+	technician: resolveMasterId(technicians, job.technician ?? "", job.technicianName ?? ""),
+	contactPerson: job.contactPersonName ?? "",
+	phone: digitsOnly(String(job.phone ?? ""), PHONE_MAX_LENGTH),
+	orderNo: job.orderNo ?? "",
+	instruction: job.instruction ?? "",
+});
+
+const withOrphanOption = (options: MasterOption[], value: string, label: string): MasterOption[] => {
+	if (!value || options.some((option) => option.id === value)) return options;
+	return [{ id: value, name: label || value }, ...options];
+};
+
+export function AddJobSheet({ onClose, onSaved, initialVehicleId, jobSheet }: AddJobSheetProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
+	const isEditMode = Boolean(jobSheet?.externalId);
 	const titleId = useId();
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const { data: technicians = [] } = useGetTechnicianMasterQuery();
-	const [createJobSheet, { isLoading: isSaving }] = useCreateJobSheetMutation();
+	const [loadJobSheet, { isFetching: loadingJob }] = useLazyGetJobSheetByIdQuery();
+	const [createJobSheet, { isLoading: isCreating }] = useCreateJobSheetMutation();
+	const [updateJobSheet, { isLoading: isUpdating }] = useUpdateJobSheetMutation();
+	const isSaving = isCreating || isUpdating;
 	const [values, setValues] = useState<JobSheetFormValues>(() => ({
 		...emptyValues(),
 		vehicle: initialVehicleId ?? "",
 	}));
 	const [formError, setFormError] = useState("");
+	const [loadedJob, setLoadedJob] = useState<JobSheet | null>(jobSheet ?? null);
+
+	useEffect(() => {
+		if (!jobSheet?.externalId) {
+			setLoadedJob(null);
+			setValues({ ...emptyValues(), vehicle: initialVehicleId ?? "" });
+			return;
+		}
+
+		let cancelled = false;
+		setLoadedJob(jobSheet);
+		setValues(valuesFromJobSheet(jobSheet, vehicles, technicians));
+
+		void loadJobSheet(jobSheet.externalId)
+			.unwrap()
+			.then((job) => {
+				if (cancelled) return;
+				setLoadedJob(job);
+				setValues(valuesFromJobSheet(job, vehicles, technicians));
+			})
+			.catch((error) => {
+				console.error("Failed to load job sheet for edit.", error);
+				if (!cancelled) {
+					setFormError(apiErrorMessage(error, "Could not load job sheet details."));
+				}
+			});
+
+		return () => {
+			cancelled = true;
+		};
+		// Fill once when opening edit / masters first arrive; avoid reset while typing.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [jobSheet?.externalId, initialVehicleId, loadJobSheet, vehicles.length, technicians.length]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -52,6 +128,15 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
+
+	const vehicleOptions = useMemo(
+		() => withOrphanOption(vehicles, values.vehicle, loadedJob?.vehicleNo || values.vehicle),
+		[vehicles, values.vehicle, loadedJob?.vehicleNo],
+	);
+	const technicianOptions = useMemo(
+		() => withOrphanOption(technicians, values.technician, loadedJob?.technicianName || values.technician),
+		[technicians, values.technician, loadedJob?.technicianName],
+	);
 
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] outline-none transition focus:ring-2 ${
 		isDark
@@ -79,7 +164,11 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 		<span className="relative block">
 			<select required={required} value={values[key]} onChange={(event) => update(key, event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 				<option value="">{placeholder}</option>
-				{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+				{options.map((option) => (
+					<option key={option.id} value={option.id}>
+						{option.name}
+					</option>
+				))}
 			</select>
 			<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 		</span>
@@ -91,22 +180,35 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 			setFormError("Vehicle, Technician Name, Contact Person Name, and Phone No. are required.");
 			return;
 		}
+		if (!isValidPhone(values.phone, true)) {
+			setFormError(phoneErrorMessage);
+			return;
+		}
+
+		const externalId = loadedJob?.externalId || jobSheet?.externalId || "";
+		const body = {
+			vehicle: values.vehicle,
+			technician: values.technician,
+			contactPersonName: values.contactPerson.trim(),
+			phone: values.phone.trim(),
+			orderNo: values.orderNo.trim() || undefined,
+			instruction: values.instruction.trim() || undefined,
+			status: loadedJob?.status ?? jobSheet?.status ?? Status.ACTIVE,
+			reason: isEditMode ? "Jobsheet updated" : "New jobsheet created",
+		};
+
 		try {
-			await createJobSheet({
-				vehicle: values.vehicle,
-				technician: values.technician,
-				contactPersonName: values.contactPerson.trim(),
-				phone: values.phone.trim(),
-				orderNo: values.orderNo.trim() || undefined,
-				instruction: values.instruction.trim() || undefined,
-				status: Status.ACTIVE,
-				reason: "New jobsheet created",
-			}).unwrap();
-			toast.success("Job sheet added.");
+			if (isEditMode && externalId) {
+				await updateJobSheet({ externalId, body }).unwrap();
+				toast.success("Job sheet updated.");
+			} else {
+				await createJobSheet(body).unwrap();
+				toast.success("Job sheet added.");
+			}
 			onSaved();
 		} catch (error) {
-			console.error("Failed to create job sheet.", error);
-			setFormError(apiErrorMessage(error, "Could not save the job sheet. Please try again."));
+			console.error(`Failed to ${isEditMode ? "update" : "create"} job sheet.`, error);
+			setFormError(apiErrorMessage(error, `Could not ${isEditMode ? "update" : "save"} the job sheet. Please try again.`));
 		}
 	};
 
@@ -123,7 +225,7 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
 						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Add Job Sheet</h2>
+						<h2 id={titleId} className="text-[15px] font-semibold">{isEditMode ? "Edit Job Sheet" : "Add Job Sheet"}</h2>
 					</div>
 					<button type="button" onClick={onClose} aria-label="Close" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
 						<X className="h-5 w-5 stroke-[3]" />
@@ -131,16 +233,19 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 				</header>
 
 				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+					{loadingJob ? (
+						<p className={`mb-4 text-[12px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>Loading job details…</p>
+					) : null}
 					{formError && (
 						<p role="alert" className={`mb-5 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
 							{formError}
 						</p>
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-						{!initialVehicleId && field("Vehicle", select("vehicle", "Select Vehicle", vehicles, true), true)}
-						{field("Technician Name", select("technician", "Select Technician", technicians, true), true)}
+						{(!initialVehicleId || isEditMode) && field("Vehicle", select("vehicle", "Select Vehicle", vehicleOptions, true), true)}
+						{field("Technician Name", select("technician", "Select Technician", technicianOptions, true), true)}
 						{field("Contact Person Name", <input required value={values.contactPerson} placeholder="Contact Person Name" onChange={(event) => update("contactPerson", event.target.value)} className={inputClass} />, true)}
-						{field("Phone No.", <input required value={values.phone} placeholder="Phone No." onChange={(event) => update("phone", event.target.value)} className={inputClass} />, true)}
+						{field("Phone No.", <input required type="tel" inputMode="numeric" maxLength={PHONE_MAX_LENGTH} value={values.phone} placeholder="10 digit phone" onChange={(event) => update("phone", digitsOnly(event.target.value, PHONE_MAX_LENGTH))} className={inputClass} />, true)}
 						{field("Order No.", <input value={values.orderNo} placeholder="Order No." onChange={(event) => update("orderNo", event.target.value)} className={inputClass} />)}
 						<label className="block min-w-0 sm:col-span-2 xl:col-span-4">
 							<span className={labelClass}>Instruction</span>
@@ -150,9 +255,9 @@ export function AddJobSheet({ onClose, onSaved, initialVehicleId }: AddJobSheetP
 				</div>
 
 				<footer className={`flex shrink-0 items-center justify-end border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button type="submit" disabled={isSaving || loadingJob} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-						Save
+						{isEditMode ? "Update" : "Save"}
 					</button>
 				</footer>
 			</form>

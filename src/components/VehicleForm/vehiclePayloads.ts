@@ -260,14 +260,16 @@ export function buildPaymentDetailsPayload(values: FormValues): UpdateVehicleReq
     }
 
     const paymentTerms: Record<string, PaymentTerm> = {
-        Monthly: "monthely",
-        monthely: "monthely",
+        Monthly: "monthly",
+        monthly: "monthly",
+        monthely: "monthly",
         Yearly: "yearly",
         yearly: "yearly",
         "Half Yearly": "halfYearly",
         halfYearly: "halfYearly",
-        Quarterly: "quaterly",
-        quaterly: "quaterly",
+        Quarterly: "quarterly",
+        quarterly: "quarterly",
+        quaterly: "quarterly",
     };
     const paymentTerm = paymentTerms[values.paymentTerm];
     if (!paymentTerm) {

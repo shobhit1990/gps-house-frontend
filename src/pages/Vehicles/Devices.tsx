@@ -6,6 +6,7 @@ import {
 	ChevronRight,
 	Columns3,
 	Loader2,
+	Pencil,
 	Plus,
 	Power,
 	RefreshCw,
@@ -43,10 +44,12 @@ type DeviceRecord = {
 	assigned: "Y" | "N";
 	addedMonth: string;
 	added?: string;
-	delete?: boolean;
+	actions?: never;
 };
 
-const columns: { key: keyof DeviceRecord; label: string }[] = [
+type ColumnKey = keyof DeviceRecord;
+
+const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "imei", label: "IMEI" },
 	{ key: "sim", label: "SIM" },
 	{ key: "operator", label: "Operator" },
@@ -57,7 +60,7 @@ const columns: { key: keyof DeviceRecord; label: string }[] = [
 	{ key: "ignitionWire", label: "Ign Wire" },
 	{ key: "assigned", label: "Assigned" },
 	{ key: "added", label: "Added" },
-	// { key: "actions", label: "Actions" },
+	{ key: "actions", label: "Actions" },
 ];
 
 const refId = (value: unknown): string => {
@@ -104,8 +107,9 @@ export default function Devices() {
 	const [monthFilter, setMonthFilter] = useState("");
 	const [pageSize, setPageSize] = useState(25);
 	const [page, setPage] = useState(0);
-	const [hiddenColumns, setHiddenColumns] = useState<(keyof DeviceRecord)[]>([]);
+	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editingDeviceId, setEditingDeviceId] = useState<string | undefined>();
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const [pendingStatusDevice, setPendingStatusDevice] = useState<DeviceRecord | null>(null);
 	const [statusReason, setStatusReason] = useState("");
@@ -147,7 +151,6 @@ export default function Devices() {
 				assigned: "N",
 				addedMonth,
 				added,
-				delete: true,
 			};
 		});
 	}, [devices, clientNameById, deviceTypeNameById]);
@@ -183,7 +186,7 @@ export default function Devices() {
 		setPage(0);
 	};
 
-	const toggleColumn = (key: keyof DeviceRecord) => {
+	const toggleColumn = (key: ColumnKey) => {
 		setHiddenColumns((current) =>
 			current.includes(key) ? current.filter((column) => column !== key) : [...current, key],
 		);
@@ -191,6 +194,18 @@ export default function Devices() {
 
 	const closeAddDialog = () => {
 		setShowAddDialog(false);
+		setEditingDeviceId(undefined);
+	};
+
+	const openAddDialog = () => {
+		setEditingDeviceId(undefined);
+		setShowAddDialog(true);
+	};
+
+	const editDevice = (device: DeviceRecord) => {
+		if (!device.externalId) return;
+		setEditingDeviceId(device.externalId);
+		setShowAddDialog(true);
 	};
 
 	const handleDelete = async (device: DeviceRecord) => {
@@ -378,7 +393,7 @@ export default function Devices() {
 
 							<button
 								type="button"
-								onClick={() => setShowAddDialog(true)}
+								onClick={openAddDialog}
 								className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
 							>
 								<Plus className="h-3.5 w-3.5" /> Add device
@@ -409,8 +424,22 @@ export default function Devices() {
 											<tr key={device.externalId || device.imei} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 												{visibleColumns.map((column) => (
 													<td key={column.key} className="whitespace-nowrap px-4 py-2.5">
-														{column.key === "delete" ? (
+														{column.key === "actions" ? (
 															<div className="flex items-center gap-1.5">
+																<button
+																	type="button"
+																	onClick={() => editDevice(device)}
+																	disabled={!device.externalId}
+																	aria-label={`Edit device ${device.imei}`}
+																	title="Edit device"
+																	className={`flex h-7 w-7 items-center justify-center rounded-md border transition disabled:opacity-50 ${
+																		isDark
+																			? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]"
+																			: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+																	}`}
+																>
+																	<Pencil className="h-3.5 w-3.5" />
+																</button>
 																<button
 																	type="button"
 																	onClick={() => {
@@ -428,21 +457,24 @@ export default function Devices() {
 																>
 																	<Power className="h-3.5 w-3.5" />
 																</button>
-																{device.delete ? (
-																	<button
-																		type="button"
-																		onClick={() => void handleDelete(device)}
-																		disabled={isDeleting && deletingId === device.externalId}
-																		aria-label={`Delete device ${device.imei}`}
-																		className={`flex h-7 w-7 items-center justify-center rounded-md transition disabled:opacity-50 ${isDark ? "text-slate-500 hover:bg-rose-300/[0.09] hover:text-rose-200" : "text-slate-500 hover:bg-rose-100 hover:text-rose-600"}`}
-																	>
-																		{isDeleting && deletingId === device.externalId ? (
-																			<Loader2 className="h-3.5 w-3.5 animate-spin" />
-																		) : (
-																			<Trash2 className="h-3.5 w-3.5" />
-																		)}
-																	</button>
-																) : null}
+																<button
+																	type="button"
+																	onClick={() => void handleDelete(device)}
+																	disabled={isDeleting && deletingId === device.externalId}
+																	aria-label={`Delete device ${device.imei}`}
+																	title="Delete device"
+																	className={`flex h-7 w-7 items-center justify-center rounded-md border transition disabled:opacity-50 ${
+																		isDark
+																			? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+																			: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+																	}`}
+																>
+																	{isDeleting && deletingId === device.externalId ? (
+																		<Loader2 className="h-3.5 w-3.5 animate-spin" />
+																	) : (
+																		<Trash2 className="h-3.5 w-3.5" />
+																	)}
+																</button>
 															</div>
 														) : column.key === "imei" || column.key === "sim" ? (
 															<span className={`font-medium ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{device[column.key] || "—"}</span>
@@ -519,6 +551,7 @@ export default function Devices() {
 					<div className="w-full max-w-[1160px]" role="dialog" aria-modal="true">
 						<AddDeviceForm
 							isDark={isDark}
+							deviceId={editingDeviceId}
 							onClose={closeAddDialog}
 							onSaved={() => {
 								setPage(0);

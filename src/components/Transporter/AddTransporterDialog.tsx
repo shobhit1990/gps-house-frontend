@@ -3,6 +3,14 @@ import { toast } from "sonner";
 import { buildTransporterPayload } from "@/components/VehicleForm/vehiclePayloads";
 import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import {
+    digitsOnly,
+    emailErrorMessage,
+    isValidEmail,
+    isValidPhone,
+    PHONE_MAX_LENGTH,
+    phoneErrorMessage,
+} from "@/lib/formValidation";
 import type { Transporter } from "@/interfaces/Transporter";
 import { useCreateBillingDetailsMutation } from "@/store/services/api/BillingDetails";
 import { useGetClientMasterQuery, useGetLanguagesQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
@@ -153,7 +161,7 @@ const transporterToFormState = (transporter: Transporter, timezone: string, lang
     language: transporter.language || language,
     name: transporter.name ?? "",
     email: transporter.email ?? "",
-    phone: transporter.phone != null ? String(transporter.phone) : "",
+    phone: transporter.phone != null ? digitsOnly(String(transporter.phone), PHONE_MAX_LENGTH) : "",
     address: transporter.address ?? "",
     subscriptionStartDate: toDateInputValue(transporter.subscriptionStartDate) || localDate(),
     subscriptionDueDate: toDateInputValue(transporter.subscriptionDueDate) || localDate(1),
@@ -369,6 +377,14 @@ export function AddTransporterDialog({
                     return;
                 }
             }
+            if (!isValidEmail(values.email)) {
+                setFormError(emailErrorMessage);
+                return;
+            }
+            if (!isValidPhone(values.phone)) {
+                setFormError(phoneErrorMessage);
+                return;
+            }
             try {
                 const payload = buildTransporterPayload(values, [], false);
                 if (isEditMode && savedTransporterId) {
@@ -426,6 +442,14 @@ export function AddTransporterDialog({
         ].some((value) => Boolean(String(value ?? "").trim()));
         if (hasBilling && (!values.billingCompanyName.trim() || !values.billingAddress.trim())) {
             setFormError("Company Name and Address are required to save billing details.");
+            return;
+        }
+        if (hasBilling && !isValidEmail(values.billingEmail)) {
+            setFormError(emailErrorMessage);
+            return;
+        }
+        if (hasBilling && !isValidPhone(values.billingPhone)) {
+            setFormError(phoneErrorMessage);
             return;
         }
         if (hasBilling) {
@@ -618,8 +642,8 @@ export function AddTransporterDialog({
                                     </>,
                                 )}
                                 {control(<><FieldLabel label="Name" optional isDark={isDark} /><input value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="" className={inputClass} /></>)}
-                                {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value)} placeholder="" className={inputClass} /></>)}
-                                {control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" value={values.phone} onChange={(event) => update("phone", event.target.value)} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.email} onChange={(event) => update("email", event.target.value.trim())} placeholder="Email" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Phone" optional isDark={isDark} /><input type="tel" inputMode="numeric" maxLength={PHONE_MAX_LENGTH} value={values.phone} onChange={(event) => update("phone", digitsOnly(event.target.value, PHONE_MAX_LENGTH))} placeholder="10 digit phone" className={inputClass} /></>, "Must be exactly 10 digits")}
                                 {control(<><FieldLabel label="Address" optional isDark={isDark} /><input value={values.address} onChange={(event) => update("address", event.target.value)} placeholder="" className={inputClass} /></>)}
                                 {control(
                                     <>
@@ -648,10 +672,10 @@ export function AddTransporterDialog({
                                         </span>
                                     </>,
                                 )}
-                                {control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="number" min="0" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", event.target.value)} placeholder="" className={inputClass} /></>)}
-                                {control(<><FieldLabel label="Maximum Radius For Nearest POI (in Km)" info="Radius used to match the nearest point of interest." isDark={isDark} /><input type="number" min="0" value={values.maxPoiRadius} onChange={(event) => update("maxPoiRadius", event.target.value)} className={inputClass} /></>)}
-                                {control(<><FieldLabel label="Minimum Distance For Address (in Km)" info="Minimum distance before an address is resolved." isDark={isDark} /><input type="number" min="0" value={values.minAddressDistance} onChange={(event) => update("minAddressDistance", event.target.value)} className={inputClass} /></>)}
-                                {control(<><FieldLabel label="Data Restriction (in Days)" optional info="How many days of history this transporter can view." isDark={isDark} /><input type="number" min="0" value={values.dataRestriction} onChange={(event) => update("dataRestriction", event.target.value)} className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Subscription Expiry Count" optional isDark={isDark} /><input type="text" inputMode="numeric" value={values.subscriptionExpiryCount} onChange={(event) => update("subscriptionExpiryCount", digitsOnly(event.target.value))} placeholder="" className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Maximum Radius For Nearest POI (in Km)" info="Radius used to match the nearest point of interest." isDark={isDark} /><input type="text" inputMode="decimal" value={values.maxPoiRadius} onChange={(event) => update("maxPoiRadius", digitsOnly(event.target.value))} className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Minimum Distance For Address (in Km)" info="Minimum distance before an address is resolved." isDark={isDark} /><input type="text" inputMode="decimal" value={values.minAddressDistance} onChange={(event) => update("minAddressDistance", digitsOnly(event.target.value))} className={inputClass} /></>)}
+                                {control(<><FieldLabel label="Data Restriction (in Days)" optional info="How many days of history this transporter can view." isDark={isDark} /><input type="text" inputMode="numeric" value={values.dataRestriction} onChange={(event) => update("dataRestriction", digitsOnly(event.target.value))} className={inputClass} /></>)}
                             </div>
                             <div className="mt-5 flex flex-col items-start gap-3">
                                 <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -755,8 +779,8 @@ export function AddTransporterDialog({
                                 </>,
                                 "Only contains [ A-z, 0-9, ., _, -, *, @ ]",
                             )}
-                            {control(<><FieldLabel label="Contact" optional isDark={isDark} /><input type="tel" value={values.billingPhone} onChange={(event) => update("billingPhone", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
-                            {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
+                            {control(<><FieldLabel label="Contact" optional isDark={isDark} /><input type="tel" inputMode="numeric" maxLength={PHONE_MAX_LENGTH} value={values.billingPhone} onChange={(event) => update("billingPhone", digitsOnly(event.target.value, PHONE_MAX_LENGTH))} placeholder="10 digit phone" className={`${inputClass} h-14 px-5`} /></>, "Must be exactly 10 digits")}
+                            {control(<><FieldLabel label="Email" optional isDark={isDark} /><input type="email" value={values.billingEmail} onChange={(event) => update("billingEmail", event.target.value.trim())} placeholder="Email" className={`${inputClass} h-14 px-5`} /></>)}
                             {control(<><FieldLabel label="Website" optional isDark={isDark} /><input type="url" value={values.website} onChange={(event) => update("website", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
                             {control(<><FieldLabel label="GSTIN" optional isDark={isDark} /><input value={values.gstNumber} onChange={(event) => update("gstNumber", event.target.value)} placeholder="" className={`${inputClass} h-14 px-5`} /></>)}
                             <div className="sm:col-span-2">

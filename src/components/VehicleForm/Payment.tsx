@@ -17,8 +17,8 @@ const paymentFields = [
 ] as const;
 
 const paymentTermValues: Record<string, string> = {
-    Monthly: "monthely",
-    Quarterly: "quaterly",
+    Monthly: "monthly",
+    Quarterly: "quarterly",
     "Half Yearly": "halfYearly",
     Yearly: "yearly",
 };

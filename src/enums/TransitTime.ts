@@ -30,3 +30,33 @@ export enum TransitTime {
   DAY_29 = 29,
   DAY_30 = 30,
 }
+
+/** API enum keys: `DAY_1` … `DAY_30`. */
+export const transitTimeOptions = (
+  Object.keys(TransitTime) as Array<keyof typeof TransitTime>
+)
+  .filter((key) => key.startsWith("DAY_"))
+  .map((key) => ({
+    value: key,
+    label: `Day ${TransitTime[key]}`,
+  }));
+
+/** Normalize any API/UI value into `DAY_n` (for selects). */
+export const toTransitTimeKey = (value: string | number | undefined | null): string => {
+  if (value == null || value === "") return "DAY_20";
+  const raw = String(value).trim().toUpperCase();
+  const dayMatch = raw.match(/^DAY[_-]?(\d{1,2})$/);
+  if (dayMatch) {
+    const day = Number(dayMatch[1]);
+    return day >= 1 && day <= 30 ? `DAY_${day}` : "DAY_20";
+  }
+  const day = Number(raw);
+  return Number.isInteger(day) && day >= 1 && day <= 30 ? `DAY_${day}` : "DAY_20";
+};
+
+/** API payload value: integer `1` … `30`. */
+export const toTransitTimeNumber = (value: string | number | undefined | null): number => {
+  const key = toTransitTimeKey(value);
+  const day = Number(key.replace(/^DAY_/, ""));
+  return Number.isInteger(day) && day >= 1 && day <= 30 ? day : 20;
+};

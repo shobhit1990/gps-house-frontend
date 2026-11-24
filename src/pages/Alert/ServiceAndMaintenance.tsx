@@ -1,6 +1,19 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ArrowUpDown, ChevronDown, Columns3, Plus, RefreshCw, Search, Upload } from "lucide-react";
+import {
+	ArrowUpDown,
+	ChevronDown,
+	Columns3,
+	Copy,
+	Loader2,
+	Pencil,
+	Plus,
+	Power,
+	RefreshCw,
+	Search,
+	Trash2,
+	Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { BulkUploadDialog } from "@/components/Alert/BulkUploadDialog";
@@ -13,7 +26,6 @@ import {
 	inputClass,
 	primaryButtonClass,
 	refreshButtonClass,
-	rowActionClass,
 	searchIconClass,
 	searchInputClass,
 	secondaryButtonClass,
@@ -28,8 +40,11 @@ import {
 	useCreateServiceMaintenanceMutation,
 	useDeleteServiceMaintenanceMutation,
 	useGetServiceMaintenancesQuery,
+	useUpdateServiceMaintenanceMutation,
+	useUpdateServiceMaintenanceStatusMutation,
 } from "@/store/services/api/ServiceMaintenance";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status, statusLabel } from "@/enums/Status";
 import type { CreateServiceMaintenanceRequest, ServiceMaintenance, ServiceMaintenanceVehicle } from "@/interfaces/ServiceMaintenance";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
@@ -56,6 +71,7 @@ type ServiceRow = {
 	remark: string;
 	uploadDoc: string;
 	clone: string;
+	status: Status;
 	client: string;
 	transporter: string;
 	vehicleId: string;
@@ -85,6 +101,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "remark", label: "Remark" },
 	{ key: "uploadDoc", label: "Upload Doc" },
 	{ key: "clone", label: "Clone" },
+	{ key: "status", label: "Status" },
 ];
 
 
@@ -129,6 +146,16 @@ const dateLabel = (value?: string) => {
 	if (Number.isNaN(date.getTime())) return value;
 	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
+
+const toDateInput = (value?: string) => {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+	return date.toISOString().slice(0, 10);
+};
+
+const currentStatus = (value?: string) =>
+	String(value ?? "").trim().toLowerCase() === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
 
 const difference = (due?: number, current?: number) =>
 	typeof due === "number" && typeof current === "number" ? String(due - current) : "";
@@ -178,8 +205,10 @@ export default function ServiceAndMaintenance() {
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const { data: services = [], isFetching, refetch } = useGetServiceMaintenancesQuery();
 	const [createService, { isLoading: isCreating }] = useCreateServiceMaintenanceMutation();
-	const [deleteService] = useDeleteServiceMaintenanceMutation();
-	const isSaving = isCreating;
+	const [updateService, { isLoading: isUpdating }] = useUpdateServiceMaintenanceMutation();
+	const [updateServiceStatus, { isLoading: isUpdatingStatus }] = useUpdateServiceMaintenanceStatusMutation();
+	const [deleteService, { isLoading: isDeleting }] = useDeleteServiceMaintenanceMutation();
+	const isSaving = isCreating || isUpdating;
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -211,6 +240,7 @@ export default function ServiceAndMaintenance() {
 				remark: service.remark ?? "",
 				uploadDoc: service.serviceDocument ? "Uploaded" : "",
 				clone: "Clone",
+				status: currentStatus(service.status),
 				client: service.client ?? "",
 				transporter: service.transporter ?? "",
 				vehicleId: serviceVehicleId,
@@ -228,8 +258,12 @@ export default function ServiceAndMaintenance() {
 	const [sortKey, setSortKey] = useState<ColumnKey>("vehicleNo");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [formOpen, setFormOpen] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 	const [form, setForm] = useState<FormState>(emptyForm);
+	const [pendingStatus, setPendingStatus] = useState<ServiceRow | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<ServiceRow | null>(null);
+	const [statusReason, setStatusReason] = useState("");
 
 	const pageSize = 10;
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
@@ -268,17 +302,59 @@ export default function ServiceAndMaintenance() {
 
 	const patch = (next: Partial<FormState>) => setForm((current) => ({ ...current, ...next }));
 
+	const closeForm = () => {
+		setFormOpen(false);
+		setEditingId(null);
+		setForm(emptyForm);
+		if (fileRef.current) fileRef.current.value = "";
+	};
+
 	const openForm = () => {
+		setEditingId(null);
 		setForm(emptyForm);
 		if (fileRef.current) fileRef.current.value = "";
 		setFormOpen(true);
 	};
 
-	const saveForm = async () => {
-		if (isSaving) return;
+	const openEdit = (row: ServiceRow) => {
+		const record = services.find((service) => service.externalId === row.id);
+		if (!record) {
+			toast.error("Could not load this service for editing.");
+			return;
+		}
+		setEditingId(row.id);
+		setForm({
+			serviceName: record.serviceName ?? "",
+			vehicleNo: vehicleId(record.vehicle),
+			remark: record.remark ?? "",
+			odometerEnabled: Boolean(record.odometerIntervalEnabled),
+			odometerInterval: text(record.odometerInterval),
+			lastServiceOdometer: text(record.lastServiceOdometer),
+			engineEnabled: Boolean(record.engineIntervalEnabled),
+			engineInterval: text(record.engineInterval),
+			lastServiceEngine: text(record.lastServiceEngine),
+			daysEnabled: Boolean(record.daysIntervalEnabled),
+			daysInterval: text(record.daysInterval),
+			lastServiceDate: toDateInput(record.lastServiceDate),
+			odometerLeftEnabled: Boolean(record.odometerLeftEnabled),
+			odometerLeft: text(record.odometerLeft),
+			engineLeftEnabled: Boolean(record.engineLeftEnabled),
+			engineLeft: text(record.engineLeft),
+			daysLeftEnabled: Boolean(record.daysLeftEnabled),
+			daysLeft: text(record.daysLeft),
+			updateRecord: Boolean(record.updateRecord),
+			notifyMobile: Boolean(record.mobile),
+			documentFile: null,
+			visibleToDriver: Boolean(record.allowVisibilityToDriver),
+		});
+		if (fileRef.current) fileRef.current.value = "";
+		setFormOpen(true);
+	};
+
+	const buildPayload = (): CreateServiceMaintenanceRequest | null => {
 		if (!form.serviceName.trim() || !form.vehicleNo) {
 			toast.error("Service Name and Vehicle are required.");
-			return;
+			return null;
 		}
 		const numbers = {
 			odometerInterval: form.odometerEnabled ? optionalNumber(form.odometerInterval) : undefined,
@@ -290,38 +366,50 @@ export default function ServiceAndMaintenance() {
 			engineLeft: form.engineLeftEnabled ? optionalNumber(form.engineLeft) : undefined,
 			daysLeft: form.daysLeftEnabled ? optionalNumber(form.daysLeft) : undefined,
 		};
-		if (Object.values(numbers).some((value) => value === null)) {
-			toast.error("Interval and trigger values must be valid non-negative numbers.");
-			return;
-		}
+		// if (Object.values(numbers).some((value) => value === null)) {
+		// 	toast.error("Interval and trigger values must be valid non-negative numbers.");
+		// 	return null;
+		// }
+		return {
+			serviceName: form.serviceName.trim(),
+			vehicle: form.vehicleNo,
+			remark: form.remark.trim() || undefined,
+			odometerIntervalEnabled: form.odometerEnabled,
+			odometerInterval: numbers.odometerInterval ?? undefined,
+			lastServiceOdometer: numbers.lastServiceOdometer ?? undefined,
+			engineIntervalEnabled: form.engineEnabled,
+			engineInterval: numbers.engineInterval ?? undefined,
+			lastServiceEngine: numbers.lastServiceEngine ?? undefined,
+			daysIntervalEnabled: form.daysEnabled,
+			daysInterval: numbers.daysInterval ?? undefined,
+			lastServiceDate: form.daysEnabled && form.lastServiceDate ? form.lastServiceDate : undefined,
+			odometerLeftEnabled: form.odometerLeftEnabled,
+			odometerLeft: numbers.odometerLeft ?? undefined,
+			engineLeftEnabled: form.engineLeftEnabled,
+			engineLeft: numbers.engineLeft ?? undefined,
+			daysLeftEnabled: form.daysLeftEnabled,
+			daysLeft: numbers.daysLeft ?? undefined,
+			updateRecord: form.updateRecord,
+			mobile: form.notifyMobile,
+			serviceDocument: form.documentFile ?? undefined,
+			allowVisibilityToDriver: form.visibleToDriver,
+		};
+	};
+
+	const saveForm = async () => {
+		if (isSaving) return;
+		const body = buildPayload();
+		if (!body) return;
 		try {
-			await createService({
-				serviceName: form.serviceName.trim(),
-				vehicle: form.vehicleNo,
-				remark: form.remark.trim() || undefined,
-				odometerIntervalEnabled: form.odometerEnabled,
-				odometerInterval: numbers.odometerInterval ?? undefined,
-				lastServiceOdometer: numbers.lastServiceOdometer ?? undefined,
-				engineIntervalEnabled: form.engineEnabled,
-				engineInterval: numbers.engineInterval ?? undefined,
-				lastServiceEngine: numbers.lastServiceEngine ?? undefined,
-				daysIntervalEnabled: form.daysEnabled,
-				daysInterval: numbers.daysInterval ?? undefined,
-				lastServiceDate: form.daysEnabled && form.lastServiceDate ? form.lastServiceDate : undefined,
-				odometerLeftEnabled: form.odometerLeftEnabled,
-				odometerLeft: numbers.odometerLeft ?? undefined,
-				engineLeftEnabled: form.engineLeftEnabled,
-				engineLeft: numbers.engineLeft ?? undefined,
-				daysLeftEnabled: form.daysLeftEnabled,
-				daysLeft: numbers.daysLeft ?? undefined,
-				updateRecord: form.updateRecord,
-				mobile: form.notifyMobile,
-				serviceDocument: form.documentFile ?? undefined,
-				allowVisibilityToDriver: form.visibleToDriver,
-			}).unwrap();
-			setFormOpen(false);
+			if (editingId) {
+				await updateService({ externalId: editingId, body }).unwrap();
+				toast.success("Service updated.");
+			} else {
+				await createService(body).unwrap();
+				toast.success("Service saved.");
+			}
+			closeForm();
 			setPage(0);
-			toast.success("Service saved.");
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not save the service."));
 		}
@@ -338,13 +426,50 @@ export default function ServiceAndMaintenance() {
 		}
 	};
 
-	const removeService = async (externalId: string) => {
+	const confirmStatusChange = async () => {
+		if (!pendingStatus?.id) return;
+		const nextStatus = pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
 		try {
-			await deleteService(externalId).unwrap();
+			await updateServiceStatus({
+				externalId: pendingStatus.id,
+				status: nextStatus,
+				reason: statusReason,
+			}).unwrap();
+			toast.success(`${pendingStatus.serviceName || "Service"} is now ${statusLabel(nextStatus).toLowerCase()}.`);
+			setPendingStatus(null);
+			setStatusReason("");
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not update the service status."));
+		}
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDelete?.id) return;
+		try {
+			await deleteService(pendingDelete.id).unwrap();
 			toast.success("Service deleted.");
+			setPendingDelete(null);
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not delete the service."));
 		}
+	};
+
+	const iconButtonClass = (tone: "neutral" | "cyan" | "violet" | "rose") => {
+		const tones = {
+			neutral: isDark
+				? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100"
+				: "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700",
+			cyan: isDark
+				? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]"
+				: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100",
+			violet: isDark
+				? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+				: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100",
+			rose: isDark
+				? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+				: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+		};
+		return `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${tones[tone]}`;
 	};
 
 	const sortBy = (key: ColumnKey) => {
@@ -468,12 +593,72 @@ export default function ServiceAndMaintenance() {
 									pageRows.map((row) => (
 										<tr key={row.id} className={tableRowClass(isDark)}>
 											{visibleColumns.map((column) => (
-												<td key={column.key} className="whitespace-nowrap px-4 py-3">{row[column.key] || "—"}</td>
+												<td key={column.key} className="whitespace-nowrap px-4 py-3">
+													{column.key === "status" ? (
+														<span
+															className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
+																row.status === Status.ACTIVE
+																	? isDark
+																		? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-200"
+																		: "border-emerald-200 bg-emerald-50 text-emerald-700"
+																	: isDark
+																		? "border-rose-300/25 bg-rose-300/[0.08] text-rose-200"
+																		: "border-rose-200 bg-rose-50 text-rose-700"
+															}`}
+														>
+															<span
+																className={`h-1.5 w-1.5 rounded-full ${
+																	row.status === Status.ACTIVE ? "bg-emerald-400" : "bg-rose-400"
+																}`}
+															/>
+															{statusLabel(row.status)}
+														</span>
+													) : (
+														row[column.key] || "—"
+													)}
+												</td>
 											))}
 											<td className="px-4 py-2.5">
-												<div className="flex items-center justify-center gap-2">
-													<button type="button" onClick={() => cloneService(row.id)} className={rowActionClass(isDark, "cyan")}>Clone</button>
-													<button type="button" onClick={() => removeService(row.id)} className={rowActionClass(isDark, "rose")}>Delete</button>
+												<div className="flex items-center justify-center gap-1.5">
+													<button
+														type="button"
+														title="Edit service"
+														aria-label={`Edit ${row.serviceName || "service"}`}
+														onClick={() => openEdit(row)}
+														className={iconButtonClass("cyan")}
+													>
+														<Pencil className="h-3.5 w-3.5" />
+													</button>
+													<button
+														type="button"
+														title="Change status"
+														aria-label={`Change status of ${row.serviceName || "service"}`}
+														onClick={() => {
+															setStatusReason("");
+															setPendingStatus(row);
+														}}
+														className={iconButtonClass("violet")}
+													>
+														<Power className="h-3.5 w-3.5" />
+													</button>
+													<button
+														type="button"
+														title="Clone service"
+														aria-label={`Clone ${row.serviceName || "service"}`}
+														onClick={() => void cloneService(row.id)}
+														className={iconButtonClass("neutral")}
+													>
+														<Copy className="h-3.5 w-3.5" />
+													</button>
+													<button
+														type="button"
+														title="Delete service"
+														aria-label={`Delete ${row.serviceName || "service"}`}
+														onClick={() => setPendingDelete(row)}
+														className={iconButtonClass("rose")}
+													>
+														<Trash2 className="h-3.5 w-3.5" />
+													</button>
 												</div>
 											</td>
 										</tr>
@@ -491,13 +676,29 @@ export default function ServiceAndMaintenance() {
 			{formOpen && (
 				<AlertModal
 					isDark={isDark}
-					title="Add Service"
-					onClose={() => setFormOpen(false)}
+					title={editingId ? "Edit Service" : "Add Service"}
+					onClose={closeForm}
 					onSubmit={saveForm}
 					footer={
 						<>
-							<button type="button" onClick={() => { setForm(emptyForm); if (fileRef.current) fileRef.current.value = ""; }} className={secondaryButtonClass(isDark)}>Reset</button>
-							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>{isSaving ? "Saving..." : "Save"}</button>
+							<button
+								type="button"
+								onClick={() => {
+									if (editingId) {
+										const row = rows.find((item) => item.id === editingId);
+										if (row) openEdit(row);
+										return;
+									}
+									setForm(emptyForm);
+									if (fileRef.current) fileRef.current.value = "";
+								}}
+								className={secondaryButtonClass(isDark)}
+							>
+								Reset
+							</button>
+							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>
+								{isSaving ? "Saving..." : editingId ? "Update" : "Save"}
+							</button>
 						</>
 					}
 				>
@@ -582,6 +783,148 @@ export default function ServiceAndMaintenance() {
 					</div>
 				</AlertModal>
 			)}
+
+			{pendingStatus ? (
+				<div
+					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget && !isUpdatingStatus) {
+							setPendingStatus(null);
+							setStatusReason("");
+						}
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="service-status-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
+							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+						}`}
+					>
+						<h3
+							id="service-status-title"
+							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
+						>
+							Change service status?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Change the status of{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>
+								{pendingStatus.serviceName || "this service"}
+							</strong>{" "}
+							to{" "}
+							{statusLabel(
+								pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE,
+							)}
+							?
+						</p>
+						{pendingStatus.status === Status.ACTIVE ? (
+							<label className="mt-4 block">
+								<span
+									className={`mb-1.5 block text-[12px] font-medium ${
+										isDark ? "text-slate-300" : "text-slate-700"
+									}`}
+								>
+									Reason <span className="font-normal text-slate-500">(Optional)</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder="Why is this service being deactivated?"
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => {
+									setPendingStatus(null);
+									setStatusReason("");
+								}}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Confirm
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
+
+			{pendingDelete ? (
+				<div
+					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="service-delete-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
+							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+						}`}
+					>
+						<h3
+							id="service-delete-title"
+							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
+						>
+							Delete service?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							This will permanently remove{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>
+								{pendingDelete.serviceName || "this service"}
+							</strong>
+							.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(null)}
+								disabled={isDeleting}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmDelete()}
+								disabled={isDeleting}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
+										: "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+								}`}
+							>
+								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }

@@ -1,4 +1,5 @@
 import type { Status } from "@/enums/Status";
+import type { UserType } from "@/enums/UserType";
 
 export interface CreateClientRequest {
   owner_name: string;
@@ -18,10 +19,13 @@ export interface CreateClientRequest {
   image?: string;
   active: boolean;
   status: Status;
+  /** Backend requires `USER` for client create/update. */
+  userType: typeof UserType.USER;
 }
 
 export type UpdateClientRequest = Partial<CreateClientRequest> & {
   suspended?: boolean;
+  reason?: string;
 };
 
 export interface Client extends Omit<CreateClientRequest, "password" | "confirmPassword" | "status"> {

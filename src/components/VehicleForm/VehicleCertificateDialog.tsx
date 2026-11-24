@@ -1,6 +1,7 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useTheme } from "next-themes";
 import { CloudUpload, X } from "lucide-react";
+import { digitsOnly, PHONE_MAX_LENGTH } from "@/lib/formValidation";
 
 type CertificateValues = {
 	vehicleNumber: string;
@@ -39,14 +40,16 @@ const textFields: {
 	placeholder: string;
 	required?: boolean;
 	type?: "text" | "date" | "tel";
+	digitsOnly?: boolean;
+	maxLength?: number;
 }[] = [
 	{ name: "vehicleNumber", label: "Vehicle Number", placeholder: "Vehicle Number", required: true },
-	{ name: "deviceImei", label: "Device Imei", placeholder: "Device Imei" },
+	{ name: "deviceImei", label: "Device Imei", placeholder: "Device Imei", digitsOnly: true, maxLength: 30 },
 	{ name: "deviceType", label: "Device Type", placeholder: "Device Type" },
 	{ name: "chassisNumber", label: "Chassis Number", placeholder: "Chassis Number" },
 	{ name: "engineNumber", label: "Engine Number", placeholder: "Engine Number" },
 	{ name: "customerName", label: "Customer Name", placeholder: "Customer Name" },
-	{ name: "customerPhone", label: "Customer Phone No.", placeholder: "Customer Phone No.", type: "tel" },
+	{ name: "customerPhone", label: "Customer Phone No.", placeholder: "10 digit phone", type: "tel", digitsOnly: true, maxLength: PHONE_MAX_LENGTH },
 	{ name: "customerAddress", label: "Customer Address", placeholder: "Customer Address" },
 	{ name: "registrationDate", label: "Registration Date", placeholder: "", type: "date" },
 	{ name: "invoiceNumber", label: "Invoice Number", placeholder: "Invoice Number" },
@@ -172,8 +175,17 @@ export function VehicleCertificateDialog({
 								<input
 									required={field.required}
 									type={field.type ?? "text"}
+									inputMode={field.digitsOnly ? "numeric" : undefined}
+									maxLength={field.maxLength}
 									value={values[field.name]}
-									onChange={(event) => setValue(field.name, event.target.value)}
+									onChange={(event) =>
+										setValue(
+											field.name,
+											field.digitsOnly
+												? digitsOnly(event.target.value, field.maxLength)
+												: event.target.value,
+										)
+									}
 									placeholder={field.placeholder}
 									className={inputClass}
 								/>

@@ -1,20 +1,32 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import {
-	Circle as LeafletCircle,
-	MapContainer,
-	Marker,
-	Polygon as LeafletPolygon,
-	Rectangle as LeafletRectangle,
-	TileLayer,
-	useMap,
-	useMapEvents,
-} from "react-leaflet";
+import { MapContainer, Marker, TileLayer } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ChevronDown, Circle, Loader2, Maximize2, Pentagon, Square, Trash2, X } from "lucide-react";
+import {
+	DrawController,
+	MapDragControl,
+	MapEvents,
+	MapSize,
+	Recenter,
+	type DrawTool,
+} from "@/components/Geofence/GeofenceMapControls";
+import {
+	coordsFromShape,
+	DEFAULT_CENTER,
+	DEFAULT_RADIUS_M,
+	parseCoord,
+	resolveRadiusMeters,
+	round6,
+	shapeFromInitial,
+	shapeValue,
+	type DrawnShape,
+} from "@/components/Geofence/geofenceGeometry";
+import { GeofAssignType } from "@/enums/GeofAssignType";
 import { GeoType } from "@/enums/GeoType";
 import { Shapes } from "@/enums/Shapes";
+import { toTransitTimeKey, toTransitTimeNumber, transitTimeOptions } from "@/enums/TransitTime";
 import type { CreateGeofenceRequest, Geofence } from "@/interfaces/Geofence";
 import { useGetGeofTypeMasterQuery } from "@/store/services/api/Master";
 
@@ -27,24 +39,15 @@ type AddGeofenceProps = {
 	isSaving?: boolean;
 };
 
-type DrawTool = "circle" | "rectangle" | "polygon" | "pan";
-
-type DrawnShape =
-	| { kind: "circle"; center: [number, number]; radius: number }
-	| { kind: "rectangle"; bounds: [[number, number], [number, number]] }
-	| { kind: "polygon"; points: [number, number][] };
-
-const defaultCenter = { lat: 26.4658, lng: 80.3498 };
-const assignTypeOptions = ["client", "technician", "transporter"] as const;
+const assignTypeOptions = Object.values(GeofAssignType);
+const shapeOptions = Object.values(Shapes);
 const geoTypeOptions = Object.values(GeoType);
 const statusOptions = ["active", "inactive"] as const;
 
-const shapeStyle = {
-	color: "#22d3ee",
-	weight: 2,
-	fillColor: "#22d3ee",
-	fillOpacity: 0.18,
-};
+const assignTypeLabel = (value: GeofAssignType) =>
+	value.charAt(0).toUpperCase() + value.slice(1);
+
+const shapeLabel = (value: Shapes) => value.charAt(0).toUpperCase() + value.slice(1);
 
 const pinIcon = L.divIcon({
 	className: "",
@@ -64,280 +67,22 @@ const tiles = {
 	},
 };
 
-const parseCoord = (value: string, fallback: number) => {
-	const number = Number(value);
-	return Number.isFinite(number) ? number : fallback;
+const initialCoordText = (values: number[] | undefined, fallback: number) =>
+	values?.[0] != null ? Number(values[0]).toFixed(6) : fallback.toFixed(6);
+
+const initialRadiusText = (initialValues?: Geofence) => {
+	const shape = shapeFromInitial(initialValues);
+	if (shape?.kind === "circle") return String(Math.round(shape.radius));
+	if (initialValues?.radius) return String(Math.round(Number(initialValues.radius)) || DEFAULT_RADIUS_M);
+	return "";
 };
 
-const round6 = (value: number) => Number(value.toFixed(6));
-
-const edgeLongitude = (lat: number, lng: number, radiusMeters: number) => {
-	const metersPerDegreeLng = 111320 * Math.cos((lat * Math.PI) / 180);
-	if (!Number.isFinite(metersPerDegreeLng) || metersPerDegreeLng === 0) return lng;
-	return lng + radiusMeters / metersPerDegreeLng;
-};
-
-const radiusFromPoints = (latitudes: number[], longitudes: number[]) => {
-	if (latitudes.length < 2 || longitudes.length < 2) return 0;
-	const lat = latitudes[0] * (Math.PI / 180);
-	const dLat = (latitudes[1] - latitudes[0]) * (Math.PI / 180);
-	const dLng = (longitudes[1] - longitudes[0]) * (Math.PI / 180);
-	const a =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(lat) * Math.cos(latitudes[1] * (Math.PI / 180)) * Math.sin(dLng / 2) ** 2;
-	return Math.round(6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-};
-
-const shapeValue = (kind: DrawnShape["kind"]) => {
-	if (kind === "circle") return Shapes.CIRCLE;
-	if (kind === "rectangle") return Shapes.RECTANGLE;
-	return Shapes.POLYGON;
-};
-
-const coordsFromShape = (
-	shape: DrawnShape | null,
-): { latitudes: number[]; longitudes: number[]; center: [number, number] | null; radius: number } => {
-	if (!shape) return { latitudes: [], longitudes: [], center: null, radius: 0 };
-
-	if (shape.kind === "circle") {
-		const [lat, lng] = shape.center;
-		const radius = Math.max(1, Math.round(shape.radius));
-		return {
-			latitudes: [round6(lat), round6(lat)],
-			longitudes: [round6(lng), edgeLongitude(lat, lng, radius)],
-			center: [round6(lat), round6(lng)],
-			radius,
-		};
-	}
-
-	if (shape.kind === "rectangle") {
-		const [[south, west], [north, east]] = shape.bounds;
-		const latitudes = [round6(north), round6(north), round6(south), round6(south)];
-		const longitudes = [round6(west), round6(east), round6(east), round6(west)];
-		return {
-			latitudes,
-			longitudes,
-			center: [round6((north + south) / 2), round6((east + west) / 2)],
-			radius: 0,
-		};
-	}
-
-	const latitudes = shape.points.map(([lat]) => round6(lat));
-	const longitudes = shape.points.map(([, lng]) => round6(lng));
-	const centerLat = latitudes.reduce((sum, value) => sum + value, 0) / latitudes.length;
-	const centerLng = longitudes.reduce((sum, value) => sum + value, 0) / longitudes.length;
-	return {
-		latitudes,
-		longitudes,
-		center: [round6(centerLat), round6(centerLng)],
-		radius: 0,
-	};
-};
-
-const shapeFromInitial = (initialValues?: Geofence): DrawnShape | null => {
-	const latitudes = initialValues?.latitude ?? [];
-	const longitudes = initialValues?.longitude ?? [];
-	if (!latitudes.length || latitudes.length !== longitudes.length) return null;
-
-	const kind = (initialValues?.shapes || "").toLowerCase();
-	if (kind === Shapes.CIRCLE || kind === "circle" || latitudes.length <= 2) {
-		const radius = Math.max(
-			1,
-			Number(initialValues?.radius) || radiusFromPoints(latitudes, longitudes) || 500,
-		);
-		return { kind: "circle", center: [latitudes[0], longitudes[0]], radius };
-	}
-	if (kind === Shapes.RECTANGLE || latitudes.length === 4) {
-		const south = Math.min(...latitudes);
-		const north = Math.max(...latitudes);
-		const west = Math.min(...longitudes);
-		const east = Math.max(...longitudes);
-		return { kind: "rectangle", bounds: [[south, west], [north, east]] };
-	}
-	return {
-		kind: "polygon",
-		points: latitudes.map((lat, index) => [lat, longitudes[index]] as [number, number]),
-	};
-};
-
-function MapEvents({
-	enabled,
-	onPick,
-}: {
-	enabled: boolean;
-	onPick: (lat: number, lng: number) => void;
-}) {
-	useMapEvents({
-		click(event) {
-			if (!enabled) return;
-			onPick(event.latlng.lat, event.latlng.lng);
-		},
-	});
-	return null;
-}
-
-function MapSize({ expanded }: { expanded: boolean }) {
-	const map = useMap();
-	useEffect(() => {
-		const id = window.setTimeout(() => map.invalidateSize(), 60);
-		return () => window.clearTimeout(id);
-	}, [expanded, map]);
-	return null;
-}
-
-function Recenter({ lat, lng, enabled }: { lat: number; lng: number; enabled: boolean }) {
-	const map = useMap();
-	useEffect(() => {
-		if (!enabled) return;
-		map.panTo([lat, lng]);
-	}, [lat, lng, map, enabled]);
-	return null;
-}
-
-function MapDragControl({ enabled }: { enabled: boolean }) {
-	const map = useMap();
-	useEffect(() => {
-		if (enabled) map.dragging.enable();
-		else map.dragging.disable();
-	}, [enabled, map]);
-	return null;
-}
-
-function DrawController({
-	tool,
-	shape,
-	onShapeChange,
-}: {
-	tool: DrawTool;
-	shape: DrawnShape | null;
-	onShapeChange: (next: DrawnShape | null) => void;
-}) {
-	const map = useMap();
-	const startRef = useRef<L.LatLng | null>(null);
-	const draftRef = useRef<L.Layer | null>(null);
-	const polygonDraftRef = useRef<[number, number][]>([]);
-	const vertexLayerRef = useRef<L.LayerGroup | null>(null);
-
-	const clearDraft = () => {
-		if (draftRef.current) {
-			map.removeLayer(draftRef.current);
-			draftRef.current = null;
-		}
-	};
-
-	const clearVertices = () => {
-		if (vertexLayerRef.current) {
-			map.removeLayer(vertexLayerRef.current);
-			vertexLayerRef.current = null;
-		}
-	};
-
-	const renderPolygonVertices = (points: [number, number][]) => {
-		clearVertices();
-		const group = L.layerGroup().addTo(map);
-		points.forEach(([lat, lng]) => {
-			L.circleMarker([lat, lng], {
-				radius: 4,
-				color: "#22d3ee",
-				weight: 2,
-				fillColor: "#fff",
-				fillOpacity: 1,
-			}).addTo(group);
-		});
-		vertexLayerRef.current = group;
-	};
-
-	useEffect(() => {
-		startRef.current = null;
-		polygonDraftRef.current = [];
-		clearDraft();
-		clearVertices();
-		map.getContainer().style.cursor = tool === "pan" ? "" : "crosshair";
-		return () => {
-			clearDraft();
-			clearVertices();
-			map.getContainer().style.cursor = "";
-		};
-	}, [tool, map]);
-
-	useMapEvents({
-		mousedown(event) {
-			if (tool !== "circle" && tool !== "rectangle") return;
-			if ((event.originalEvent.target as HTMLElement | null)?.closest(".leaflet-marker-icon")) return;
-			startRef.current = event.latlng;
-			map.dragging.disable();
-			clearDraft();
-		},
-		mousemove(event) {
-			if (!startRef.current || (tool !== "circle" && tool !== "rectangle")) return;
-			clearDraft();
-			if (tool === "circle") {
-				const radius = map.distance(startRef.current, event.latlng);
-				draftRef.current = L.circle(startRef.current, { ...shapeStyle, radius }).addTo(map);
-				return;
-			}
-			draftRef.current = L.rectangle(L.latLngBounds(startRef.current, event.latlng), shapeStyle).addTo(map);
-		},
-		mouseup(event) {
-			if (!startRef.current || (tool !== "circle" && tool !== "rectangle")) return;
-			const start = startRef.current;
-			startRef.current = null;
-			clearDraft();
-
-			if (tool === "circle") {
-				const radius = map.distance(start, event.latlng);
-				if (radius < 5) return;
-				onShapeChange({ kind: "circle", center: [start.lat, start.lng], radius });
-				return;
-			}
-
-			const bounds = L.latLngBounds(start, event.latlng);
-			if (bounds.getSouthWest().equals(bounds.getNorthEast())) return;
-			onShapeChange({
-				kind: "rectangle",
-				bounds: [
-					[bounds.getSouth(), bounds.getWest()],
-					[bounds.getNorth(), bounds.getEast()],
-				],
-			});
-		},
-		click(event) {
-			if (tool !== "polygon") return;
-			if ((event.originalEvent.target as HTMLElement | null)?.closest(".leaflet-marker-icon")) return;
-			const next = [...polygonDraftRef.current, [event.latlng.lat, event.latlng.lng] as [number, number]];
-			polygonDraftRef.current = next;
-			renderPolygonVertices(next);
-			clearDraft();
-			if (next.length >= 2) {
-				draftRef.current = L.polyline(next, { color: "#22d3ee", weight: 2, dashArray: "4 4" }).addTo(map);
-			}
-		},
-		dblclick(event) {
-			if (tool !== "polygon") return;
-			L.DomEvent.stop(event);
-			const points = polygonDraftRef.current;
-			polygonDraftRef.current = [];
-			clearDraft();
-			clearVertices();
-			if (points.length < 3) return;
-			onShapeChange({ kind: "polygon", points });
-		},
-	});
-
-	return (
-		<>
-			{shape?.kind === "circle" ? (
-				<LeafletCircle center={shape.center} radius={shape.radius} pathOptions={shapeStyle} />
-			) : null}
-			{shape?.kind === "rectangle" ? (
-				<LeafletRectangle bounds={shape.bounds} pathOptions={shapeStyle} />
-			) : null}
-			{shape?.kind === "polygon" ? (
-				<LeafletPolygon positions={shape.points} pathOptions={shapeStyle} />
-			) : null}
-		</>
-	);
-}
+const drawTools: { id: DrawTool | "delete"; label: string; icon: typeof Circle }[] = [
+	{ id: "circle", label: "Draw circle", icon: Circle },
+	{ id: "rectangle", label: "Draw rectangle", icon: Square },
+	{ id: "polygon", label: "Draw polygon", icon: Pentagon },
+	{ id: "delete", label: "Clear shape", icon: Trash2 },
+];
 
 export function AddGeofence({
 	onClose,
@@ -349,33 +94,39 @@ export function AddGeofence({
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const { data: geoTypes = [], isLoading: geoTypesLoading, isError: geoTypesError } = useGetGeofTypeMasterQuery();
+
 	const [name, setName] = useState(initialValues?.name ?? "");
 	const [type, setType] = useState(initialValues?.type ?? "");
-	const [assignType, setAssignType] = useState(initialValues?.assignType ?? "transporter");
+	const [assignType, setAssignType] = useState(
+		() =>
+			assignTypeOptions.find((option) => option === initialValues?.assignType) ?? GeofAssignType.GROUP,
+	);
 	const [geoType, setGeoType] = useState(initialValues?.geoType || geoTypeOptions[0]);
+	const [shapeKind, setShapeKind] = useState<Shapes>(
+		() => (shapeValue(shapeFromInitial(initialValues)?.kind ?? "circle") as Shapes) || Shapes.CIRCLE,
+	);
 	const [geofenceCode, setGeofenceCode] = useState(initialValues?.geofenceCode ?? "");
-	const [transitTime, setTransitTime] = useState(initialValues?.transitTime ?? "20");
-	const [latitude, setLatitude] = useState(
-		initialValues?.latitude[0]?.toString() ?? defaultCenter.lat.toFixed(6),
-	);
-	const [longitude, setLongitude] = useState(
-		initialValues?.longitude[0]?.toString() ?? defaultCenter.lng.toFixed(6),
-	);
-	const [radius, setRadius] = useState(() => {
-		const initialShape = shapeFromInitial(initialValues);
-		if (initialShape?.kind === "circle") return String(Math.round(initialShape.radius));
-		if (initialValues?.radius) return String(initialValues.radius);
-		return "";
-	});
+	const [transitTime, setTransitTime] = useState(() => toTransitTimeKey(initialValues?.transitTime ?? "DAY_20"));
+	const [latitude, setLatitude] = useState(() => initialCoordText(initialValues?.latitude, DEFAULT_CENTER.lat));
+	const [longitude, setLongitude] = useState(() => initialCoordText(initialValues?.longitude, DEFAULT_CENTER.lng));
+	const [radius, setRadius] = useState(() => initialRadiusText(initialValues) || String(DEFAULT_RADIUS_M));
 	const [status, setStatus] = useState(
-		initialValues?.status.toLowerCase() === "inactive" ? "inactive" : "active",
+		(initialValues?.status ?? "").toLowerCase() === "inactive" ? "inactive" : "active",
 	);
 	const [reason, setReason] = useState(initialValues?.reason ?? "");
 	const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
 	const [expanded, setExpanded] = useState(false);
 	const [formError, setFormError] = useState("");
 	const [drawTool, setDrawTool] = useState<DrawTool>("pan");
-	const [drawnShape, setDrawnShape] = useState<DrawnShape | null>(() => shapeFromInitial(initialValues));
+	const [drawnShape, setDrawnShape] = useState<DrawnShape | null>(() => {
+		const fromInitial = shapeFromInitial(initialValues);
+		if (fromInitial) return fromInitial;
+		return {
+			kind: "circle",
+			center: [DEFAULT_CENTER.lat, DEFAULT_CENTER.lng],
+			radius: DEFAULT_RADIUS_M,
+		};
+	});
 	const [followMarker, setFollowMarker] = useState(true);
 
 	useEffect(() => {
@@ -390,15 +141,17 @@ export function AddGeofence({
 		if (!geoTypes.length) return;
 		setType((current) => {
 			if (current && geoTypes.some((option) => option.id === current)) return current;
-			const initialMatch = initialValues?.type
-				? geoTypes.find((option) => option.id === initialValues.type || option.externalId === initialValues.type)
+			const match = initialValues?.type
+				? geoTypes.find(
+						(option) => option.id === initialValues.type || option.externalId === initialValues.type,
+					)
 				: undefined;
-			return initialMatch?.id ?? geoTypes[0].id;
+			return match?.id ?? geoTypes[0].id;
 		});
 	}, [geoTypes, initialValues?.type]);
 
-	const lat = parseCoord(latitude, defaultCenter.lat);
-	const lng = parseCoord(longitude, defaultCenter.lng);
+	const lat = parseCoord(latitude, DEFAULT_CENTER.lat);
+	const lng = parseCoord(longitude, DEFAULT_CENTER.lng);
 	const tile = tiles[mapMode];
 	const shapeCoords = useMemo(() => coordsFromShape(drawnShape), [drawnShape]);
 
@@ -409,17 +162,27 @@ export function AddGeofence({
 	}`;
 	const labelClass = `block min-w-0 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`;
 
+	const clearError = () => setFormError("");
+
 	const applyCoordinates = (nextLat: number, nextLng: number) => {
-		const fixedLat = nextLat.toFixed(6);
-		const fixedLng = nextLng.toFixed(6);
-		setLatitude(fixedLat);
-		setLongitude(fixedLng);
+		setLatitude(nextLat.toFixed(6));
+		setLongitude(nextLng.toFixed(6));
 		setFollowMarker(true);
-		setFormError("");
+		clearError();
+	};
+
+	const syncCircleAt = (nextLat: number, nextLng: number, radiusText: string) => {
+		const meters = resolveRadiusMeters(radiusText);
+		if (!(Number(radiusText) > 0)) setRadius(String(DEFAULT_RADIUS_M));
+		setDrawnShape((current) => {
+			if (current && current.kind !== "circle") return current;
+			return { kind: "circle", center: [round6(nextLat), round6(nextLng)], radius: meters };
+		});
 	};
 
 	const moveMarker = (nextLat: number, nextLng: number) => {
 		applyCoordinates(nextLat, nextLng);
+		syncCircleAt(nextLat, nextLng, radius);
 	};
 
 	const stopDrawing = () => {
@@ -430,59 +193,91 @@ export function AddGeofence({
 	const handleShapeChange = (next: DrawnShape | null) => {
 		setDrawnShape(next);
 		const coords = coordsFromShape(next);
-		if (coords.center) {
-			applyCoordinates(coords.center[0], coords.center[1]);
+		if (coords.center) applyCoordinates(coords.center[0], coords.center[1]);
+		if (next) {
+			setShapeKind(shapeValue(next.kind) as Shapes);
+			if (next.kind === "circle") setRadius(String(coords.radius || DEFAULT_RADIUS_M));
+			stopDrawing();
 		}
-		if (next?.kind === "circle") {
-			setRadius(String(coords.radius));
-		} else if (!next) {
-			setRadius("");
+	};
+
+	/** Selecting a shape autofills radius (default 500m) and applies a circle at the current pin. */
+	const selectShape = (kind: Shapes) => {
+		setShapeKind(kind);
+		clearError();
+		const meters = resolveRadiusMeters(radius);
+		setRadius(String(meters));
+
+		const center: [number, number] = [
+			parseCoord(latitude, DEFAULT_CENTER.lat),
+			parseCoord(longitude, DEFAULT_CENTER.lng),
+		];
+
+		if (kind === Shapes.CIRCLE) {
+			setDrawnShape({ kind: "circle", center, radius: meters });
+			setDrawTool("pan");
+			setFollowMarker(true);
+			return;
 		}
-		if (next) stopDrawing();
+
+		// Rectangle / polygon: fill radius for payload fallback, then let user draw on the map.
+		setDrawnShape(null);
+		setDrawTool(kind === Shapes.RECTANGLE ? "rectangle" : "polygon");
+		setFollowMarker(false);
 	};
 
 	const applyRadius = (value: string) => {
 		setRadius(value);
-		setFormError("");
+		clearError();
 		const meters = Number(value);
 		if (!Number.isFinite(meters) || meters <= 0) return;
-		const center: [number, number] = [
-			parseCoord(latitude, defaultCenter.lat),
-			parseCoord(longitude, defaultCenter.lng),
-		];
-		setDrawnShape({ kind: "circle", center, radius: meters });
+		setShapeKind(Shapes.CIRCLE);
+		setDrawnShape({
+			kind: "circle",
+			center: [parseCoord(latitude, DEFAULT_CENTER.lat), parseCoord(longitude, DEFAULT_CENTER.lng)],
+			radius: meters,
+		});
 		stopDrawing();
 	};
 
 	const clearShape = () => {
 		setDrawnShape(null);
-		setRadius("");
+		setRadius(String(DEFAULT_RADIUS_M));
+		setShapeKind(Shapes.CIRCLE);
 		stopDrawing();
-		setFormError("");
+		clearError();
 	};
 
-	const tools: { id: DrawTool | "delete"; label: string; icon: typeof Circle }[] = [
-		{ id: "circle", label: "Draw circle", icon: Circle },
-		{ id: "rectangle", label: "Draw rectangle", icon: Square },
-		{ id: "polygon", label: "Draw polygon", icon: Pentagon },
-		{ id: "delete", label: "Clear shape", icon: Trash2 },
-	];
+	const updateCoordField = (axis: "lat" | "lng", value: string) => {
+		if (axis === "lat") setLatitude(value);
+		else setLongitude(value);
+		setFollowMarker(true);
+		clearError();
+
+		const nextLat = axis === "lat" ? parseCoord(value, DEFAULT_CENTER.lat) : parseCoord(latitude, DEFAULT_CENTER.lat);
+		const nextLng = axis === "lng" ? parseCoord(value, DEFAULT_CENTER.lng) : parseCoord(longitude, DEFAULT_CENTER.lng);
+		syncCircleAt(nextLat, nextLng, radius);
+	};
 
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
+		const transitDays = toTransitTimeNumber(transitTime);
+		const centerLat = shapeCoords.center?.[0] ?? Number(latitude);
+		const centerLng = shapeCoords.center?.[1] ?? Number(longitude);
+
 		if (
 			!name.trim() ||
 			!type.trim() ||
 			!assignType.trim() ||
 			!geoType.trim() ||
-			!transitTime ||
-			!Number.isFinite(Number(latitude)) ||
-			!Number.isFinite(Number(longitude))
+			!transitDays ||
+			!Number.isFinite(centerLat) ||
+			!Number.isFinite(centerLng)
 		) {
 			setFormError("Complete all required fields before saving.");
 			return;
 		}
-		if (!drawnShape || !shapeCoords.latitudes.length || !shapeCoords.longitudes.length) {
+		if (!drawnShape) {
 			setFormError("Draw a shape or enter a radius before saving.");
 			return;
 		}
@@ -490,21 +285,46 @@ export function AddGeofence({
 			setFormError("Enter a valid radius for the circle.");
 			return;
 		}
+
 		await onSubmit({
 			name: name.trim(),
 			type: type.trim(),
 			assignType,
-			transitTime,
-			shapes: shapeValue(drawnShape.kind),
+			transitTime: transitDays,
+			shapes: shapeKind || shapeValue(drawnShape.kind),
 			geoType,
-			latitude: shapeCoords.latitudes,
-			longitude: shapeCoords.longitudes,
-			radius: shapeCoords.radius,
+			latitude: round6(centerLat),
+			longitude: round6(centerLng),
+			radius: Number(shapeCoords.radius) || Number(radius) || DEFAULT_RADIUS_M,
 			...(geofenceCode.trim() ? { geofenceCode: geofenceCode.trim() } : {}),
 			...(status ? { status } : {}),
 			...(reason.trim() ? { reason: reason.trim() } : {}),
 		});
 	};
+
+	const field = (label: ReactNode, control: ReactNode, className = "") => (
+		<label className={`${labelClass} ${className}`}>{label}{control}</label>
+	);
+
+	const requiredLabel = (text: string) => (
+		<span className="mb-1.5 flex items-center gap-1">
+			{text} <span className="text-rose-400">*</span>
+		</span>
+	);
+
+	const optionalLabel = (text: string, hint: string) => (
+		<span className="mb-1.5 flex items-center gap-1">
+			{text} <span className="font-normal text-slate-500">({hint})</span>
+		</span>
+	);
+
+	const geoTypePlaceholder = geoTypesLoading
+		? "Loading geo types..."
+		: geoTypesError
+			? "Could not load geo types"
+			: geoTypes.length === 0
+				? "No geo types available"
+				: "Select geo type";
 
 	return (
 		<div
@@ -520,27 +340,43 @@ export function AddGeofence({
 			>
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
-						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">{initialValues ? "Edit Geofence" : "Add Geofence"}</h2>
+						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>
+							Fleet operations
+						</p>
+						<h2 id={titleId} className="text-[15px] font-semibold">
+							{initialValues ? "Edit Geofence" : "Add Geofence"}
+						</h2>
 					</div>
-					<button type="button" onClick={onClose} aria-label="Close geofence form" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label="Close geofence form"
+						className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
+					>
 						<X className="h-5 w-5 stroke-[3]" />
 					</button>
 				</header>
 
 				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-					{formError && (
-						<p role="alert" className={`mb-4 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+					{formError ? (
+						<p
+							role="alert"
+							className={`mb-4 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}
+						>
 							{formError}
 						</p>
-					)}
+					) : null}
+
 					<div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+						{/* Map */}
 						<div>
 							<p className={`text-[12px] font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>Location map</p>
 							<p className="mb-3 mt-1 text-[11px] text-slate-500">
 								Use the tools to draw an area. Circle/rectangle: click and drag. Polygon: click points, double-click to finish.
 							</p>
-							<div className={`relative overflow-hidden rounded-xl border ${expanded ? "h-[460px]" : "h-[320px]"} ${isDark ? "border-white/[0.08]" : "border-slate-200"} ${mapMode === "map" ? "[&_.leaflet-tile-pane]:[filter:invert(1)_hue-rotate(180deg)_brightness(0.82)_contrast(0.92)]" : ""}`}>
+							<div
+								className={`relative overflow-hidden rounded-xl border ${expanded ? "h-[460px]" : "h-[320px]"} ${isDark ? "border-white/[0.08]" : "border-slate-200"} ${mapMode === "map" ? "[&_.leaflet-tile-pane]:[filter:invert(1)_hue-rotate(180deg)_brightness(0.82)_contrast(0.92)]" : ""}`}
+							>
 								<MapContainer
 									center={[lat, lng]}
 									zoom={15}
@@ -569,7 +405,7 @@ export function AddGeofence({
 								</MapContainer>
 
 								<div className="absolute left-3 top-3 z-[500] flex flex-col overflow-hidden rounded-md border border-slate-300 bg-white shadow-lg">
-									{tools.map((tool) => {
+									{drawTools.map((tool) => {
 										const Icon = tool.icon;
 										const active = tool.id !== "delete" && drawTool === tool.id;
 										return (
@@ -584,8 +420,11 @@ export function AddGeofence({
 														clearShape();
 														return;
 													}
-													setDrawTool(tool.id);
-													setFollowMarker(false);
+													if (tool.id === "circle") {
+														selectShape(Shapes.CIRCLE);
+														return;
+													}
+													selectShape(tool.id === "rectangle" ? Shapes.RECTANGLE : Shapes.POLYGON);
 												}}
 												className={`flex h-9 w-9 items-center justify-center border-b border-slate-200 last:border-b-0 transition ${
 													active ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-100"
@@ -609,65 +448,114 @@ export function AddGeofence({
 										</button>
 									))}
 								</div>
-								<button type="button" onClick={() => setExpanded((open) => !open)} aria-label="Expand map" className="absolute right-3 top-3 z-[500] flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-[#07142f]/90 text-slate-200 shadow-lg backdrop-blur-md hover:text-cyan-100">
+
+								<button
+									type="button"
+									onClick={() => setExpanded((open) => !open)}
+									aria-label="Expand map"
+									className="absolute right-3 top-3 z-[500] flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-[#07142f]/90 text-slate-200 shadow-lg backdrop-blur-md hover:text-cyan-100"
+								>
 									<Maximize2 className="h-3.5 w-3.5" />
 								</button>
 							</div>
 						</div>
 
+						{/* Fields */}
 						<div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:content-start">
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Name <span className="text-rose-400">*</span></span>
-								<input required value={name} onChange={(event) => { setName(event.target.value); setFormError(""); }} className={inputClass} />
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Geofence Type <span className="text-rose-400">*</span></span>
+							{field(
+								requiredLabel("Name"),
+								<input required value={name} onChange={(event) => { setName(event.target.value); clearError(); }} className={inputClass} />,
+							)}
+
+							{field(
+								requiredLabel("Geofence Type"),
 								<span className="relative block">
 									<select
 										required
 										value={type}
 										disabled={geoTypesLoading || geoTypesError || geoTypes.length === 0}
-										onChange={(event) => { setType(event.target.value); setFormError(""); }}
+										onChange={(event) => { setType(event.target.value); clearError(); }}
 										className={`${inputClass} appearance-none pr-8 disabled:cursor-not-allowed disabled:opacity-60`}
 									>
-										<option value="">
-											{geoTypesLoading
-												? "Loading geo types..."
-												: geoTypesError
-													? "Could not load geo types"
-													: geoTypes.length === 0
-														? "No geo types available"
-														: "Select geo type"}
-										</option>
+										<option value="">{geoTypePlaceholder}</option>
 										{geoTypes.map((option) => (
 											<option key={option.id} value={option.id}>{option.name}</option>
 										))}
 									</select>
 									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-								</span>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Assign Type <span className="text-rose-400">*</span></span>
-								<select required value={assignType} onChange={(event) => setAssignType(event.target.value)} className={inputClass}>
-									{assignTypeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-								</select>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Geo Type <span className="text-rose-400">*</span></span>
-								<select required value={geoType} onChange={(event) => setGeoType(event.target.value)} className={inputClass}>
-									{geoTypeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-								</select>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Geofence Code <span className="font-normal text-slate-500">(Optional)</span></span>
-								<input value={geofenceCode} onChange={(event) => { setGeofenceCode(event.target.value); setFormError(""); }} className={inputClass} />
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Transit Time <span className="text-rose-400">*</span></span>
-								<input required type="number" min={1} value={transitTime} onChange={(event) => { setTransitTime(event.target.value); setFormError(""); }} className={inputClass} />
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Radius (m) <span className="font-normal text-slate-500">(sets circle)</span></span>
+								</span>,
+							)}
+
+							{field(
+								requiredLabel("Assign Type"),
+								<span className="relative block">
+									<select
+										required
+										value={assignType}
+										onChange={(event) => setAssignType(event.target.value as GeofAssignType)}
+										className={`${inputClass} appearance-none pr-8`}
+									>
+										{assignTypeOptions.map((option) => (
+											<option key={option} value={option}>{assignTypeLabel(option)}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>,
+							)}
+
+							{field(
+								requiredLabel("Shape"),
+								<span className="relative block">
+									<select
+										required
+										value={shapeKind}
+										onChange={(event) => selectShape(event.target.value as Shapes)}
+										className={`${inputClass} appearance-none pr-8`}
+									>
+										{shapeOptions.map((option) => (
+											<option key={option} value={option}>{shapeLabel(option)}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>,
+							)}
+
+							{field(
+								requiredLabel("Geo Type"),
+								<span className="relative block">
+									<select required value={geoType} onChange={(event) => setGeoType(event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+										{geoTypeOptions.map((option) => (
+											<option key={option} value={option}>{option}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>,
+							)}
+
+							{field(
+								optionalLabel("Geofence Code", "Optional"),
+								<input value={geofenceCode} onChange={(event) => { setGeofenceCode(event.target.value); clearError(); }} className={inputClass} />,
+							)}
+
+							{field(
+								requiredLabel("Transit Time"),
+								<span className="relative block">
+									<select
+										required
+										value={transitTime}
+										onChange={(event) => { setTransitTime(toTransitTimeKey(event.target.value)); clearError(); }}
+										className={`${inputClass} appearance-none pr-8`}
+									>
+										{transitTimeOptions.map((option) => (
+											<option key={option.value} value={option.value}>{option.label}</option>
+										))}
+									</select>
+									<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+								</span>,
+							)}
+
+							{field(
+								optionalLabel("Radius (m)", "sets circle"),
 								<input
 									type="number"
 									min={1}
@@ -676,70 +564,65 @@ export function AddGeofence({
 									onChange={(event) => applyRadius(event.target.value)}
 									placeholder="e.g. 500"
 									className={inputClass}
-								/>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Latitude <span className="text-rose-400">*</span></span>
+								/>,
+							)}
+
+							{field(
+								requiredLabel("Latitude"),
 								<input
 									required
 									type="number"
 									step="any"
 									value={latitude}
-									onChange={(event) => {
-										const nextLat = event.target.value;
-										setLatitude(nextLat);
-										setFollowMarker(true);
-										setFormError("");
-										const meters = Number(radius);
-										if (!Number.isFinite(meters) || meters <= 0) return;
-										setDrawnShape({
-											kind: "circle",
-											center: [parseCoord(nextLat, defaultCenter.lat), parseCoord(longitude, defaultCenter.lng)],
-											radius: meters,
-										});
-									}}
+									onChange={(event) => updateCoordField("lat", event.target.value)}
 									className={inputClass}
-								/>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Longitude <span className="text-rose-400">*</span></span>
+								/>,
+							)}
+
+							{field(
+								requiredLabel("Longitude"),
 								<input
 									required
 									type="number"
 									step="any"
 									value={longitude}
-									onChange={(event) => {
-										const nextLng = event.target.value;
-										setLongitude(nextLng);
-										setFollowMarker(true);
-										setFormError("");
-										const meters = Number(radius);
-										if (!Number.isFinite(meters) || meters <= 0) return;
-										setDrawnShape({
-											kind: "circle",
-											center: [parseCoord(latitude, defaultCenter.lat), parseCoord(nextLng, defaultCenter.lng)],
-											radius: meters,
-										});
-									}}
+									onChange={(event) => updateCoordField("lng", event.target.value)}
 									className={inputClass}
-								/>
-							</label>
-							<label className={labelClass}>
-								<span className="mb-1.5 flex items-center gap-1">Status <span className="text-rose-400">*</span></span>
+								/>,
+							)}
+
+							{field(
+								requiredLabel("Status"),
 								<select required value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}>
-									{statusOptions.map((option) => <option key={option} value={option}>{option[0].toUpperCase() + option.slice(1)}</option>)}
-								</select>
-							</label>
-							<label className={`${labelClass} sm:col-span-2`}>
-								<span className="mb-1.5 flex items-center gap-1">Reason <span className="text-rose-400">*</span></span>
-								<textarea required value={reason} rows={3} onChange={(event) => { setReason(event.target.value); setFormError(""); }} className={`${inputClass} h-auto py-2`} />
-							</label>
+									{statusOptions.map((option) => (
+										<option key={option} value={option}>
+											{option[0].toUpperCase() + option.slice(1)}
+										</option>
+									))}
+								</select>,
+							)}
+
+							{field(
+								requiredLabel("Reason"),
+								<textarea
+									required
+									value={reason}
+									rows={3}
+									onChange={(event) => { setReason(event.target.value); clearError(); }}
+									className={`${inputClass} h-auto py-2`}
+								/>,
+								"sm:col-span-2",
+							)}
 						</div>
 					</div>
 				</div>
 
 				<footer className={`flex shrink-0 justify-center border-t px-5 py-4 ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-					<button type="submit" disabled={isSaving} className={`flex h-9 min-w-[140px] items-center justify-center gap-2 rounded-lg border px-6 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button
+						type="submit"
+						disabled={isSaving}
+						className={`flex h-9 min-w-[140px] items-center justify-center gap-2 rounded-lg border px-6 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+					>
 						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 						{isSaving ? "Saving..." : initialValues ? "Save Changes" : "Add"}
 					</button>

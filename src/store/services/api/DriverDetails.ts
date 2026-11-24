@@ -2,7 +2,11 @@ import { api } from "../api";
 import type { DriverDetail, CreateDriverDetailRequest, UpdateDriverDetailRequest } from "@/interfaces/DriverDetail";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-type NestedParty = string | { id?: string; name?: string; companyName?: string } | null | undefined;
+type NestedParty =
+	| string
+	| { id?: string | number; externalId?: string; name?: string; companyName?: string }
+	| null
+	| undefined;
 
 type DriverDetailApiRecord = Omit<DriverDetail, "externalId" | "client" | "transporter" | "clientName" | "transporterName"> & {
 	externalId?: string;
@@ -12,8 +16,8 @@ type DriverDetailApiRecord = Omit<DriverDetail, "externalId" | "client" | "trans
 
 const asId = (value: NestedParty): string => {
 	if (!value) return "";
-	if (typeof value === "string") return value;
-	return String(value.id ?? "").trim();
+	if (typeof value === "string" || typeof value === "number") return String(value).trim();
+	return String(value.externalId ?? value.id ?? "").trim();
 };
 
 const asPartyName = (value: NestedParty): string => {

@@ -66,6 +66,7 @@ export const technicianApi = api.injectEndpoints({
 export const {
   useGetTechniciansQuery,
   useGetTechnicianByIdQuery,
+  useLazyGetTechnicianByIdQuery,
   useCreateTechnicianMutation,
   useUpdateTechnicianMutation,
   useDeleteTechnicianMutation,

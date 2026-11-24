@@ -26,6 +26,7 @@ import { useLazyGetDeviceByIdQuery } from "@/store/services/api/AddDevice";
 import { SimOperator } from "@/enums/SimOperator";
 import { VehicleStatus } from "@/enums/VehicleStatus";
 import { DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
+import { digitsOnly, PHONE_MAX_LENGTH } from "@/lib/formValidation";
 
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
@@ -167,7 +168,7 @@ const transporterToFormValues = (transporter: Transporter): VehicleFormValues =>
     language: transporter.language ?? "",
     name: transporter.name ?? "",
     email: transporter.email ?? "",
-    phone: transporter.phone != null ? String(transporter.phone) : "",
+    phone: transporter.phone != null ? digitsOnly(String(transporter.phone), PHONE_MAX_LENGTH) : "",
     address: transporter.address ?? "",
     subscriptionStart: toDateInputValue(transporter.subscriptionStartDate),
     subscriptionDue: toDateInputValue(transporter.subscriptionDueDate),
@@ -202,7 +203,7 @@ const fieldsByTab: Record<string, FieldConfig[]> = {
         { name: "language", label: "Language", type: "select", required: true, options: fallbackLanguages },
         { name: "name", label: "Name", placeholder: "Name", optional: true },
         { name: "email", label: "Email", placeholder: "Email", type: "email", optional: true },
-        { name: "phone", label: "Phone", placeholder: "Phone", type: "tel", optional: true },
+        { name: "phone", label: "Phone", placeholder: "10 digit phone", type: "tel", optional: true, maxLength: PHONE_MAX_LENGTH, inputMode: "numeric", helper: "Must be exactly 10 digits" },
         { name: "address", label: "Address", placeholder: "Address", optional: true },
         { name: "subscriptionStart", label: "Subscription Start Date", type: "date", required: true },
         { name: "subscriptionDue", label: "Subscription Due Date", type: "date", required: true },
@@ -308,9 +309,24 @@ function FormField({
                             readOnly={disabled}
                             placeholder={field.placeholder}
                             maxLength={field.maxLength}
-                            inputMode={field.inputMode}
+                            inputMode={field.inputMode ?? (field.type === "number" ? "numeric" : field.type === "tel" ? "numeric" : undefined)}
                             pattern={field.pattern}
-                            onChange={(event) => onChange(event.target.value)}
+                            onChange={(event) => {
+                                const raw = event.target.value;
+                                if (field.type === "tel" || field.inputMode === "numeric") {
+                                    onChange(digitsOnly(raw, field.maxLength));
+                                    return;
+                                }
+                                if (field.type === "number") {
+                                    onChange(digitsOnly(raw));
+                                    return;
+                                }
+                                if (field.type === "email") {
+                                    onChange(raw.trim());
+                                    return;
+                                }
+                                onChange(raw);
+                            }}
                             className={`${inputClasses} min-w-0 disabled:cursor-not-allowed disabled:opacity-70`}
                         />
                         {field.type === "password" && (

@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddGeofence, type GeofenceFormValues } from "@/components/Geofence/AddGeofence";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status, statusLabel } from "@/enums/Status";
 import type { Geofence as GeofenceRecord } from "@/interfaces/Geofence";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
@@ -14,6 +15,9 @@ import {
 	useLazyGetGeofenceByIdQuery,
 	useUpdateGeofenceMutation,
 } from "@/store/services/api/Geofence";
+
+const currentStatus = (value?: string) =>
+	(value ?? "").toLowerCase() === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
 
 type ColumnKey = "sn" | "name" | "type" | "assignType" | "geofenceCode" | "transitTime" | "radius" | "latitude" | "longitude" | "status" | "reason" | "actions";
 
@@ -50,7 +54,11 @@ export default function Geofence() {
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingGeofence, setEditingGeofence] = useState<GeofenceRecord | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<GeofenceRecord | null>(null);
+	const [pendingStatusGeofence, setPendingStatusGeofence] = useState<GeofenceRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const isSaving = isCreating || isUpdating;
+	const isUpdatingStatus = isUpdating && Boolean(pendingStatusGeofence);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -126,6 +134,52 @@ export default function Geofence() {
 		}
 	};
 
+	const openStatusChange = (row: GeofenceRecord) => {
+		const status = currentStatus(row.status);
+		setPendingStatusGeofence(row);
+		setSelectedStatus(status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = () => {
+		if (isUpdatingStatus) return;
+		setPendingStatusGeofence(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusGeofence?.externalId) {
+			toast.error("This geofence does not have a valid ID.");
+			return;
+		}
+		const existing = currentStatus(pendingStatusGeofence.status);
+		if (selectedStatus === existing) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		try {
+			await updateGeofence({
+				externalId: pendingStatusGeofence.externalId,
+				body: {
+					status: selectedStatus,
+					reason: statusReason.trim(),
+				},
+			}).unwrap();
+			toast.success(
+				`${pendingStatusGeofence.name || "Geofence"} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
+			);
+			closeStatusDialog();
+			void refetch();
+		} catch (error) {
+			console.error("Failed to update geofence status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the geofence status."));
+		}
+	};
+
 	const cell = (key: ColumnKey, row: GeofenceRecord, index: number) => {
 		if (key === "sn") return <span className="text-slate-500">{String(safePage * pageSize + index + 1).padStart(2, "0")}</span>;
 		if (key === "name") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.name}</span>;
@@ -144,6 +198,16 @@ export default function Geofence() {
 					</button>
 					<button
 						type="button"
+						onClick={() => openStatusChange(row)}
+						disabled={isUpdatingStatus || !row.externalId}
+						aria-label={`Change status for ${row.name}`}
+						title="Change status"
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-amber-300/20 bg-amber-300/[0.08] text-amber-100 hover:bg-amber-300/[0.14]" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+					>
+						<Power className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
 						onClick={() => setPendingDelete(row)}
 						disabled={isDeleting || !row.externalId}
 						aria-label={`Delete geofence ${row.name}`}
@@ -158,7 +222,22 @@ export default function Geofence() {
 		if (key === "latitude") return textValue(row.latitude.join(", "));
 		if (key === "longitude") return textValue(row.longitude.join(", "));
 		if (key === "status") {
-			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${row.status.toLowerCase() === "active" ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-slate-300/[0.08] text-slate-300" : "bg-slate-100 text-slate-700")}`}>{row.status}</span>;
+			const active = currentStatus(row.status) === Status.ACTIVE;
+			return (
+				<span
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
+						active
+							? isDark
+								? "bg-emerald-400/15 text-emerald-300"
+								: "bg-emerald-100 text-emerald-700"
+							: isDark
+								? "bg-slate-300/[0.08] text-slate-300"
+								: "bg-slate-100 text-slate-700"
+					}`}
+				>
+					{statusLabel(currentStatus(row.status))}
+				</span>
+			);
 		}
 		if (key === "type") return textValue(row.geofType || row.type);
 		if (key === "assignType") return textValue(row.assignType);
@@ -299,6 +378,93 @@ export default function Geofence() {
 					isSaving={isSaving}
 				/>
 			)}
+
+			{pendingStatusGeofence ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button
+						type="button"
+						aria-label="Close status dialog"
+						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
+						onClick={closeStatusDialog}
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="geofence-status-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="geofence-status-title" className="text-[15px] font-semibold">
+							Change geofence status
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Current status of{" "}
+							<span className="font-medium">{pendingStatusGeofence.name || "this geofence"}</span> is{" "}
+							<span className="font-medium">{statusLabel(currentStatus(pendingStatusGeofence.status))}</span>.
+							Choose Active or Inactive, then enter a reason.
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Status <span className="text-rose-400">*</span>
+							</span>
+							<select
+								value={selectedStatus}
+								onChange={(event) => setSelectedStatus(event.target.value as Status)}
+								className={`h-[37px] w-full rounded-lg border px-3 text-[12px] outline-none ${
+									isDark
+										? "border-white/[0.09] bg-[#03091c]/70 text-white"
+										: "border-slate-200 bg-white text-slate-900"
+								}`}
+							>
+								<option value={Status.ACTIVE}>Active</option>
+								<option value={Status.INACTIVE}>Inactive</option>
+							</select>
+						</label>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this geofence being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+								className={`h-auto w-full resize-none rounded-lg border px-3 py-2 text-[12px] outline-none ${
+									isDark
+										? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500"
+										: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+								}`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Update Status
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 
 			{pendingDelete && (
 				<div

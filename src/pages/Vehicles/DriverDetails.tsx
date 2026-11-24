@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, LoaderCircle, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, LoaderCircle, Pencil, Plus, Power, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddDriverDetailForm, type DriverDetailFormValues } from "@/components/VehicleForm/AddDriverDetailForm";
 import { UploadDriverForm, type UploadDriverValues } from "@/components/VehicleForm/UploadDriverForm";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
+import { Status, statusLabel } from "@/enums/Status";
 import type { DriverDetail } from "@/interfaces/DriverDetail";
 import type { CreateDriverDetailRequest } from "@/interfaces/DriverDetail";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -85,6 +85,13 @@ const formatDate = (value: string) => {
 
 const textValue = (value: string | number | boolean) => (value === "" || value === null ? "—" : String(value));
 
+const inputClass = (isDark: boolean) =>
+	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
+		isDark
+			? "border-white/[0.08] bg-[#03091c]/70 text-slate-300 placeholder:text-slate-600 focus:border-cyan-300/35 [color-scheme:dark]"
+			: "border-slate-200 bg-white text-slate-700 placeholder:text-slate-400 focus:border-cyan-400"
+	}`;
+
 const ageFromDob = (value: string) => {
 	if (!value) return 0;
 	const born = new Date(`${value}T00:00:00`);
@@ -130,7 +137,7 @@ export default function DriverDetails() {
 	const { data: driverDetails = [], isLoading, isError, refetch } = useGetDriverDetailsQuery();
 	const { data: transporterOptions = [] } = useGetTransporterMasterQuery();
 	const [createDriverDetail] = useCreateDriverDetailMutation();
-	const [updateDriverDetail] = useUpdateDriverDetailMutation();
+	const [updateDriverDetail, { isLoading: isUpdatingStatus }] = useUpdateDriverDetailMutation();
 	const [deleteDriverDetail] = useDeleteDriverDetailMutation();
 	const [getDriverDetailById] = useLazyGetDriverDetailByIdQuery();
 	const [uploadedRows, setUploadedRows] = useState<DriverRecord[]>([]);
@@ -141,6 +148,9 @@ export default function DriverDetails() {
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [showUploadDialog, setShowUploadDialog] = useState(false);
 	const [editingDriver, setEditingDriver] = useState<DriverDetail | undefined>();
+	const [pendingStatusDriver, setPendingStatusDriver] = useState<DriverRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const transporterNames = useMemo(
 		() => new Map(transporterOptions.map((transporter) => [transporter.id, transporter.name])),
 		[transporterOptions],
@@ -243,12 +253,63 @@ export default function DriverDetails() {
 	};
 
 	const editDriver = async (externalId: string) => {
+		const fromList = driverDetails.find((item) => item.externalId === externalId);
+		if (fromList) {
+			setEditingDriver(fromList);
+			setShowAddDialog(true);
+		}
 		try {
 			const driver = await getDriverDetailById(externalId).unwrap();
 			setEditingDriver(driver);
 			setShowAddDialog(true);
 		} catch (error) {
-			toast.error(apiErrorMessage(error, "Unable to load driver details."));
+			if (!fromList) {
+				toast.error(apiErrorMessage(error, "Unable to load driver details."));
+			}
+		}
+	};
+
+	const openStatusChange = (row: DriverRecord) => {
+		if (row.id.startsWith("upload-")) {
+			toast.info("Upload this driver before changing status.");
+			return;
+		}
+		setPendingStatusDriver(row);
+		setSelectedStatus(row.active ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = () => {
+		if (isUpdatingStatus) return;
+		setPendingStatusDriver(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusDriver) return;
+		const currentStatus = pendingStatusDriver.active ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		try {
+			await updateDriverDetail({
+				externalId: pendingStatusDriver.id,
+				body: {
+					status: selectedStatus,
+					reason: statusReason.trim(),
+				},
+			}).unwrap();
+			toast.success(`${pendingStatusDriver.name} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeStatusDialog();
+			void refetch();
+		} catch (error) {
+			console.error("Failed to update driver status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the driver status."));
 		}
 	};
 
@@ -276,7 +337,28 @@ export default function DriverDetails() {
 	);
 
 	const cell = (key: ColumnKey, row: DriverRecord) => {
-		if (key === "active") return chip(row.active, "Active", "Inactive");
+		if (key === "active") {
+			return (
+				<button
+					type="button"
+					onClick={() => openStatusChange(row)}
+					disabled={isUpdatingStatus}
+					aria-label={`Change status of ${row.name}`}
+					title="Change status"
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+						row.active
+							? isDark
+								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
+								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+							: isDark
+								? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
+								: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+					}`}
+				>
+					{row.active ? "Active" : "Inactive"}
+				</button>
+			);
+		}
 		if (key === "assigned") return chip(row.assigned, "Yes", "No");
 		if (key === "licenseAvailable") return chip(row.licenseAvailable, "Yes", "No");
 		if (dateColumns.has(key)) return formatDate(String(row[key]));
@@ -369,14 +451,42 @@ export default function DriverDetails() {
 										))}
 										<td className="px-3 py-3">
 											<div className="flex items-center gap-1">
-											{!row.id.startsWith("upload-") && (
-												<button type="button" aria-label={`Edit ${row.name}`} onClick={() => void editDriver(row.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-													<Pencil className="h-3.5 w-3.5" />
+												{!row.id.startsWith("upload-") && (
+													<>
+														<button
+															type="button"
+															aria-label={`Edit ${row.name}`}
+															title="Edit"
+															onClick={() => void editDriver(row.id)}
+															className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+														>
+															<Pencil className="h-3.5 w-3.5" />
+														</button>
+														<button
+															type="button"
+															aria-label={`Change status of ${row.name}`}
+															title="Change status"
+															onClick={() => openStatusChange(row)}
+															disabled={isUpdatingStatus}
+															className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${
+																isDark
+																	? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+																	: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+															}`}
+														>
+															<Power className="h-3.5 w-3.5" />
+														</button>
+													</>
+												)}
+												<button
+													type="button"
+													aria-label={`Delete ${row.name}`}
+													title="Delete"
+													onClick={() => void removeDriver(row.id)}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
+												>
+													<Trash2 className="h-3.5 w-3.5" />
 												</button>
-											)}
-											<button type="button" aria-label={`Delete ${row.name}`} onClick={() => void removeDriver(row.id)} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
-												<Trash2 className="h-3.5 w-3.5" />
-											</button>
 											</div>
 										</td>
 									</tr>
@@ -435,6 +545,84 @@ export default function DriverDetails() {
 				/>
 			)}
 			{showUploadDialog && <UploadDriverForm onClose={() => setShowUploadDialog(false)} onSubmit={uploadDrivers} />}
+
+			{pendingStatusDriver ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button
+						type="button"
+						aria-label="Close status dialog"
+						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
+						onClick={closeStatusDialog}
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="driver-status-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="driver-status-title" className="text-[15px] font-semibold">
+							Change driver status
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Current status of <span className="font-medium">{pendingStatusDriver.name}</span> is{" "}
+							<span className="font-medium">{pendingStatusDriver.active ? "Active" : "Inactive"}</span>. Choose
+							Active or Inactive, then enter a reason.
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Status <span className="text-rose-400">*</span>
+							</span>
+							<select
+								value={selectedStatus}
+								onChange={(event) => setSelectedStatus(event.target.value as Status)}
+								className={inputClass(isDark)}
+							>
+								<option value={Status.ACTIVE}>Active</option>
+								<option value={Status.INACTIVE}>Inactive</option>
+							</select>
+						</label>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this driver being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+								className={`${inputClass(isDark)} h-auto resize-none py-2`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Update Status
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }

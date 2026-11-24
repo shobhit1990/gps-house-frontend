@@ -158,40 +158,41 @@ export default function DeviceInventory() {
 	);
 
 	const apiRows = useMemo<InventoryRecord[]>(() => inventoryData.map((item: Inventory) => {
+		const text = (value: unknown) => (value == null ? "" : String(value));
 		const addedDate = item.createdAt ? new Date(item.createdAt) : null;
 		const added = addedDate && !Number.isNaN(addedDate.getTime())
 			? `${addedDate.getFullYear()}-${String(addedDate.getMonth() + 1).padStart(2, "0")}`
 			: "";
-		const clientName = item.clientName?.trim() || masterName(clientMaster, item.client);
+		const clientName = text(item.clientName).trim() || masterName(clientMaster, item.client);
+		const assignType = text(item.assignType);
 		const technicianName =
-			item.technicianName?.trim() ||
+			text(item.technicianName).trim() ||
 			masterName(technicianMaster, item.technician) ||
-			(item.assignType?.toLowerCase() === AssignType.TECHNICIAN ? masterName(technicianMaster, item.client) : "");
+			(assignType.toLowerCase() === AssignType.TECHNICIAN ? masterName(technicianMaster, item.client) : "");
 		const deviceTypeName =
-			item.deviceTypeName?.trim() ||
+			text(item.deviceTypeName).trim() ||
 			masterName(deviceTypeNames, item.deviceType);
 		return {
-			...item,
 			id: item.id ?? item.externalId,
 			externalId: item.externalId,
-			inventoryType: item.inventoryType,
-			imei: item.imei,
-			sim: item.simNumber,
-			operator: item.simOperator,
-			secondarySim: item.secondarySimNumber,
-			secondarySimOperator: item.secondarySimOperator,
-			deviceType: deviceTypeName || item.deviceType || "",
-			assignType: item.assignType ?? "",
+			inventoryType: text(item.inventoryType),
+			imei: text(item.imei),
+			sim: text(item.simNumber),
+			operator: text(item.simOperator),
+			secondarySim: text(item.secondarySimNumber),
+			secondarySimOperator: text(item.secondarySimOperator),
+			deviceType: deviceTypeName || text(item.deviceType),
+			assignType,
 			client: clientName || "",
-			clientId: item.client,
-			deviceTypeId: item.deviceType,
-			password: item.password,
+			clientId: text(item.client),
+			deviceTypeId: text(item.deviceType),
+			password: text(item.password),
 			active: item.status === "active",
-			ignitionWire: item.ignitionWireConnected,
-			airConditionWire: item.airConditionWireConnected,
-			analogSensor: item.analogSensor,
+			ignitionWire: Boolean(item.ignitionWireConnected),
+			airConditionWire: Boolean(item.airConditionWireConnected),
+			analogSensor: Boolean(item.analogSensor),
 			technician: technicianName,
-			inventoryStatus: item.assignType ? "Used" : "In Stock",
+			inventoryStatus: assignType ? "Used" : "In Stock",
 			transferBy: "",
 			transferTime: "",
 			added,
@@ -234,25 +235,26 @@ export default function DeviceInventory() {
 	const summaryPageRows = summaryRows.slice(safeSummaryPage * pageSize, (safeSummaryPage + 1) * pageSize);
 	const inStock = rows.filter((row) => row.inventoryStatus !== "Used").length;
 	const used = rows.filter((row) => row.inventoryStatus === "Used").length;
-	const totalAssigned = rows.filter((row) => row.assignType.trim()).length;
+	const totalAssigned = rows.filter((row) => (row.assignType ?? "").trim()).length;
 	const assignedToSelf = rows.filter((row) => row.assignType === "Self").length;
 	const assignedToTechnician = rows.filter((row) => row.assignType === "Technician" || row.assignType === AssignType.TECHNICIAN).length;
 
 	const saveInventory = async (values: InventoryFormValues) => {
+		const text = (value: unknown) => String(value ?? "").trim();
 		const body: CreateInventoryRequest = {
-			inventoryType: values.inventoryType,
-			imei: values.imei.trim(),
-			simNumber: values.sim.trim(),
-			simOperator: values.operator,
-			secondarySimNumber: values.secondarySim.trim(),
-			secondarySimOperator: values.secondarySimOperator,
-			deviceType: values.deviceType,
-			assignType: values.assignType,
-			client: values.client,
-			password: values.password,
-			ignitionWireConnected: values.ignitionWire,
-			airConditionWireConnected: values.airConditionWire,
-			analogSensor: values.analogSensor,
+			inventoryType: text(values.inventoryType),
+			imei: text(values.imei),
+			simNumber: text(values.sim),
+			simOperator: text(values.operator),
+			secondarySimNumber: text(values.secondarySim),
+			secondarySimOperator: text(values.secondarySimOperator),
+			deviceType: text(values.deviceType),
+			assignType: text(values.assignType),
+			client: text(values.client),
+			password: text(values.password),
+			ignitionWireConnected: Boolean(values.ignitionWire),
+			airConditionWireConnected: Boolean(values.airConditionWire),
+			analogSensor: Boolean(values.analogSensor),
 			status: values.active ? "active" : "inactive",
 			reason: "New inventory registration",
 		};
@@ -453,7 +455,7 @@ export default function DeviceInventory() {
 									<thead>
 										<tr className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
 											{visibleColumns.map((column) => <th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>)}
-											<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Delete</th>
+											<th scope="col" className="whitespace-nowrap px-3 py-3 text-center font-medium">Actions</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -461,37 +463,41 @@ export default function DeviceInventory() {
 											<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 												{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row)}</td>)}
 												<td className="px-3 py-3">
-													{row.externalId && (
+													<div className="flex items-center justify-center gap-1.5">
+														{row.externalId ? (
+															<button
+																type="button"
+																aria-label={`Edit ${row.imei || row.inventoryType || "inventory"}`}
+																title="Edit"
+																onClick={() => {
+																	setEditingInventory(row);
+																	setShowAddDialog(true);
+																}}
+																className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+															>
+																<Pencil className="h-3.5 w-3.5" />
+															</button>
+														) : null}
 														<button
 															type="button"
-															aria-label={`Edit ${row.imei || row.inventoryType || "inventory"}`}
+															disabled={isDeletingInventory}
+															aria-label={`Delete ${row.imei || row.inventoryType || "inventory"}`}
+															title="Delete"
 															onClick={() => {
-																setEditingInventory(row);
-																setShowAddDialog(true);
+																if (!row.externalId) {
+																	setUploadedRows((current) => current.filter((item) => item.id !== row.id));
+																	return;
+																}
+																void deleteInventory(row.externalId)
+																	.unwrap()
+																	.then(() => setInventoryError(""))
+																	.catch((error: unknown) => setInventoryError(apiErrorMessage(error, "Could not delete inventory.")));
 															}}
-															className={`mr-1 flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+															className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 														>
-															<Pencil className="h-3.5 w-3.5" />
+															<Trash2 className="h-3.5 w-3.5" />
 														</button>
-													)}
-													<button
-														type="button"
-														disabled={isDeletingInventory}
-														aria-label={`Delete ${row.imei || row.inventoryType || "inventory"}`}
-														onClick={() => {
-															if (!row.externalId) {
-																setUploadedRows((current) => current.filter((item) => item.id !== row.id));
-																return;
-															}
-															void deleteInventory(row.externalId)
-																.unwrap()
-																.then(() => setInventoryError(""))
-																.catch((error: unknown) => setInventoryError(apiErrorMessage(error, "Could not delete inventory.")));
-														}}
-														className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
-													>
-														<Trash2 className="h-3.5 w-3.5" />
-													</button>
+													</div>
 												</td>
 											</tr>
 										))}
@@ -585,9 +591,20 @@ export default function DeviceInventory() {
 					onSubmit={saveInventory}
 					isSaving={isSavingInventory || isUpdatingInventory}
 					initialValues={editingInventory ? {
-						...editingInventory,
-						client: editingInventory.clientId ?? editingInventory.client,
-						deviceType: editingInventory.deviceTypeId ?? editingInventory.deviceType,
+						inventoryType: editingInventory.inventoryType || "",
+						imei: editingInventory.imei || "",
+						sim: editingInventory.sim || "",
+						operator: editingInventory.operator || "",
+						secondarySim: editingInventory.secondarySim || "",
+						secondarySimOperator: editingInventory.secondarySimOperator || "",
+						deviceType: editingInventory.deviceTypeId || editingInventory.deviceType || "",
+						assignType: editingInventory.assignType || "",
+						client: editingInventory.clientId || editingInventory.client || "",
+						password: editingInventory.password || "",
+						active: editingInventory.active,
+						ignitionWire: editingInventory.ignitionWire,
+						airConditionWire: editingInventory.airConditionWire,
+						analogSensor: editingInventory.analogSensor,
 					} : undefined}
 				/>
 			)}

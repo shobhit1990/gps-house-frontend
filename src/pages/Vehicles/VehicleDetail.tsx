@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleDetailForm, type VehicleDetailFormValues } from "@/components/VehicleForm/AddVehicleDetailForm";
 import type { ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
 import { ServiceMaintenanceDialog, type ServiceRecord } from "@/components/VehicleForm/ServiceMaintenanceDialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status, statusLabel } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { useCreateServiceMaintenanceMutation, useGetServiceMaintenancesQuery } from "@/store/services/api/ServiceMaintenance";
+import { useGetVehiclesQuery, useUpdateVehicleStatusMutation } from "@/store/services/api/Vehicle";
 
 type VehicleDetailRecord = {
 	id: number;
@@ -24,6 +26,8 @@ type VehicleDetailRecord = {
 	capacity: number;
 	manufactureDate: string;
 	purchaseDate: string;
+	active: boolean;
+	vehicleExternalId?: string;
 };
 
 type ColumnKey = keyof VehicleDetailRecord | "service";
@@ -55,6 +59,7 @@ const seedRows: VehicleDetailRecord[] = [
 		capacity: 0,
 		manufactureDate: "2025-10-26",
 		purchaseDate: "2025-10-26",
+		active: true,
 	},
 	{
 		id: 2,
@@ -69,6 +74,7 @@ const seedRows: VehicleDetailRecord[] = [
 		capacity: 0,
 		manufactureDate: "2026-10-21",
 		purchaseDate: "2026-10-21",
+		active: true,
 	},
 	{
 		id: 3,
@@ -83,6 +89,7 @@ const seedRows: VehicleDetailRecord[] = [
 		capacity: 0,
 		manufactureDate: "2026-10-21",
 		purchaseDate: "2026-10-21",
+		active: true,
 	},
 ];
 
@@ -169,9 +176,24 @@ export default function VehicleDetail() {
 	const [editingRow, setEditingRow] = useState<VehicleDetailRecord | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<VehicleDetailRecord | null>(null);
 	const [serviceRow, setServiceRow] = useState<VehicleDetailRecord | null>(null);
+	const [pendingStatusRow, setPendingStatusRow] = useState<VehicleDetailRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: vehicles = [] } = useGetVehiclesQuery();
 	const { data: serviceData = [] } = useGetServiceMaintenancesQuery();
 	const [createService] = useCreateServiceMaintenanceMutation();
+	const [updateVehicleStatus, { isLoading: isUpdatingStatus }] = useUpdateVehicleStatusMutation();
+
+	const vehicleIdByNo = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const vehicle of vehicles) {
+			const no = String(vehicle.vehicle ?? "").trim().toUpperCase();
+			const id = String(vehicle.externalId || vehicle.id || "").trim();
+			if (no && id) map.set(no, id);
+		}
+		return map;
+	}, [vehicles]);
 	const services = useMemo<ServiceRecord[]>(() => {
 		const vehicleNames = new Map(vehicleMaster.map((vehicle) => [vehicle.id, vehicle.name]));
 		const text = (value?: string | number) => (value === undefined || value === null ? "" : String(value));
@@ -237,6 +259,56 @@ export default function VehicleDetail() {
 		setShowAddDialog(true);
 	};
 
+	const openStatusChange = (row: VehicleDetailRecord) => {
+		setPendingStatusRow(row);
+		setSelectedStatus(row.active ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = () => {
+		if (isUpdatingStatus) return;
+		setPendingStatusRow(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusRow) return;
+		const currentStatus = pendingStatusRow.active ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		const externalId =
+			pendingStatusRow.vehicleExternalId ||
+			vehicleIdByNo.get(pendingStatusRow.vehicleNo.trim().toUpperCase()) ||
+			"";
+		try {
+			if (externalId) {
+				await updateVehicleStatus({
+					externalId,
+					status: selectedStatus,
+					reason: statusReason.trim(),
+				}).unwrap();
+			}
+			setRows((current) =>
+				current.map((row) =>
+					row.id === pendingStatusRow.id
+						? { ...row, active: selectedStatus === Status.ACTIVE, vehicleExternalId: externalId || row.vehicleExternalId }
+						: row,
+				),
+			);
+			toast.success(`${pendingStatusRow.vehicleNo} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeStatusDialog();
+		} catch (error) {
+			console.error("Failed to update vehicle detail status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the vehicle status."));
+		}
+	};
+
 	const saveVehicle = (values: VehicleDetailFormValues) => {
 		const capacity = Number(values.capacity);
 		const next: Omit<VehicleDetailRecord, "id"> = {
@@ -251,6 +323,8 @@ export default function VehicleDetail() {
 			capacity: Number.isFinite(capacity) && capacity > 0 ? capacity : 0,
 			manufactureDate: values.manufactureDate,
 			purchaseDate: values.purchaseDate,
+			active: editingRow?.active ?? true,
+			vehicleExternalId: editingRow?.vehicleExternalId || vehicleIdByNo.get(values.vehicleNo.trim().toUpperCase()),
 		};
 		if (editingRow) {
 			setRows((current) => current.map((row) => (row.id === editingRow.id ? { ...row, ...next } : row)));
@@ -394,7 +468,8 @@ export default function VehicleDetail() {
 									{visibleColumns.map((column) => (
 										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>
 									))}
-									<th scope="col" className="w-24 px-3 py-3"><span className="sr-only">Actions</span></th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Status</th>
+									<th scope="col" className="w-28 px-3 py-3"><span className="sr-only">Actions</span></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -413,6 +488,26 @@ export default function VehicleDetail() {
 												)}
 											</td>
 										))}
+										<td className="whitespace-nowrap px-3 py-3">
+											<button
+												type="button"
+												onClick={() => openStatusChange(row)}
+												disabled={isUpdatingStatus}
+												aria-label={`Change status of ${row.vehicleNo}`}
+												title="Change status"
+												className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+													row.active
+														? isDark
+															? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
+															: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+														: isDark
+															? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
+															: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+												}`}
+											>
+												{row.active ? "Active" : "Inactive"}
+											</button>
+										</td>
 										<td className="px-3 py-3">
 											<div className="flex items-center gap-1">
 												<button
@@ -423,6 +518,20 @@ export default function VehicleDetail() {
 													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
 												>
 													<Pencil className="h-3.5 w-3.5" />
+												</button>
+												<button
+													type="button"
+													aria-label={`Change status of ${row.vehicleNo}`}
+													title="Change status"
+													onClick={() => openStatusChange(row)}
+													disabled={isUpdatingStatus}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${
+														isDark
+															? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+															: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+													}`}
+												>
+													<Power className="h-3.5 w-3.5" />
 												</button>
 												<button
 													type="button"
@@ -439,7 +548,7 @@ export default function VehicleDetail() {
 								))}
 								{pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center">
+										<td colSpan={visibleColumns.length + 2} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No vehicles match these filters</p>
 											<p className="mt-1 text-xs text-slate-500">Try clearing a filter or changing your search.</p>
 										</td>
@@ -482,6 +591,84 @@ export default function VehicleDetail() {
 					onClose={() => setServiceRow(null)}
 				/>
 			)}
+
+			{pendingStatusRow ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button
+						type="button"
+						aria-label="Close status dialog"
+						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
+						onClick={closeStatusDialog}
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="vehicle-detail-status-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="vehicle-detail-status-title" className="text-[15px] font-semibold">
+							Change vehicle status
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Current status of <span className="font-medium">{pendingStatusRow.vehicleNo}</span> is{" "}
+							<span className="font-medium">{pendingStatusRow.active ? "Active" : "Inactive"}</span>. Choose Active or
+							Inactive, then enter a reason.
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Status <span className="text-rose-400">*</span>
+							</span>
+							<select
+								value={selectedStatus}
+								onChange={(event) => setSelectedStatus(event.target.value as Status)}
+								className={`${inputClass(isDark)} ${isDark ? "[color-scheme:dark]" : ""}`}
+							>
+								<option value={Status.ACTIVE}>Active</option>
+								<option value={Status.INACTIVE}>Inactive</option>
+							</select>
+						</label>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this vehicle being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+								className={`${inputClass(isDark)} h-auto resize-none py-2`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Update Status
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 
 			{pendingDelete && (
 				<div

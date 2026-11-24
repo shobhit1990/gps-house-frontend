@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Reac
 import { useTheme } from "next-themes";
 import { Plus, Search } from "lucide-react";
 import { useGetVehicleMasterQuery } from "@/store/services/api/Master";
+import { digitsOnly } from "@/lib/formValidation";
 
 export type ServiceMaintenanceMode = "custom" | "template";
 
@@ -249,13 +250,13 @@ export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(funct
 				{mode === "template" && (
 					<label className={labelClass}>
 						<span className="mb-1.5 flex items-center gap-1">Threshold Km <span className="text-rose-400">*</span></span>
-						<input required value={values.thresholdKm} placeholder="Threshold Km" onChange={(event) => patch({ thresholdKm: event.target.value })} className={inputClass()} />
+						<input required inputMode="numeric" value={values.thresholdKm} placeholder="Threshold Km" onChange={(event) => patch({ thresholdKm: digitsOnly(event.target.value) })} className={inputClass()} />
 					</label>
 				)}
 				{mode === "template" && (
 					<label className={labelClass}>
 						<span className="mb-1.5 flex items-center gap-1">Threshold Days <span className="text-rose-400">*</span></span>
-						<input required value={values.thresholdDays} placeholder="Threshold Days" onChange={(event) => patch({ thresholdDays: event.target.value })} className={inputClass()} />
+						<input required inputMode="numeric" value={values.thresholdDays} placeholder="Threshold Days" onChange={(event) => patch({ thresholdDays: digitsOnly(event.target.value) })} className={inputClass()} />
 					</label>
 				)}
 			</div>
@@ -264,17 +265,17 @@ export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(funct
 				<>
 					<h3 className={sectionClass}>Service Interval</h3>
 					<div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
-						{checkInput("Odometer Interval", values.odometerEnabled, (checked) => patch({ odometerEnabled: checked, odometerInterval: checked ? values.odometerInterval : "", lastServiceOdometer: checked ? values.lastServiceOdometer : "" }), <input disabled={!values.odometerEnabled} value={values.odometerInterval} placeholder="Odometer Interval" onChange={(event) => patch({ odometerInterval: event.target.value })} className={inputClass(!values.odometerEnabled)} />)}
+						{checkInput("Odometer Interval", values.odometerEnabled, (checked) => patch({ odometerEnabled: checked, odometerInterval: checked ? values.odometerInterval : "", lastServiceOdometer: checked ? values.lastServiceOdometer : "" }), <input disabled={!values.odometerEnabled} inputMode="numeric" value={values.odometerInterval} placeholder="Odometer Interval" onChange={(event) => patch({ odometerInterval: digitsOnly(event.target.value) })} className={inputClass(!values.odometerEnabled)} />)}
 						<label className={labelClass}>
 							<span className="mb-1.5 block">Last Service Odometer</span>
-							<input disabled={!values.odometerEnabled} value={values.lastServiceOdometer} placeholder="Last Service Odometer" onChange={(event) => patch({ lastServiceOdometer: event.target.value })} className={inputClass(!values.odometerEnabled)} />
+							<input disabled={!values.odometerEnabled} inputMode="numeric" value={values.lastServiceOdometer} placeholder="Last Service Odometer" onChange={(event) => patch({ lastServiceOdometer: digitsOnly(event.target.value) })} className={inputClass(!values.odometerEnabled)} />
 						</label>
-						{checkInput("Engine Interval", values.engineEnabled, (checked) => patch({ engineEnabled: checked, engineInterval: checked ? values.engineInterval : "", lastServiceEngine: checked ? values.lastServiceEngine : "" }), <input disabled={!values.engineEnabled} value={values.engineInterval} placeholder="Engine Interval" onChange={(event) => patch({ engineInterval: event.target.value })} className={inputClass(!values.engineEnabled)} />)}
+						{checkInput("Engine Interval", values.engineEnabled, (checked) => patch({ engineEnabled: checked, engineInterval: checked ? values.engineInterval : "", lastServiceEngine: checked ? values.lastServiceEngine : "" }), <input disabled={!values.engineEnabled} inputMode="numeric" value={values.engineInterval} placeholder="Engine Interval" onChange={(event) => patch({ engineInterval: digitsOnly(event.target.value) })} className={inputClass(!values.engineEnabled)} />)}
 						<label className={labelClass}>
 							<span className="mb-1.5 block">Last Service Engine</span>
-							<input disabled={!values.engineEnabled} value={values.lastServiceEngine} placeholder="Last Service Engine" onChange={(event) => patch({ lastServiceEngine: event.target.value })} className={inputClass(!values.engineEnabled)} />
+							<input disabled={!values.engineEnabled} inputMode="numeric" value={values.lastServiceEngine} placeholder="Last Service Engine" onChange={(event) => patch({ lastServiceEngine: digitsOnly(event.target.value) })} className={inputClass(!values.engineEnabled)} />
 						</label>
-						{checkInput("Days Interval", values.daysEnabled, (checked) => patch({ daysEnabled: checked, daysInterval: checked ? values.daysInterval : "", lastServiceDate: checked ? values.lastServiceDate : "" }), <input disabled={!values.daysEnabled} value={values.daysInterval} placeholder="Days Interval" onChange={(event) => patch({ daysInterval: event.target.value })} className={inputClass(!values.daysEnabled)} />)}
+						{checkInput("Days Interval", values.daysEnabled, (checked) => patch({ daysEnabled: checked, daysInterval: checked ? values.daysInterval : "", lastServiceDate: checked ? values.lastServiceDate : "" }), <input disabled={!values.daysEnabled} inputMode="numeric" value={values.daysInterval} placeholder="Days Interval" onChange={(event) => patch({ daysInterval: digitsOnly(event.target.value) })} className={inputClass(!values.daysEnabled)} />)}
 						<label className={labelClass}>
 							<span className="mb-1.5 block">Last Service Date</span>
 							<input disabled={!values.daysEnabled} type="date" value={values.lastServiceDate} onChange={(event) => patch({ lastServiceDate: event.target.value })} className={inputClass(!values.daysEnabled)} />
@@ -283,9 +284,9 @@ export const ServiceMaintenanceForm = forwardRef<ServiceMaintenanceHandle>(funct
 
 					<h3 className={sectionClass}>Service Trigger</h3>
 					<div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
-						{checkInput("Odometer Left", values.odometerLeftEnabled, (checked) => patch({ odometerLeftEnabled: checked, odometerLeft: checked ? values.odometerLeft : "" }), <input disabled={!values.odometerLeftEnabled} value={values.odometerLeft} placeholder="Odometer Left" onChange={(event) => patch({ odometerLeft: event.target.value })} className={inputClass(!values.odometerLeftEnabled)} />)}
-						{checkInput("Engine Left", values.engineLeftEnabled, (checked) => patch({ engineLeftEnabled: checked, engineLeft: checked ? values.engineLeft : "" }), <input disabled={!values.engineLeftEnabled} value={values.engineLeft} placeholder="Engine Left" onChange={(event) => patch({ engineLeft: event.target.value })} className={inputClass(!values.engineLeftEnabled)} />)}
-						{checkInput("Days Left", values.daysLeftEnabled, (checked) => patch({ daysLeftEnabled: checked, daysLeft: checked ? values.daysLeft : "" }), <input disabled={!values.daysLeftEnabled} value={values.daysLeft} placeholder="Days Left" onChange={(event) => patch({ daysLeft: event.target.value })} className={inputClass(!values.daysLeftEnabled)} />)}
+						{checkInput("Odometer Left", values.odometerLeftEnabled, (checked) => patch({ odometerLeftEnabled: checked, odometerLeft: checked ? values.odometerLeft : "" }), <input disabled={!values.odometerLeftEnabled} inputMode="numeric" value={values.odometerLeft} placeholder="Odometer Left" onChange={(event) => patch({ odometerLeft: digitsOnly(event.target.value) })} className={inputClass(!values.odometerLeftEnabled)} />)}
+						{checkInput("Engine Left", values.engineLeftEnabled, (checked) => patch({ engineLeftEnabled: checked, engineLeft: checked ? values.engineLeft : "" }), <input disabled={!values.engineLeftEnabled} inputMode="numeric" value={values.engineLeft} placeholder="Engine Left" onChange={(event) => patch({ engineLeft: digitsOnly(event.target.value) })} className={inputClass(!values.engineLeftEnabled)} />)}
+						{checkInput("Days Left", values.daysLeftEnabled, (checked) => patch({ daysLeftEnabled: checked, daysLeft: checked ? values.daysLeft : "" }), <input disabled={!values.daysLeftEnabled} inputMode="numeric" value={values.daysLeft} placeholder="Days Left" onChange={(event) => patch({ daysLeft: digitsOnly(event.target.value) })} className={inputClass(!values.daysLeftEnabled)} />)}
 						<label className={`flex h-[37px] items-center gap-2 self-end ${labelClass}`}>
 							<input type="checkbox" checked={values.updateRecord} onChange={(event) => patch({ updateRecord: event.target.checked })} className="h-4 w-4 accent-cyan-500" />
 							Update Record
