@@ -1,12 +1,20 @@
 import { api } from "../api";
+import { Status } from "@/enums/Status";
 import type { ParkedSchedule, CreateParkedScheduleRequest, UpdateParkedScheduleRequest } from "@/interfaces/ParkedSchedule";
+import { statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type ParkedScheduleApiRecord = Omit<ParkedSchedule, "externalId"> & { externalId?: string };
 
+const normalizeStatus = (status?: string): Status => {
+  const value = String(status ?? "").trim().toLowerCase();
+  return value === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
+};
+
 const normalizeParkedSchedule = (record: ParkedScheduleApiRecord): ParkedSchedule => ({
   ...record,
   externalId: String(record?.externalId ?? record?.id ?? ""),
+  status: normalizeStatus(record?.status as string | undefined),
 });
 
 export const parkedScheduleApi = api.injectEndpoints({
@@ -49,6 +57,23 @@ export const parkedScheduleApi = api.injectEndpoints({
       ],
     }),
 
+    updateParkedScheduleStatus: builder.mutation<
+      ParkedSchedule,
+      { externalId: string; status: Status; reason?: string }
+    >({
+      query: ({ externalId, status, reason }) => ({
+        url: `/parkedSchedule/update/${encodeURIComponent(externalId)}`,
+        method: "PUT",
+        body: statusChangeBody(status, reason),
+      }),
+      transformResponse: (response: ApiEnvelope<ParkedScheduleApiRecord>) =>
+        normalizeParkedSchedule(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "ParkedSchedules", id: externalId },
+        { type: "ParkedSchedules", id: "LIST" },
+      ],
+    }),
+
     deleteParkedSchedule: builder.mutation<void, string>({
       query: (externalId) => ({
         url: `/parkedSchedule/delete/${encodeURIComponent(externalId)}`,
@@ -68,5 +93,6 @@ export const {
   useGetParkedScheduleByIdQuery,
   useCreateParkedScheduleMutation,
   useUpdateParkedScheduleMutation,
+  useUpdateParkedScheduleStatusMutation,
   useDeleteParkedScheduleMutation,
 } = parkedScheduleApi;

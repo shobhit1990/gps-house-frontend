@@ -1,3 +1,5 @@
+import type { Status } from "@/enums/Status";
+
 /** Sent as multipart form data so `serviceDocument` can carry the file. */
 export interface CreateServiceMaintenanceRequest {
   serviceName: string;
@@ -24,6 +26,8 @@ export interface CreateServiceMaintenanceRequest {
   mobile: boolean;
   serviceDocument?: File;
   allowVisibilityToDriver: boolean;
+  status?: Status | string;
+  reason?: string;
 }
 
 export type UpdateServiceMaintenanceRequest = Partial<CreateServiceMaintenanceRequest>;
@@ -46,6 +50,8 @@ export interface ServiceMaintenance extends Omit<CreateServiceMaintenanceRequest
   /** Client / transporter externalIds, when the backend returns them for filtering. */
   client?: string;
   transporter?: string;
+  status?: Status | string;
+  reason?: string;
   currentOdometer?: number;
   nextServiceDueOdometer?: number;
   nextServiceDueEngineHour?: number;

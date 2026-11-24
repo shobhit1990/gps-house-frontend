@@ -1,13 +1,21 @@
 import { api } from "../api";
+import { Status } from "@/enums/Status";
 import type { ServiceMaintenance, CreateServiceMaintenanceRequest, UpdateServiceMaintenanceRequest } from "@/interfaces/ServiceMaintenance";
+import { statusChangeBody } from "@/lib/statusPayload";
 import { toFormData } from "../utils/formData";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type ServiceMaintenanceApiRecord = Omit<ServiceMaintenance, "externalId"> & { externalId?: string };
 
+const normalizeStatus = (status?: string): Status => {
+  const value = String(status ?? "").trim().toLowerCase();
+  return value === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
+};
+
 const normalizeServiceMaintenance = (record: ServiceMaintenanceApiRecord): ServiceMaintenance => ({
   ...record,
   externalId: String(record?.externalId ?? record?.id ?? ""),
+  status: normalizeStatus(record?.status as string | undefined),
 });
 
 export const serviceMaintenanceApi = api.injectEndpoints({
@@ -50,6 +58,23 @@ export const serviceMaintenanceApi = api.injectEndpoints({
       ],
     }),
 
+    updateServiceMaintenanceStatus: builder.mutation<
+      ServiceMaintenance,
+      { externalId: string; status: Status; reason?: string }
+    >({
+      query: ({ externalId, status, reason }) => ({
+        url: `/serviceMaintenance/update/${encodeURIComponent(externalId)}`,
+        method: "PUT",
+        body: statusChangeBody(status, reason),
+      }),
+      transformResponse: (response: ApiEnvelope<ServiceMaintenanceApiRecord>) =>
+        normalizeServiceMaintenance(unwrapResponse(response)),
+      invalidatesTags: (_result, _error, { externalId }) => [
+        { type: "ServiceMaintenance", id: externalId },
+        { type: "ServiceMaintenance", id: "LIST" },
+      ],
+    }),
+
     deleteServiceMaintenance: builder.mutation<void, string>({
       query: (externalId) => ({
         url: `/serviceMaintenance/delete/${encodeURIComponent(externalId)}`,
@@ -69,5 +94,6 @@ export const {
   useGetServiceMaintenanceByIdQuery,
   useCreateServiceMaintenanceMutation,
   useUpdateServiceMaintenanceMutation,
+  useUpdateServiceMaintenanceStatusMutation,
   useDeleteServiceMaintenanceMutation,
 } = serviceMaintenanceApi;
