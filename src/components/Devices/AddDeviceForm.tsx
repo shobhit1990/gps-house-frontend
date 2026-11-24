@@ -379,20 +379,23 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 							<input
 								className={inputClass}
 								placeholder="Imei"
+								inputMode="numeric"
 								value={device.imei}
 								maxLength={30}
-								onChange={(event) => updateDevice("imei", event.target.value.slice(0, 30))}
+								onChange={(event) =>
+									updateDevice("imei", event.target.value.replace(/\D/g, "").slice(0, 30))
+								}
 								required
 								disabled={isSaving}
 							/>
 						</Field>
 
-						<Field label="Sim Number" required hint="Only contains 10 digit" isDark={isDark}>
+						<Field label="Sim Number" required hint="Only contains 24 digit" isDark={isDark}>
 							<input
 								className={inputClass}
 								placeholder="Sim Number"
 								inputMode="numeric"
-								maxLength={10}
+								maxLength={24}
 								value={device.simNumber}
 								onChange={(event) =>
 									updateDevice("simNumber", event.target.value.replace(/\D/g, "").slice(0, 24))
@@ -413,12 +416,12 @@ export default function AddDeviceForm({ isDark, onClose, onSaved }: AddDeviceFor
 							/>
 						</Field>
 
-						<Field label="Secondary Sim Number" hint="Only contains 15 digit" isDark={isDark}>
+						<Field label="Secondary Sim Number" hint="Only contains 24 digit" isDark={isDark}>
 							<input
 								className={inputClass}
 								placeholder="Sim Number"
 								inputMode="numeric"
-								maxLength={15}
+								maxLength={24}
 								value={device.secondarySimNumber}
 								onChange={(event) =>
 									updateDevice(

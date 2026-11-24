@@ -6,7 +6,7 @@ export const DEVICE_TYPE_LABEL = "Concox (8505)";
 export const deviceSimOperators = Object.values(SimOperator);
 
 export const addDeviceFields: VehicleFieldConfig[] = [
-	{ name: "imei", label: "Imei", placeholder: "Imei", required: true, maxLength: 30, helper: "Max 30 characters allowed", actionLabel: "Import from Inventory" },
+	{ name: "imei", label: "Imei", placeholder: "Imei", required: true, maxLength: 30, inputMode: "numeric", helper: "Max 30 digits allowed", actionLabel: "Import from Inventory" },
 	{ name: "sim", label: "Sim Number", placeholder: "Sim Number", required: true, maxLength: 24, inputMode: "numeric", pattern: "[0-9]{24}", helper: "Only contains 24 digit" },
 	{ name: "simOperator", label: "Sim Operator", type: "select", required: true, options: deviceSimOperators },
 	{ name: "secondarySim", label: "Secondary Sim Number", placeholder: "Sim Number", maxLength: 24, inputMode: "numeric", pattern: "[0-9]{24}", helper: "Only contains 24 digit" },

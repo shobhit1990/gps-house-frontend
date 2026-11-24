@@ -4,6 +4,7 @@ import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addVehicleFields } from "@/interfaces/AddVehicleFields";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { useGetClientMasterQuery, useGetDeviceMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { digitsOnly } from "@/lib/formValidation";
 
 type AddVehicleProps = {
 	isDark: boolean;
@@ -246,10 +247,10 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 						{detailField("Vehicle Body", detailSelect("vehicleBody", "Select", bodyOptions))}
 						{detailField("Capacity", (
 							<input
-								type="number"
-								min={0}
+								type="text"
+								inputMode="numeric"
 								value={detailValue("capacity")}
-								onChange={(event) => onChange("capacity", event.target.value)}
+								onChange={(event) => onChange("capacity", digitsOnly(event.target.value))}
 								className={inputClass}
 							/>
 						))}

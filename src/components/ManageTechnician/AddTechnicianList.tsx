@@ -3,9 +3,22 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, Loader2, X } from "lucide-react";
 import { Status } from "@/enums/Status";
+import type { Technician } from "@/interfaces/Technician";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import {
+	digitsOnly,
+	emailErrorMessage,
+	isValidEmail,
+	isValidPhone,
+	PHONE_MAX_LENGTH,
+	phoneErrorMessage,
+} from "@/lib/formValidation";
 import { useGetClientMasterQuery, useGetTimezonesQuery } from "@/store/services/api/Master";
-import { useCreateTechnicianMutation } from "@/store/services/api/Technician";
+import {
+	useCreateTechnicianMutation,
+	useLazyGetTechnicianByIdQuery,
+	useUpdateTechnicianMutation,
+} from "@/store/services/api/Technician";
 
 export type TechnicianFormValues = {
 	username: string;
@@ -24,6 +37,8 @@ export type TechnicianFormValues = {
 type AddTechnicianListProps = {
 	onClose: () => void;
 	onSaved: () => void;
+	/** When set, dialog opens in edit mode and saves via PUT `/technician/update/:externalId`. */
+	technician?: Technician | null;
 };
 
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
@@ -44,15 +59,71 @@ const emptyValues = (): TechnicianFormValues => ({
 
 const optional = (value: string) => value.trim() || undefined;
 
-export function AddTechnicianList({ onClose, onSaved }: AddTechnicianListProps) {
+const refId = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		const id = record.externalId ?? record.id;
+		if (typeof id === "string" || typeof id === "number") return String(id);
+	}
+	return "";
+};
+
+const valuesFromTechnician = (technician: Technician): TechnicianFormValues => ({
+	username: technician.userName ?? "",
+	password: "",
+	confirmPassword: "",
+	company: technician.companyName ?? "",
+	timezone: refId(technician.timezone),
+	client: refId(technician.client),
+	name: technician.name ?? "",
+	email: technician.email ?? "",
+	phone: digitsOnly(String(technician.phone ?? ""), PHONE_MAX_LENGTH),
+	address: technician.address ?? "",
+	active: technician.status !== Status.INACTIVE,
+});
+
+export function AddTechnicianList({ onClose, onSaved, technician }: AddTechnicianListProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
+	const isEditMode = Boolean(technician?.externalId);
 	const titleId = useId();
-	const [values, setValues] = useState<TechnicianFormValues>(emptyValues);
+	const [values, setValues] = useState<TechnicianFormValues>(() =>
+		technician ? valuesFromTechnician(technician) : emptyValues(),
+	);
 	const [formError, setFormError] = useState("");
 	const { data: timezones = [], isLoading: timezonesLoading } = useGetTimezonesQuery();
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
-	const [createTechnician, { isLoading: isSaving }] = useCreateTechnicianMutation();
+	const [loadTechnician, { isFetching: loadingTechnician }] = useLazyGetTechnicianByIdQuery();
+	const [createTechnician, { isLoading: isCreating }] = useCreateTechnicianMutation();
+	const [updateTechnician, { isLoading: isUpdating }] = useUpdateTechnicianMutation();
+	const isSaving = isCreating || isUpdating;
+
+	useEffect(() => {
+		if (!technician?.externalId) {
+			setValues(emptyValues());
+			return;
+		}
+
+		let cancelled = false;
+		setValues(valuesFromTechnician(technician));
+
+		void loadTechnician(technician.externalId)
+			.unwrap()
+			.then((loaded) => {
+				if (!cancelled) setValues(valuesFromTechnician(loaded));
+			})
+			.catch((error) => {
+				console.error("Failed to load technician for edit.", error);
+				if (!cancelled) {
+					setFormError(apiErrorMessage(error, "Could not load technician details."));
+				}
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [technician, loadTechnician]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -74,12 +145,12 @@ export function AddTechnicianList({ onClose, onSaved }: AddTechnicianListProps) 
 		setFormError("");
 	};
 
-	const field = (label: string, control: ReactNode, required = false, optional = false, hint?: string) => (
+	const field = (label: string, control: ReactNode, required = false, optionalField = false, hint?: string) => (
 		<label className="block min-w-0">
 			<span className={labelClass}>
 				{label}
 				{required && <span className="ml-0.5 text-rose-400">*</span>}
-				{optional && <span className="ml-1 font-normal text-slate-500">(Optional)</span>}
+				{optionalField && <span className="ml-1 font-normal text-slate-500">(Optional)</span>}
 			</span>
 			{control}
 			{hint && <span className="mt-1 block text-[11px] text-slate-500">{hint}</span>}
@@ -88,43 +159,78 @@ export function AddTechnicianList({ onClose, onSaved }: AddTechnicianListProps) 
 
 	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!values.username.trim() || !values.password || !values.confirmPassword || !values.company.trim() || !values.timezone || !values.client) {
-			setFormError("Username, Password, Confirm Password, Company Name, Timezone, and Client are required.");
+		const passwordRequired = !isEditMode;
+		if (
+			!values.username.trim() ||
+			(passwordRequired && (!values.password || !values.confirmPassword)) ||
+			!values.company.trim() ||
+			!values.timezone ||
+			!values.client
+		) {
+			setFormError(
+				isEditMode
+					? "Username, Company Name, Timezone, and Client are required."
+					: "Username, Password, Confirm Password, Company Name, Timezone, and Client are required.",
+			);
 			return;
 		}
 		if (!usernamePattern.test(values.username.trim())) {
 			setFormError("Username can only contain A-z, 0-9, _, -, ., *, and @.");
 			return;
 		}
-		if (values.password !== values.confirmPassword) {
-			setFormError("Password and Confirm Password must match.");
+		if (values.password || values.confirmPassword) {
+			if (values.password !== values.confirmPassword) {
+				setFormError("Password and Confirm Password must match.");
+				return;
+			}
+		}
+		if (!isValidEmail(values.email)) {
+			setFormError(emailErrorMessage);
 			return;
 		}
+		if (!isValidPhone(values.phone)) {
+			setFormError(phoneErrorMessage);
+			return;
+		}
+
 		const phone = values.phone.trim();
-		if (phone && !/^\d+$/.test(phone)) {
-			setFormError("Phone can only contain digits.");
-			return;
-		}
+		const body = {
+			userName: values.username.trim(),
+			companyName: values.company.trim(),
+			name: optional(values.name),
+			email: optional(values.email),
+			phone: phone ? Number(phone) : undefined,
+			address: optional(values.address),
+			timezone: values.timezone,
+			client: values.client,
+			status: values.active ? Status.ACTIVE : Status.INACTIVE,
+			reason: isEditMode ? "Technician updated" : "Technician created",
+			...(values.password
+				? {
+						password: values.password,
+						confirmPassword: values.confirmPassword,
+					}
+				: {}),
+		};
+
 		try {
-			await createTechnician({
-				userName: values.username.trim(),
-				password: values.password,
-				confirmPassword: values.confirmPassword,
-				companyName: values.company.trim(),
-				name: optional(values.name),
-				email: optional(values.email),
-				phone: phone ? Number(phone) : undefined,
-				address: optional(values.address),
-				timezone: values.timezone,
-				client: values.client,
-				status: values.active ? Status.ACTIVE : Status.INACTIVE,
-				reason: "Technician created",
-			}).unwrap();
-			toast.success(`${values.username.trim()} added.`);
+			if (isEditMode && technician?.externalId) {
+				await updateTechnician({ externalId: technician.externalId, body }).unwrap();
+				toast.success(`${values.username.trim()} updated.`);
+			} else {
+				await createTechnician({
+					...body,
+					password: values.password,
+					confirmPassword: values.confirmPassword,
+				}).unwrap();
+				toast.success(`${values.username.trim()} added.`);
+			}
 			onSaved();
 		} catch (error) {
-			console.error("Failed to create technician.", error);
-			setFormError(apiErrorMessage(error, "Could not save the technician. Please try again."));
+			console.error(`Failed to ${isEditMode ? "update" : "create"} technician.`, error);
+			setFormError(
+				apiErrorMessage(error, `Could not ${isEditMode ? "update" : "save"} the technician. Please try again.`),
+			);
 		}
 	};
 
@@ -136,75 +242,247 @@ export function AddTechnicianList({ onClose, onSaved }: AddTechnicianListProps) 
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby={titleId}
-				className={`relative flex max-h-[92vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl border shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+				className={`relative flex max-h-[92vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl border shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+					isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+				}`}
 			>
-				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+				<header
+					className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${
+						isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"
+					}`}
+				>
 					<div>
-						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Add Technician</h2>
+						<p
+							className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${
+								isDark ? "text-cyan-200/70" : "text-cyan-700"
+							}`}
+						>
+							Fleet operations
+						</p>
+						<h2 id={titleId} className="text-[15px] font-semibold">
+							{isEditMode ? "Edit Technician" : "Add Technician"}
+						</h2>
 					</div>
-					<button type="button" onClick={onClose} aria-label="Close" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label="Close"
+						className={`rounded-lg p-1.5 transition ${
+							isDark
+								? "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+								: "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+						}`}
+					>
 						<X className="h-5 w-5 stroke-[3]" />
 					</button>
 				</header>
 
 				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+					{loadingTechnician ? (
+						<p className={`mb-4 text-[12px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>Loading technician details…</p>
+					) : null}
 					{formError && (
-						<p role="alert" className={`mb-5 rounded-lg border px-3 py-2 text-[12px] ${isDark ? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+						<p
+							role="alert"
+							className={`mb-5 rounded-lg border px-3 py-2 text-[12px] ${
+								isDark
+									? "border-rose-400/20 bg-rose-400/[0.08] text-rose-200"
+									: "border-rose-200 bg-rose-50 text-rose-700"
+							}`}
+						>
 							{formError}
 						</p>
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-						{field("Username", <input required value={values.username} placeholder="Username" onChange={(event) => update("username", event.target.value)} className={inputClass} />, true, false, "Only contains [ A-z, 0-9, _, -, ., *, @ ]")}
-						{field("Password", <input required type="password" value={values.password} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, true)}
-						{field("Confirm Password", <input required type="password" value={values.confirmPassword} placeholder="Confirm Password" onChange={(event) => update("confirmPassword", event.target.value)} className={inputClass} />, true)}
-						{field("Company Name", <input required value={values.company} placeholder="Company Name" onChange={(event) => update("company", event.target.value)} className={inputClass} />, true)}
+						{field(
+							"Username",
+							<input
+								required
+								value={values.username}
+								placeholder="Username"
+								onChange={(event) => update("username", event.target.value)}
+								className={inputClass}
+							/>,
+							true,
+							false,
+							"Only contains [ A-z, 0-9, _, -, ., *, @ ]",
+						)}
+						{field(
+							"Password",
+							<input
+								required={!isEditMode}
+								type="password"
+								value={values.password}
+								placeholder={isEditMode ? "Leave blank to keep current" : "Password"}
+								onChange={(event) => update("password", event.target.value)}
+								className={inputClass}
+							/>,
+							!isEditMode,
+							isEditMode,
+						)}
+						{field(
+							"Confirm Password",
+							<input
+								required={!isEditMode || Boolean(values.password)}
+								type="password"
+								value={values.confirmPassword}
+								placeholder="Confirm Password"
+								onChange={(event) => update("confirmPassword", event.target.value)}
+								className={inputClass}
+							/>,
+							!isEditMode,
+							isEditMode,
+						)}
+						{field(
+							"Company Name",
+							<input
+								required
+								value={values.company}
+								placeholder="Company Name"
+								onChange={(event) => update("company", event.target.value)}
+								className={inputClass}
+							/>,
+							true,
+						)}
 						<label className="block min-w-0">
-							<span className={labelClass}>Timezone <span className="text-rose-400">*</span></span>
+							<span className={labelClass}>
+								Timezone <span className="text-rose-400">*</span>
+							</span>
 							<span className="relative block">
-								<select required value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+								<select
+									required
+									value={values.timezone}
+									disabled={timezonesLoading}
+									onChange={(event) => update("timezone", event.target.value)}
+									className={`${inputClass} appearance-none pr-8`}
+								>
 									<option value="">{timezonesLoading ? "Loading timezones…" : "Select Timezone"}</option>
 									{timezones.map((timezone) => {
 										const id = timezone.externalId ?? String(timezone.id ?? "");
-										return <option key={id} value={id}>{timezone.timezone}</option>;
+										return (
+											<option key={id} value={id}>
+												{timezone.timezone}
+											</option>
+										);
 									})}
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</span>
 						</label>
 						<label className="block min-w-0">
-							<span className={labelClass}>Client <span className="text-rose-400">*</span></span>
+							<span className={labelClass}>
+								Client <span className="text-rose-400">*</span>
+							</span>
 							<span className="relative block">
-								<select required value={values.client} disabled={clientsLoading} onChange={(event) => update("client", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
+								<select
+									required
+									value={values.client}
+									disabled={clientsLoading}
+									onChange={(event) => update("client", event.target.value)}
+									className={`${inputClass} appearance-none pr-8`}
+								>
 									<option value="">{clientsLoading ? "Loading clients…" : "Select Client"}</option>
-									{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+									{clients.map((client) => (
+										<option key={client.id} value={client.id}>
+											{client.name}
+										</option>
+									))}
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</span>
 						</label>
-						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, false, true)}
-						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, false, true)}
-						{field("Phone", <input inputMode="numeric" value={values.phone} placeholder="Phone" onChange={(event) => update("phone", event.target.value)} className={inputClass} />, false, true)}
+						{field(
+							"Name",
+							<input
+								value={values.name}
+								placeholder="Name"
+								onChange={(event) => update("name", event.target.value)}
+								className={inputClass}
+							/>,
+							false,
+							true,
+						)}
+						{field(
+							"Email",
+							<input
+								type="email"
+								value={values.email}
+								placeholder="Email"
+								onChange={(event) => update("email", event.target.value.trim())}
+								className={inputClass}
+							/>,
+							false,
+							true,
+						)}
+						{field(
+							"Phone",
+							<input
+								type="tel"
+								inputMode="numeric"
+								maxLength={PHONE_MAX_LENGTH}
+								value={values.phone}
+								placeholder="10 digit phone"
+								onChange={(event) => update("phone", digitsOnly(event.target.value, PHONE_MAX_LENGTH))}
+								className={inputClass}
+							/>,
+							false,
+							true,
+						)}
 						<label className="block min-w-0 sm:col-span-2">
-							<span className={labelClass}>Address <span className="font-normal text-slate-500">(Optional)</span></span>
-							<input value={values.address} placeholder="Address" onChange={(event) => update("address", event.target.value)} className={inputClass} />
+							<span className={labelClass}>
+								Address <span className="font-normal text-slate-500">(Optional)</span>
+							</span>
+							<input
+								value={values.address}
+								placeholder="Address"
+								onChange={(event) => update("address", event.target.value)}
+								className={inputClass}
+							/>
 						</label>
 					</div>
 					<div className="mt-5 flex flex-col gap-2.5">
 						<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-							<input type="checkbox" checked={values.active} onChange={(event) => update("active", event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
+							<input
+								type="checkbox"
+								checked={values.active}
+								onChange={(event) => update("active", event.target.checked)}
+								className="h-3.5 w-3.5 accent-cyan-300"
+							/>
 							Active
 						</label>
 					</div>
 				</div>
 
-				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>
-					<button type="button" onClick={() => { setValues(emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+				<footer
+					className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${
+						isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"
+					}`}
+				>
+					<button
+						type="button"
+						onClick={() => {
+							setValues(technician ? valuesFromTechnician(technician) : emptyValues());
+							setFormError("");
+						}}
+						className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${
+							isDark
+								? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]"
+								: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+						}`}
+					>
 						Reset
 					</button>
-					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+					<button
+						type="submit"
+						disabled={isSaving || loadingTechnician}
+						className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${
+							isDark
+								? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]"
+								: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
+						}`}
+					>
 						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-						Save
+						{isEditMode ? "Update" : "Save"}
 					</button>
 				</footer>
 			</form>

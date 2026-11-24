@@ -29,8 +29,8 @@ const isValidRoutePoint = (point: RoutePoint) => isValidLatLng(point[0], point[1
 function markerIcon(vehicle: VehicleRow, selected: boolean) {
   const size = selected ? 52 : 42;
   const img = getVehicleStatusImage(vehicle.kind, vehicle.status);
-  const ring = selected
-    ? "0 0 0 2px rgba(103,232,249,.7), 0 10px 28px rgba(0,0,0,.45)"
+  const shadow = selected
+    ? "0 10px 28px rgba(0,0,0,.45)"
     : "0 8px 20px rgba(3,9,28,.45)";
 
   return L.divIcon({
@@ -38,7 +38,7 @@ function markerIcon(vehicle: VehicleRow, selected: boolean) {
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     html: `
-      <div style="width:${size}px;height:${size}px;background:transparent;border:none;filter:drop-shadow(${ring});display:flex;align-items:center;justify-content:center${selected ? ";outline:2px solid #67e8f9;outline-offset:1px;border-radius:12px" : ""}">
+      <div style="width:${size}px;height:${size}px;background:transparent;border:none;filter:drop-shadow(${shadow});display:flex;align-items:center;justify-content:center">
         <img src="${img}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:contain;display:block;pointer-events:none;background:transparent" draggable="false" />
       </div>
     `,

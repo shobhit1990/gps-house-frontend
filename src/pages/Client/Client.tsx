@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddClientForm } from "@/components/Client/AddClientForm";
 import { useAuth } from "@/contexts/AuthContext";
-import { StatusFilter, statusFilters } from "@/enums/Status";
+import { Status, StatusFilter, statusFilters, statusLabel } from "@/enums/Status";
+import { UserType } from "@/enums/UserType";
 import type { Client as ClientEntity } from "@/interfaces/Client";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useDeleteClientMutation, useGetClientsQuery, useUpdateClientMutation } from "@/store/services/api/Client";
 
 type ClientRecord = {
@@ -45,10 +47,13 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "timezone", label: "Timezone" },
 	{ key: "accountStatus", label: "Status" },
 	{ key: "owner", label: "Owner" },
-	{ key: "password", label: "Password" },
-	{ key: "suspended", label: "Suspension" },
 	{ key: "address", label: "Address" },
 ];
+
+const isClientActive = (client: ClientEntity) => {
+	if (typeof client.active === "boolean") return client.active;
+	return String(client.status ?? "").toLowerCase() !== Status.INACTIVE;
+};
 
 const toRecord = (client: ClientEntity): ClientRecord => ({
 	id: client.externalId,
@@ -65,15 +70,10 @@ const toRecord = (client: ClientEntity): ClientRecord => ({
 	owner: client.owner_name ?? "",
 	password: client.password ?? "",
 	suspended: Boolean(client.suspended),
-	active: client.active ?? true,
+	active: isClientActive(client),
 	address: client.address ?? "",
 	source: client,
 });
-
-const apiErrorMessage = (error: unknown, fallback: string) => {
-	const data = (error as { data?: { message?: string } })?.data;
-	return data?.message || fallback;
-};
 
 const inputClass = (isDark: boolean) =>
 	`h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
@@ -102,7 +102,7 @@ export default function Client() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: clients = [], isLoading, isFetching, isError, refetch } = useGetClientsQuery();
-	const [updateClient] = useUpdateClientMutation();
+	const [updateClient, { isLoading: isUpdatingStatus }] = useUpdateClientMutation();
 	const [deleteClient, { isLoading: isDeleting }] = useDeleteClientMutation();
 	const rows = useMemo(() => clients.map(toRecord), [clients]);
 	const [status, setStatus] = useState<StatusFilter>(StatusFilter.ALL);
@@ -115,6 +115,9 @@ export default function Client() {
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingClient, setEditingClient] = useState<ClientEntity | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<ClientRecord | null>(null);
+	const [pendingStatusClient, setPendingStatusClient] = useState<ClientRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const [suspendingId, setSuspendingId] = useState<string | null>(null);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
@@ -146,11 +149,54 @@ export default function Client() {
 		setShowAddDialog(true);
 	};
 
+	const openStatusChange = (row: ClientRecord) => {
+		setPendingStatusClient(row);
+		setSelectedStatus(row.active ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = () => {
+		if (isUpdatingStatus) return;
+		setPendingStatusClient(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusClient) return;
+		const currentStatus = pendingStatusClient.active ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		try {
+			await updateClient({
+				externalId: pendingStatusClient.id,
+				body: {
+					active: selectedStatus === Status.ACTIVE,
+					status: selectedStatus,
+					reason: statusReason.trim(),
+					userType: UserType.USER,
+				},
+			}).unwrap();
+			toast.success(`Client "${pendingStatusClient.username}" is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			setPendingStatusClient(null);
+			setStatusReason("");
+			void refetch();
+		} catch (error) {
+			console.error("Failed to update client status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the client status."));
+		}
+	};
+
 	const toggleSuspend = async (row: ClientRecord) => {
 		setSuspendingId(row.id);
 		try {
 			await updateClient({ externalId: row.id, body: { suspended: !row.suspended } }).unwrap();
-			toast.success(`${row.username} ${row.suspended ? "unsuspended" : "suspended"}.`);
+			toast.success(`Client "${row.username}" ${row.suspended ? "unsuspended" : "suspended"} successfully.`);
 		} catch (error) {
 			console.error("Failed to update client suspension.", error);
 			toast.error(apiErrorMessage(error, "Could not update the client."));
@@ -163,7 +209,7 @@ export default function Client() {
 		if (!deleteTarget) return;
 		try {
 			await deleteClient(deleteTarget.id).unwrap();
-			toast.success(`${deleteTarget.username} deleted.`);
+			toast.success(`Client "${deleteTarget.username}" deleted successfully.`);
 			setDeleteTarget(null);
 		} catch (error) {
 			console.error("Failed to delete client.", error);
@@ -266,9 +312,24 @@ export default function Client() {
 												) : column.key === "id" ? (
 													<span className="text-slate-500">{String(safePage * pageSize + rowIndex + 1).padStart(2, "0")}</span>
 												) : column.key === "accountStatus" ? (
-													<span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${!row.active ? (isDark ? "bg-slate-500/15 text-slate-300" : "bg-slate-100 text-slate-600") : (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700")}`}>
+													<button
+														type="button"
+														onClick={() => openStatusChange(row)}
+														disabled={isUpdatingStatus}
+														aria-label={`Change status of ${row.username}`}
+														title="Change status"
+														className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+															!row.active
+																? isDark
+																	? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
+																	: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+																: isDark
+																	? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
+																	: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+														}`}
+													>
 														{row.active ? "Active" : "Inactive"}
-													</span>
+													</button>
 												) : column.key === "password" ? (
 													<button
 														type="button"
@@ -293,12 +354,38 @@ export default function Client() {
 											</td>
 										))}
 										<td className="whitespace-nowrap px-3 py-2">
-											<div className="flex items-center justify-center gap-2">
-												<button type="button" title="Edit client" aria-label={`Edit ${row.username}`} onClick={() => openForm(row.source)} className={`flex h-7 w-7 items-center justify-center rounded-md border transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}>
-													<Pencil className="h-3.5 w-3.5" />
+											<div className="flex items-center justify-center gap-1.5">
+												<button
+													type="button"
+													title="Edit client"
+													aria-label={`Edit ${row.username}`}
+													onClick={() => openForm(row.source)}
+													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}
+												>
+													<Pencil className="h-3.5 w-3.5" /> Edit
 												</button>
-												<button type="button" title="Delete client" aria-label={`Delete ${row.username}`} onClick={() => setDeleteTarget(row)} className={`flex h-7 w-7 items-center justify-center rounded-md border transition ${isDark ? "border-rose-300/20 bg-rose-400/[0.06] text-rose-300 hover:bg-rose-400/[0.15]" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}>
-													<Trash2 className="h-3.5 w-3.5" />
+												<button
+													type="button"
+													title="Change status"
+													aria-label={`Change status of ${row.username}`}
+													onClick={() => openStatusChange(row)}
+													disabled={isUpdatingStatus}
+													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+														isDark
+															? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+															: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+													}`}
+												>
+													<Power className="h-3.5 w-3.5" /> Status
+												</button>
+												<button
+													type="button"
+													title="Delete client"
+													aria-label={`Delete ${row.username}`}
+													onClick={() => setDeleteTarget(row)}
+													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition ${isDark ? "border-rose-300/20 bg-rose-400/[0.06] text-rose-300 hover:bg-rose-400/[0.15]" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}
+												>
+													<Trash2 className="h-3.5 w-3.5" /> Delete
 												</button>
 											</div>
 										</td>
@@ -351,6 +438,83 @@ export default function Client() {
 				/>
 			)}
 
+			{pendingStatusClient ? (
+				<div
+					className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${isDark ? "bg-[#020718]/80" : "bg-slate-900/50"}`}
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget) closeStatusDialog();
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="client-status-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+					>
+						<h3 id="client-status-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
+							Change client status
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Current status of{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>{pendingStatusClient.username}</strong>
+							{" "}is{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>
+								{pendingStatusClient.active ? "Active" : "Inactive"}
+							</strong>
+							. Choose Active or Inactive, then enter a reason.
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Status <span className="text-rose-400">*</span>
+							</span>
+							<select
+								value={selectedStatus}
+								onChange={(event) => setSelectedStatus(event.target.value as Status)}
+								className={`${inputClass(isDark)} ${isDark ? "[color-scheme:dark]" : ""}`}
+							>
+								<option value={Status.ACTIVE}>Active</option>
+								<option value={Status.INACTIVE}>Inactive</option>
+							</select>
+						</label>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this client being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+								className={`${inputClass(isDark)} h-auto resize-none py-2`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Update Status
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
+
 			{deleteTarget && (
 				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeleting) setDeleteTarget(null); }}>
 					<section role="alertdialog" aria-modal="true" aria-labelledby="client-delete-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
@@ -360,7 +524,7 @@ export default function Client() {
 						</p>
 						<div className="mt-5 flex justify-end gap-2">
 							<button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button type="button" onClick={confirmDelete} disabled={isDeleting} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}>
+							<button type="button" onClick={() => void confirmDelete()} disabled={isDeleting} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}>
 								{isDeleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
 								Delete
 							</button>

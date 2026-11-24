@@ -144,6 +144,7 @@ export const jobSheetApi = api.injectEndpoints({
 export const {
   useGetJobSheetsQuery,
   useGetJobSheetByIdQuery,
+  useLazyGetJobSheetByIdQuery,
   useCreateJobSheetMutation,
   useUpdateJobSheetMutation,
   useDeleteJobSheetMutation,

@@ -120,6 +120,8 @@ export function VehicleHistoryTrackingModal({
       const selected = vehicleOptions.find((option) => option.id === vehicleId);
       onRouteReady({
         ...result,
+        from: result.from || from,
+        to: result.to || to,
         vehicleId,
         vehicleSn: selected?.sn ?? null,
       });

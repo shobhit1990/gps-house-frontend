@@ -6,6 +6,7 @@ import { InventoryType } from "@/enums/InventoryType";
 import { SimOperator } from "@/enums/SimOperator";
 import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery } from "@/store/services/api/Master";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { digitsOnly as keepDigits } from "@/lib/formValidation";
 
 export type InventoryFormValues = {
 	inventoryType: string;
@@ -58,7 +59,7 @@ const emptyValues = (): InventoryFormValues => ({
 	analogSensor: false,
 });
 
-const digitsOnly = (value: string) => value.replace(/\D/g, "").slice(0, 24);
+const digitsOnly = (value: string, maxLength = 24) => keepDigits(value, maxLength);
 
 export function AddInventory({ onClose, onSubmit, isSaving = false, initialValues }: AddInventoryProps) {
 	const { theme } = useTheme();
@@ -178,10 +179,10 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 					)}
 					<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 						{field("Inventory Type", select("inventoryType", "Inventory Type", inventoryTypes, true), true)}
-						{field("Imei", <input value={values.imei} maxLength={30} placeholder="Device Imei" onChange={(event) => update("imei", event.target.value)} className={inputClass} />, false, "Max 30 characters allowed")}
-						{field("Sim Number", <input value={values.sim} inputMode="numeric" placeholder="Sim Number" onChange={(event) => update("sim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
+						{field("Imei", <input value={values.imei} inputMode="numeric" maxLength={30} placeholder="Device Imei" onChange={(event) => update("imei", digitsOnly(event.target.value, 30))} className={inputClass} />, false, "Max 30 digits allowed")}
+						{field("Sim Number", <input value={values.sim} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("sim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
 						{field("Sim Operator", select("operator", "Select", operators, true), true)}
-						{field("Secondary Sim Number", <input value={values.secondarySim} inputMode="numeric" placeholder="Sim Number" onChange={(event) => update("secondarySim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
+						{field("Secondary Sim Number", <input value={values.secondarySim} inputMode="numeric" maxLength={24} placeholder="Sim Number" onChange={(event) => update("secondarySim", digitsOnly(event.target.value))} className={inputClass} />, false, "Only contains 24 digit")}
 						{field("Secondary Sim Operator", select("secondarySimOperator", "Select", operators))}
 						{field(
 							"Device Type",

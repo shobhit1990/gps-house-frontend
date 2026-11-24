@@ -7,7 +7,6 @@ import "jodit/es2021/jodit.min.css";
 import { Activity, Loader2, RefreshCw } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
 	useCreatePolicyMutation,
@@ -101,19 +100,11 @@ export default function Policy() {
 			if (existing?.externalId) {
 				await updatePolicy({
 					externalId: existing.externalId,
-					body: {
-						body: next,
-						status: Status.ACTIVE,
-						reason: "Policy content updated",
-					},
+					body: { body: next },
 				}).unwrap();
 				toast.success("Policy content updated.");
 			} else {
-				await createPolicy({
-					body: next,
-					status: Status.ACTIVE,
-					reason: "Policy content created",
-				}).unwrap();
+				await createPolicy({ body: next }).unwrap();
 				toast.success("Policy content created.");
 			}
 			setContent(next);

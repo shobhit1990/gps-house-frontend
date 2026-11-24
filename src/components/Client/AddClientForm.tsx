@@ -4,12 +4,21 @@ import { toast } from "sonner";
 import { Eye, EyeOff, Loader2, X } from "lucide-react";
 import type { Client, CreateClientRequest } from "@/interfaces/Client";
 import { Status } from "@/enums/Status";
+import { UserType } from "@/enums/UserType";
 import { useCreateClientMutation, useUpdateClientMutation } from "@/store/services/api/Client";
 import {
 	useGetLanguagesQuery,
 	useGetOwnerMasterQuery,
 	useGetTimezonesQuery,
 } from "@/store/services/api/Master";
+import {
+	digitsOnly,
+	emailErrorMessage,
+	isValidEmail,
+	isValidPhone,
+	PHONE_MAX_LENGTH,
+	phoneErrorMessage,
+} from "@/lib/formValidation";
 
 type ClientFormValues = {
 	owner_name: string;
@@ -38,7 +47,6 @@ type AddClientFormProps = {
 const fallbackTimezones = ["(GMT+5:30) Asia/Calcutta", "(GMT+0:00) UTC", "(GMT-5:00) America/New_York"];
 const fallbackLanguages = ["English", "Hindi"];
 const usernamePattern = /^[A-Za-z0-9_.*@-]+$/;
-const phonePattern = /^\d{10}$/;
 
 const emptyValues: ClientFormValues = {
 	owner_name: "",
@@ -65,7 +73,7 @@ const valuesFromClient = (client: Client): ClientFormValues => ({
 	companyName: client.companyName ?? "",
 	name: client.name ?? "",
 	email: client.email ?? "",
-	phone: String(client.phone ?? "").replace(/\D/g, "").slice(0, 10),
+	phone: digitsOnly(String(client.phone ?? ""), PHONE_MAX_LENGTH),
 	address: client.address ?? "",
 	language: client.language ?? "",
 	domain: client.domain ?? "",
@@ -91,6 +99,7 @@ const buildClientPayload = (values: ClientFormValues, image: string): CreateClie
 	image: image || undefined,
 	active: values.active,
 	status: values.active ? Status.ACTIVE : Status.INACTIVE,
+	userType: UserType.USER,
 });
 
 const apiErrorMessage = (error: unknown, fallback: string) => {
@@ -268,9 +277,12 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 			setFormError("Password and Confirm Password must match.");
 			return;
 		}
-		const phone = String(values.phone ?? "").trim();
-		if (phone && !phonePattern.test(phone)) {
-			setFormError("Phone number must be exactly 10 digits.");
+		if (!isValidEmail(values.email)) {
+			setFormError(emailErrorMessage);
+			return;
+		}
+		if (!isValidPhone(String(values.phone ?? ""))) {
+			setFormError(phoneErrorMessage);
 			return;
 		}
 
@@ -384,18 +396,18 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 						)}
 						{field("Company Name", <input required value={values.companyName} placeholder="Company Name" onChange={(event) => update("companyName", event.target.value)} className={inputClass} />, undefined, true)}
 						{field("Name", <input value={values.name} placeholder="Name" onChange={(event) => update("name", event.target.value)} className={inputClass} />, undefined, false, true)}
-						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value)} className={inputClass} />, undefined, false, true)}
+						{field("Email", <input type="email" value={values.email} placeholder="Email" onChange={(event) => update("email", event.target.value.trim())} className={inputClass} />, undefined, false, true)}
 						{field(
 							"Phone",
 							<input
 								type="tel"
 								inputMode="numeric"
-								maxLength={10}
+								maxLength={PHONE_MAX_LENGTH}
 								value={values.phone}
 								placeholder="10 digit phone"
 								pattern="\d{10}"
 								title="Enter a 10 digit phone number"
-								onChange={(event) => update("phone", event.target.value.replace(/\D/g, "").slice(0, 10))}
+								onChange={(event) => update("phone", digitsOnly(event.target.value, PHONE_MAX_LENGTH))}
 								className={inputClass}
 							/>,
 							"Must be exactly 10 digits",
@@ -422,7 +434,7 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 							true,
 						)}
 						{field("Domain", <input value={values.domain} placeholder="Domain" onChange={(event) => update("domain", event.target.value)} className={inputClass} />, undefined, false, true)}
-						{field("Max Vehicle Count", <input type="number" min={0} value={values.maxVehicleCount} placeholder="Max Vehicle Count" onChange={(event) => update("maxVehicleCount", event.target.value)} className={inputClass} />)}
+						{field("Max Vehicle Count", <input type="text" inputMode="numeric" value={values.maxVehicleCount} placeholder="Max Vehicle Count" onChange={(event) => update("maxVehicleCount", digitsOnly(event.target.value))} className={inputClass} />)}
 						{field(
 							"Timezone",
 							<select

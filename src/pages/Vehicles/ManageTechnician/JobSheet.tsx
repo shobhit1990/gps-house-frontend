@@ -1,17 +1,18 @@
 import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
 import { useAuth } from "@/contexts/AuthContext";
-import { Status } from "@/enums/Status";
+import { Status, statusLabel } from "@/enums/Status";
+import type { JobSheet as JobSheetEntity } from "@/interfaces/JobSheet";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useGetJobSheetsQuery, useUpdateJobSheetMutation } from "@/store/services/api/JobSheet";
+import { useDeleteJobSheetMutation, useGetJobSheetsQuery, useUpdateJobSheetMutation } from "@/store/services/api/JobSheet";
 import { useGetTechnicianMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { useGetVehiclesQuery } from "@/store/services/api/Vehicle";
 
-type JobStatus = "Pending" | "Completed";
+type JobStatus = "Active" | "Inactive";
 
 type JobSheetRecord = {
 	id: string;
@@ -71,8 +72,12 @@ export default function JobSheet() {
 	const { data: technicians = [] } = useGetTechnicianMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const { data: vehicles = [] } = useGetVehiclesQuery();
-	const [updateJobSheet] = useUpdateJobSheetMutation();
-	const [completingId, setCompletingId] = useState<string | null>(null);
+	const [updateJobSheet, { isLoading: isUpdatingStatus }] = useUpdateJobSheetMutation();
+	const [deleteJobSheet, { isLoading: isDeleting }] = useDeleteJobSheetMutation();
+	const [editingJob, setEditingJob] = useState<JobSheetEntity | null>(null);
+	const [pendingStatusJob, setPendingStatusJob] = useState<JobSheetRecord | null>(null);
+	const [pendingDeleteJob, setPendingDeleteJob] = useState<JobSheetRecord | null>(null);
+	const [statusReason, setStatusReason] = useState("");
 	const rows = useMemo<JobSheetRecord[]>(() => {
 		const vehicleNames = new Map(
 			vehicleOptions.flatMap((vehicle) => {
@@ -112,7 +117,7 @@ export default function JobSheet() {
 			}),
 		);
 		return jobSheets.map((job) => {
-			const completed = job.status !== Status.ACTIVE;
+			const inactive = String(job.status ?? "").toLowerCase() !== Status.ACTIVE;
 			const technicianName =
 				job.technicianName?.trim() ||
 				technicianNames.get(job.technician) ||
@@ -128,6 +133,8 @@ export default function JobSheet() {
 				job.transporterName?.trim() ||
 				(transporterId ? transporterNames.get(transporterId) : "") ||
 				"";
+			const reason = String(job.reason ?? "").trim();
+			const systemReasons = new Set(["New jobsheet created", "Job completed", "Jobsheet updated"]);
 			return {
 				id: job.externalId || String(job.id),
 				technicianName,
@@ -137,12 +144,12 @@ export default function JobSheet() {
 				phone: job.phone ?? "",
 				instruction: job.instruction ?? "",
 				task: "",
-				remark: job.reason && job.reason !== "New jobsheet created" && job.reason !== "Job completed" ? job.reason : "",
+				remark: reason && !systemReasons.has(reason) ? reason : "",
 				orderNo: job.orderNo ?? "",
 				assignOn: dateLabel(job.createdAt),
-				doneOn: completed ? dateLabel(job.updatedAt) : "",
-				status: completed ? "Completed" : "Pending",
-				closedBy: completed ? technicianName : "",
+				doneOn: inactive ? dateLabel(job.updatedAt) : "",
+				status: inactive ? "Inactive" : "Active",
+				closedBy: inactive ? technicianName : "",
 			};
 		});
 	}, [jobSheets, vehicleOptions, technicians, transporters, vehicles]);
@@ -153,8 +160,8 @@ export default function JobSheet() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
 
-	const pendingCount = rows.filter((row) => row.status === "Pending").length;
-	const completedCount = rows.filter((row) => row.status === "Completed").length;
+	const activeCount = rows.filter((row) => row.status === "Active").length;
+	const inactiveCount = rows.filter((row) => row.status === "Inactive").length;
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
@@ -173,34 +180,143 @@ export default function JobSheet() {
 		setStatusFilter("All");
 		setPage(0);
 		setShowAddDialog(false);
+		setEditingJob(null);
 		void refetch();
 	};
 
-	const completeJob = async (id: string) => {
-		setCompletingId(id);
+	const openEdit = (id: string) => {
+		const job = jobSheets.find((item) => (item.externalId || String(item.id)) === id) ?? null;
+		if (!job) {
+			toast.error("Could not find this job sheet.");
+			return;
+		}
+		setShowAddDialog(false);
+		setEditingJob(job);
+	};
+
+	const closeStatusDialog = () => {
+		setPendingStatusJob(null);
+		setStatusReason("");
+	};
+
+	const closeDeleteDialog = () => {
+		if (isDeleting) return;
+		setPendingDeleteJob(null);
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDeleteJob?.id) return;
 		try {
-			await updateJobSheet({ externalId: id, body: { status: Status.INACTIVE, reason: "Job completed" } }).unwrap();
-			toast.success("Job marked as completed.");
+			await deleteJobSheet(pendingDeleteJob.id).unwrap();
+			toast.success("Job sheet deleted.");
+			setPendingDeleteJob(null);
+			void refetch();
 		} catch (error) {
-			console.error("Failed to complete job sheet.", error);
-			toast.error(apiErrorMessage(error, "Could not complete the job."));
-		} finally {
-			setCompletingId(null);
+			console.error("Failed to delete job sheet.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the job sheet."));
+		}
+	};
+
+	const pendingNextStatus = pendingStatusJob
+		? pendingStatusJob.status === "Active"
+			? Status.INACTIVE
+			: Status.ACTIVE
+		: null;
+
+	const openStatusChange = (row: JobSheetRecord) => {
+		setStatusReason("");
+		setPendingStatusJob(row);
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusJob || !pendingNextStatus) return;
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		try {
+			await updateJobSheet({
+				externalId: pendingStatusJob.id,
+				body: {
+					status: pendingNextStatus,
+					reason: statusReason.trim(),
+				},
+			}).unwrap();
+			toast.success(`Job sheet is now ${statusLabel(pendingNextStatus).toLowerCase()}.`);
+			closeStatusDialog();
+			void refetch();
+		} catch (error) {
+			console.error("Failed to update job sheet status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the job sheet status."));
 		}
 	};
 
 	const cell = (key: ColumnKey, row: JobSheetRecord) => {
 		if (key === "technicianName" || key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
 		if (key === "status") {
-			const pending = row.status === "Pending";
-			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${pending ? (isDark ? "bg-rose-400/15 text-rose-200" : "bg-rose-50 text-rose-700") : (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700")}`}>{row.status}</span>;
+			const active = row.status === "Active";
+			return (
+				<button
+					type="button"
+					onClick={() => openStatusChange(row)}
+					disabled={isUpdatingStatus}
+					aria-label={`Change status of ${row.vehicle}`}
+					title="Change status"
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+						active
+							? isDark
+								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
+								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+							: isDark
+								? "bg-rose-400/15 text-rose-200 hover:bg-rose-400/25"
+								: "bg-rose-50 text-rose-700 hover:bg-rose-100"
+					}`}
+				>
+					{row.status}
+				</button>
+			);
 		}
 		if (key === "action") {
-			if (row.status === "Completed") return <span className="text-slate-500">Closed</span>;
 			return (
-				<button type="button" onClick={() => completeJob(row.id)} disabled={completingId === row.id} className={`h-7 rounded-md border px-3 text-[11px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-					Complete
-				</button>
+				<div className="flex items-center gap-1.5">
+					<button
+						type="button"
+						onClick={() => openEdit(row.id)}
+						aria-label={`Edit job sheet ${row.vehicle}`}
+						title="Edit"
+						className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition ${isDark ? "border-white/[0.10] text-slate-300 hover:border-cyan-300/30 hover:bg-cyan-300/[0.10] hover:text-cyan-100" : "border-slate-200 text-slate-600 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"}`}
+					>
+						<Pencil className="h-3.5 w-3.5" /> Edit
+					</button>
+					<button
+						type="button"
+						onClick={() => openStatusChange(row)}
+						disabled={isUpdatingStatus}
+						aria-label={`Change status of ${row.vehicle}`}
+						title="Change status"
+						className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+							isDark
+								? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+								: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+						}`}
+					>
+						<Power className="h-3.5 w-3.5" /> Status
+					</button>
+					<button
+						type="button"
+						onClick={() => setPendingDeleteJob(row)}
+						disabled={isDeleting}
+						aria-label={`Delete job sheet ${row.vehicle}`}
+						title="Delete"
+						className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+							isDark
+								? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+								: "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+						}`}
+					>
+						<Trash2 className="h-3.5 w-3.5" /> Delete
+					</button>
+				</div>
 			);
 		}
 		return textValue(row[key]);
@@ -208,9 +324,15 @@ export default function JobSheet() {
 
 	const filters: { key: StatusFilter; label: string; className: string }[] = [
 		{ key: "All", label: `All : ${rows.length}`, className: isDark ? "border-cyan-300/30 text-cyan-100" : "border-cyan-300 text-cyan-700" },
-		{ key: "Pending", label: `Pending : ${pendingCount}`, className: isDark ? "border-rose-300/30 text-rose-200" : "border-rose-300 text-rose-700" },
-		{ key: "Completed", label: `Completed : ${completedCount}`, className: isDark ? "border-emerald-300/30 text-emerald-200" : "border-emerald-300 text-emerald-700" },
+		{ key: "Active", label: `Active : ${activeCount}`, className: isDark ? "border-emerald-300/30 text-emerald-200" : "border-emerald-300 text-emerald-700" },
+		{ key: "Inactive", label: `Inactive : ${inactiveCount}`, className: isDark ? "border-rose-300/30 text-rose-200" : "border-rose-300 text-rose-700" },
 	];
+
+	const inputClass = `h-10 w-full rounded-lg border px-3 text-xs outline-none transition ${
+		isDark
+			? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 placeholder:text-slate-500 focus:border-cyan-300/35 [color-scheme:dark]"
+			: "border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:border-cyan-400 [color-scheme:light]"
+	}`;
 
 	return (
 		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -275,7 +397,7 @@ export default function JobSheet() {
 									))}
 								</div>
 							</details>
-							<button type="button" onClick={() => setShowAddDialog(true)} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							<button type="button" onClick={() => { setEditingJob(null); setShowAddDialog(true); }} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 								<Plus className="h-3.5 w-3.5" /> Add
 							</button>
 						</div>
@@ -323,7 +445,128 @@ export default function JobSheet() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddJobSheet onClose={() => setShowAddDialog(false)} onSaved={saveJob} />}
+			{(showAddDialog || editingJob) && (
+				<AddJobSheet
+					jobSheet={editingJob}
+					onClose={() => {
+						setShowAddDialog(false);
+						setEditingJob(null);
+					}}
+					onSaved={saveJob}
+				/>
+			)}
+
+			{pendingStatusJob && pendingNextStatus ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button type="button" aria-label="Close status dialog" className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]" onClick={closeStatusDialog} />
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="job-status-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="job-status-title" className="text-[15px] font-semibold">
+							Change status
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Set <span className="font-medium">{pendingStatusJob.vehicle}</span> to{" "}
+							<span className="font-semibold">{statusLabel(pendingNextStatus)}</span>?
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this job sheet being set ${statusLabel(pendingNextStatus).toLowerCase()}?`}
+								className={`${inputClass} h-auto resize-none py-2`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
+										: "border-cyan-300 bg-cyan-50 text-cyan-800"
+								}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Confirm
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
+
+			{pendingDeleteJob ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button type="button" aria-label="Close delete dialog" className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]" onClick={closeDeleteDialog} />
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="job-delete-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="job-delete-title" className="text-[15px] font-semibold">
+							Delete job sheet
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Delete job for <span className="font-medium">{pendingDeleteJob.vehicle}</span>
+							{pendingDeleteJob.technicianName ? (
+								<>
+									{" "}
+									(<span className="font-medium">{pendingDeleteJob.technicianName}</span>)
+								</>
+							) : null}
+							? This cannot be undone.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeDeleteDialog}
+								disabled={isDeleting}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmDelete()}
+								disabled={isDeleting}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-rose-300/30 bg-rose-300/[0.14] text-rose-50"
+										: "border-rose-300 bg-rose-50 text-rose-700"
+								}`}
+							>
+								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }
