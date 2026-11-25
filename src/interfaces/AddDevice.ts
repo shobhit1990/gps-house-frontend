@@ -2,12 +2,12 @@ export interface CreateDeviceRequest {
 	imei: string;
 	simNumber: string;
 	simOperator: string;
-	secondarySimNumber: string;
-	secondarySimOperator: string;
+	/** Optional — omit when empty; API requires exactly 24 digits if sent. */
+	secondarySimNumber?: string;
+	secondarySimOperator?: string;
 	deviceType: string;
 	client: string;
 	password: string;
-	active?: boolean;
 	status?: string;
 	reason?: string;
 	ignitionWireConnected: boolean;
@@ -27,6 +27,8 @@ type InventoryReference = {
 export interface Device extends CreateDeviceRequest {
 	id?: string | number;
 	externalId: string;
+	/** Present on some list/detail responses; not sent on create/update. */
+	active?: boolean;
 	createdAt?: string;
 	updatedAt?: string;
 }

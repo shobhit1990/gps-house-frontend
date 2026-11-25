@@ -9,6 +9,7 @@ import {
 	Loader2,
 	Pencil,
 	Plus,
+	Power,
 	RefreshCw,
 	Search,
 	Trash2,
@@ -21,13 +22,15 @@ import {
 	displayText,
 	toDateDisplay,
 	transporterDisplayName,
+	vehicleDisplayName,
 } from "@/components/Payment/paymentFormHelpers";
 import { useAuth } from "@/contexts/AuthContext";
+import { PaymentDetailsType, toPaymentDetailsType } from "@/enums/PaymentDetailsType";
 import { paymentTermLabel } from "@/enums/PaymentTerm";
 import { Status, statusLabel } from "@/enums/Status";
 import type { PaymentDetails } from "@/interfaces/PaymentDetails";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import {
 	useCreatePaymentDetailsMutation,
 	useDeletePaymentDetailsMutation,
@@ -47,8 +50,6 @@ type ColumnKey =
 	| "technicianName"
 	| "rental"
 	| "remark"
-	| "status"
-	| "reason"
 	| "actions";
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -62,16 +63,18 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "technicianName", label: "Technician Name" },
 	{ key: "rental", label: "Rental" },
 	{ key: "remark", label: "Remark" },
-	{ key: "status", label: "Status" },
-	{ key: "reason", label: "Reason" },
 	{ key: "actions", label: "Actions" },
 ];
+
+const currentStatus = (value?: string) =>
+	(value ?? "").toLowerCase() === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
 
 export default function Payment() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
 	const { data: rows = [], isLoading, isFetching, isError, refetch } = useGetPaymentDetailsListQuery();
 	const [createPaymentDetails, { isLoading: isCreating }] = useCreatePaymentDetailsMutation();
 	const [updatePaymentDetails, { isLoading: isUpdating }] = useUpdatePaymentDetailsMutation();
@@ -90,7 +93,11 @@ export default function Payment() {
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingPayment, setEditingPayment] = useState<PaymentDetails | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<PaymentDetails | null>(null);
+	const [pendingStatusPayment, setPendingStatusPayment] = useState<PaymentDetails | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const isSaving = isCreating || isUpdating;
+	const isUpdatingStatus = isUpdating && Boolean(pendingStatusPayment);
 
 	const transporterNameById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -101,18 +108,39 @@ export default function Payment() {
 		return map;
 	}, [transporterMaster]);
 
+	const vehicleNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const item of vehicleMaster) {
+			map.set(item.id, item.name);
+			if (item.externalId) map.set(String(item.externalId), item.name);
+		}
+		return map;
+	}, [vehicleMaster]);
+
 	const resolveTransporterName = (row: PaymentDetails) =>
 		transporterDisplayName(row, transporterNameById);
 
-	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
+	const resolveVehicleName = (row: PaymentDetails) => vehicleDisplayName(row, vehicleNameById);
+
+	const hasVehiclePayments = useMemo(
+		() => rows.some((row) => toPaymentDetailsType(row.type) === PaymentDetailsType.VEHICLE || Boolean(row.vehicle)),
+		[rows],
+	);
+
+	const visibleColumns = columns.filter((column) => {
+		if (hiddenColumns.includes(column.key)) return false;
+		if (column.key === "vehicle" && !hasVehiclePayments) return false;
+		return true;
+	});
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		return rows.filter((row) => {
 			const transporterName = transporterDisplayName(row, transporterNameById);
+			const vehicleName = vehicleDisplayName(row, vehicleNameById);
 			if (appliedTransporters.length > 0 && !appliedTransporters.includes(transporterName)) return false;
 			if (!query) return true;
 			return [
-				row.vehicle,
+				vehicleName,
 				row.invoice,
 				row.sellingPrice,
 				transporterName,
@@ -121,14 +149,12 @@ export default function Payment() {
 				row.rental,
 				row.remark,
 				row.type,
-				row.status,
-				row.reason,
 			]
 				.join(" ")
 				.toLowerCase()
 				.includes(query);
 		});
-	}, [appliedTransporters, rows, search, transporterNameById]);
+	}, [appliedTransporters, rows, search, transporterNameById, vehicleNameById]);
 
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
@@ -189,6 +215,52 @@ export default function Payment() {
 		}
 	};
 
+	const openStatusChange = (row: PaymentDetails) => {
+		const status = currentStatus(row.status);
+		setPendingStatusPayment(row);
+		setSelectedStatus(status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = () => {
+		if (isUpdatingStatus) return;
+		setPendingStatusPayment(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusPayment?.externalId) {
+			toast.error("This payment does not have a valid ID.");
+			return;
+		}
+		const existing = currentStatus(pendingStatusPayment.status);
+		if (selectedStatus === existing) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (!statusReason.trim()) {
+			toast.error("Please enter a reason for the status change.");
+			return;
+		}
+		try {
+			await updatePaymentDetails({
+				externalId: pendingStatusPayment.externalId,
+				body: {
+					status: selectedStatus,
+					reason: statusReason.trim(),
+				},
+			}).unwrap();
+			toast.success(
+				`Payment is now ${statusLabel(selectedStatus).toLowerCase()}.`,
+			);
+			setPendingStatusPayment(null);
+			setStatusReason("");
+		} catch (error) {
+			console.error("Failed to update payment status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the payment status."));
+		}
+	};
+
 	const cell = (key: ColumnKey, row: PaymentDetails) => {
 		if (key === "transporter") {
 			return (
@@ -200,24 +272,6 @@ export default function Payment() {
 		if (key === "installationDate" || key === "rentalDueDate") return toDateDisplay(row[key]);
 		if (key === "sellingPrice" || key === "rental") return displayText(row[key]);
 		if (key === "paymentTerm") return displayText(paymentTermLabel[row.paymentTerm] ?? row.paymentTerm);
-		if (key === "status") {
-			const active = String(row.status).toLowerCase() === Status.ACTIVE;
-			return (
-				<span
-					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
-						active
-							? isDark
-								? "bg-emerald-400/15 text-emerald-300"
-								: "bg-emerald-100 text-emerald-700"
-							: isDark
-								? "bg-slate-300/[0.08] text-slate-300"
-								: "bg-slate-100 text-slate-700"
-					}`}
-				>
-					{statusLabel(active ? Status.ACTIVE : Status.INACTIVE)}
-				</span>
-			);
-		}
 		if (key === "actions") {
 			return (
 				<div className="flex items-center gap-1">
@@ -233,6 +287,16 @@ export default function Payment() {
 					</button>
 					<button
 						type="button"
+						onClick={() => openStatusChange(row)}
+						disabled={isUpdatingStatus || !row.externalId}
+						aria-label="Change status"
+						title="Change status"
+						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-amber-300/20 bg-amber-300/[0.08] text-amber-100 hover:bg-amber-300/[0.14]" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+					>
+						<Power className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
 						onClick={() => setPendingDelete(row)}
 						disabled={isDeleting || !row.externalId}
 						aria-label="Delete payment"
@@ -244,11 +308,14 @@ export default function Payment() {
 				</div>
 			);
 		}
-		if (key === "vehicle") return displayText(row.vehicle);
+		if (key === "vehicle") {
+			const type = toPaymentDetailsType(row.type);
+			if (type === PaymentDetailsType.TRANSPORTER && !row.vehicle) return "—";
+			return displayText(resolveVehicleName(row));
+		}
 		if (key === "invoice") return displayText(row.invoice);
 		if (key === "technicianName") return displayText(row.technicianName);
 		if (key === "remark") return displayText(row.remark);
-		if (key === "reason") return displayText(row.reason);
 		return "—";
 	};
 
@@ -444,7 +511,9 @@ export default function Payment() {
 									<ChevronDown className="h-3 w-3 text-slate-500" />
 								</summary>
 								<div className={`absolute right-0 top-11 z-30 max-h-52 w-52 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-									{columns.map((column) => (
+									{columns
+										.filter((column) => column.key !== "vehicle" || hasVehiclePayments)
+										.map((column) => (
 										<label key={column.key} className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
 											<input
 												type="checkbox"
@@ -622,6 +691,80 @@ export default function Payment() {
 							>
 								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
 								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
+
+			{pendingStatusPayment ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button
+						type="button"
+						aria-label="Close status dialog"
+						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
+						onClick={closeStatusDialog}
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="payment-status-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"}`}
+					>
+						<h2 id="payment-status-title" className="text-[15px] font-semibold">
+							Change payment status
+						</h2>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Current status of{" "}
+							<span className="font-medium">
+								{resolveTransporterName(pendingStatusPayment) || "this payment"}
+							</span>{" "}
+							is{" "}
+							<span className="font-medium">{statusLabel(currentStatus(pendingStatusPayment.status))}</span>.
+							Choose Active or Inactive, then enter a reason.
+						</p>
+						<label className="mt-4 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Status <span className="text-rose-400">*</span>
+							</span>
+							<select
+								value={selectedStatus}
+								onChange={(event) => setSelectedStatus(event.target.value as Status)}
+								className={`h-9 w-full rounded-md border px-3 text-[12px] outline-none ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white [color-scheme:dark]" : "border-slate-200 bg-white text-slate-900"}`}
+							>
+								<option value={Status.ACTIVE}>Active</option>
+								<option value={Status.INACTIVE}>Inactive</option>
+							</select>
+						</label>
+						<label className="mt-3 block">
+							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								Reason <span className="text-rose-400">*</span>
+							</span>
+							<textarea
+								value={statusReason}
+								onChange={(event) => setStatusReason(event.target.value)}
+								rows={3}
+								placeholder={`Why is this payment being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+								className={`w-full resize-none rounded-md border px-3 py-2 text-[12px] outline-none ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
+							/>
+						</label>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={closeStatusDialog}
+								disabled={isUpdatingStatus}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmStatusChange()}
+								disabled={isUpdatingStatus}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+							>
+								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Update Status
 							</button>
 						</div>
 					</section>

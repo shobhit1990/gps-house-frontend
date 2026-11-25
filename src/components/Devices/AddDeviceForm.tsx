@@ -317,16 +317,25 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 			return;
 		}
 
+		const secondarySim = device.secondarySimNumber.trim();
+		if (secondarySim && secondarySim.length !== 24) {
+			setFormError("Secondary Sim Number must contain exactly 24 digits.");
+			return;
+		}
+
 		const body: CreateDeviceRequest = {
 			imei: device.imei.trim(),
 			simNumber: device.simNumber.trim(),
 			simOperator: device.simOperator,
-			secondarySimNumber: device.secondarySimNumber.trim(),
-			secondarySimOperator: device.secondarySimOperator,
+			...(secondarySim
+				? {
+						secondarySimNumber: secondarySim,
+						secondarySimOperator: device.secondarySimOperator,
+					}
+				: {}),
 			deviceType: device.deviceType,
 			client: device.client,
 			password: device.password,
-			active: device.active,
 			status: device.active ? "active" : "inactive",
 			...(device.active ? {} : { reason: device.reason.trim() || undefined }),
 			ignitionWireConnected: device.ignitionPositive,

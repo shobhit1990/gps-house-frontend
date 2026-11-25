@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ChevronDown, Eye, EyeOff, Info, Loader2, X } from "lucide-react";
 import { groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { Status } from "@/enums/Status";
-import { UserType, userTypeOptions } from "@/enums/UserType";
+import { UserType } from "@/enums/UserType";
 import type { User } from "@/interfaces/User";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { digitsOnly, isValidPhone, PHONE_MAX_LENGTH, phoneErrorMessage } from "@/lib/formValidation";
@@ -29,7 +29,6 @@ export type UserFormValues = {
 	confirmPassword: string;
 	contactPerson: string;
 	group: string;
-	userType: string;
 	timezone: string;
 	company: string;
 	companyAddress: string;
@@ -59,7 +58,6 @@ const emptyUser = (): UserFormValues => ({
 	confirmPassword: "",
 	contactPerson: "",
 	group: "",
-	userType: "",
 	timezone: "",
 	company: "",
 	companyAddress: "",
@@ -75,7 +73,6 @@ const valuesFromUser = (user: User): UserFormValues => ({
 	confirmPassword: "",
 	contactPerson: user.contactPersonName ?? "",
 	group: user.group ?? "",
-	userType: String(user.userType ?? ""),
 	timezone: user.timezone ?? "",
 	company: user.companyName ?? "",
 	companyAddress: user.companyAddress ?? "",
@@ -228,14 +225,13 @@ export function AddUser({ onClose, onSubmit, user }: AddUserProps) {
 			!values.username.trim() ||
 			(passwordRequired && (!values.password || !values.confirmPassword)) ||
 			!values.group ||
-			!values.userType ||
 			!values.timezone ||
 			!values.company.trim()
 		) {
 			setFormError(
 				isEditMode
-					? "Username, Group, User Type, Timezone, and Company Name are required."
-					: "Username, Password, Confirm Password, Group, User Type, Timezone, and Company Name are required.",
+					? "Username, Group, Timezone, and Company Name are required."
+					: "Username, Password, Confirm Password, Group, Timezone, and Company Name are required.",
 			);
 			return;
 		}
@@ -249,19 +245,20 @@ export function AddUser({ onClose, onSubmit, user }: AddUserProps) {
 				return;
 			}
 		}
-		if (!Object.values(UserType).includes(values.userType as UserType)) {
-			setFormError("Please select a valid user type.");
-			return;
-		}
 		if (!isValidPhone(values.phone)) {
 			setFormError(phoneErrorMessage);
 			return;
 		}
 		const text = (value: string) => value.trim() || undefined;
+		const existingUserType = user?.userType;
+		const resolvedUserType =
+			existingUserType && Object.values(UserType).includes(existingUserType as UserType)
+				? (existingUserType as UserType)
+				: UserType.USER;
 		const body = {
 			userName: values.username.trim(),
 			group: values.group,
-			userType: values.userType as UserType,
+			userType: resolvedUserType,
 			timezone: values.timezone,
 			companyName: values.company.trim(),
 			contactPersonName: text(values.contactPerson),
@@ -462,18 +459,6 @@ export function AddUser({ onClose, onSubmit, user }: AddUserProps) {
 										<select required value={values.group} disabled={groupsLoading} onChange={(event) => update("group", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
 											<option value="">{groupsLoading ? "Loading groups…" : "Select Group"}</option>
 											{groups.map((group) => <option key={group.externalId} value={group.externalId}>{group.groupName}</option>)}
-										</select>
-										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-									</span>
-								</label>
-								<label className="block min-w-0">
-									<span className={labelClass}>User Type <span className="text-rose-400">*</span></span>
-									<span className="relative block">
-										<select required value={values.userType} onChange={(event) => update("userType", event.target.value)} className={`${inputClass} appearance-none pr-8`}>
-											<option value="">Select User Type</option>
-											{userTypeOptions.map((option) => (
-												<option key={option.value} value={option.value}>{option.label}</option>
-											))}
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</span>

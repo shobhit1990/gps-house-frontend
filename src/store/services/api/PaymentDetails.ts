@@ -11,15 +11,24 @@ import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapRes
 type RefValue =
   | string
   | number
-  | { id?: string | number; externalId?: string; name?: string; transporterName?: string };
+  | {
+      id?: string | number;
+      externalId?: string;
+      name?: string;
+      transporterName?: string;
+      vehicle?: string;
+      vehicleNo?: string;
+      vehicleNickname?: string;
+    };
 
 type PaymentDetailsApiRecord = Omit<
   Partial<PaymentDetails>,
-  "externalId" | "transporter" | "paymentTerm" | "status"
+  "externalId" | "transporter" | "vehicle" | "paymentTerm" | "status"
 > & {
   id?: string | number;
   externalId?: string;
   transporter?: RefValue;
+  vehicle?: RefValue;
   paymentTerm?: string;
   status?: string;
   sellingPrice?: string | number;
@@ -34,7 +43,14 @@ const refId = (value: RefValue | undefined) => {
 
 const refName = (value: RefValue | undefined) => {
   if (value == null || typeof value !== "object") return "";
-  return String(value.transporterName ?? value.name ?? "").trim();
+  return String(
+    value.transporterName ??
+      value.vehicleNo ??
+      value.vehicle ??
+      value.vehicleNickname ??
+      value.name ??
+      "",
+  ).trim();
 };
 
 const toNumber = (value: string | number | null | undefined) => {
@@ -54,6 +70,7 @@ const toStatus = (value?: string) =>
 const normalizePaymentDetails = (record: PaymentDetailsApiRecord): PaymentDetails => {
   const id = record.externalId ?? record.id ?? "";
   const transporterId = refId(record.transporter);
+  const vehicleId = refId(record.vehicle);
 
   return {
     ...record,
@@ -71,7 +88,8 @@ const normalizePaymentDetails = (record: PaymentDetailsApiRecord): PaymentDetail
     remark: record.remark ?? "",
     status: toStatus(record.status),
     reason: record.reason ?? "",
-    vehicle: record.vehicle ?? "",
+    vehicle: vehicleId || (typeof record.vehicle === "string" ? record.vehicle : "") || record.vehicleName || "",
+    vehicleName: refName(record.vehicle) || record.vehicleName || "",
     invoice: record.invoice ?? "",
   };
 };

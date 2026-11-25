@@ -241,13 +241,22 @@ export default function DeviceInventory() {
 
 	const saveInventory = async (values: InventoryFormValues) => {
 		const text = (value: unknown) => String(value ?? "").trim();
+		const secondarySim = text(values.secondarySim);
+		if (secondarySim && secondarySim.length !== 24) {
+			setInventoryError("Secondary Sim Number must contain exactly 24 digits.");
+			throw new Error("Secondary Sim Number must contain exactly 24 digits.");
+		}
 		const body: CreateInventoryRequest = {
 			inventoryType: text(values.inventoryType),
 			imei: text(values.imei),
 			simNumber: text(values.sim),
 			simOperator: text(values.operator),
-			secondarySimNumber: text(values.secondarySim),
-			secondarySimOperator: text(values.secondarySimOperator),
+			...(secondarySim
+				? {
+						secondarySimNumber: secondarySim,
+						secondarySimOperator: text(values.secondarySimOperator) || undefined,
+					}
+				: {}),
 			deviceType: text(values.deviceType),
 			assignType: text(values.assignType),
 			client: text(values.client),
