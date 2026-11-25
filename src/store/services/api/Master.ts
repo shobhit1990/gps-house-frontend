@@ -62,10 +62,11 @@ function toMasterOptions<T extends { id?: string | number; externalId?: string; 
   response: MasterListResponse<T>,
   getName: (item: T) => string | undefined,
   getExtra?: (item: T) => Partial<MasterOption> | undefined,
+  options?: { includeInactive?: boolean },
 ): MasterOption[] {
   const seen = new Set<string>();
   return unwrapMasterList(response)
-    .filter(isActiveRecord)
+    .filter((item) => (options?.includeInactive ? true : isActiveRecord(item)))
     .flatMap((item) => {
       const name = getName(item)?.trim();
       if (!name) return [];
@@ -107,15 +108,9 @@ function entityMasterLabel(
   return company || identity || undefined;
 }
 
-/** Client dropdowns prefer owner_name; fall back to company/username when missing. */
-function clientMasterLabel(
-  item: ClientMaster & { owner?: { ownerName?: string; owner_name?: string } | null },
-): string | undefined {
-  const owner = item.owner && typeof item.owner === "object" ? item.owner : undefined;
-  return (
-    asTrimmedText(item.owner_name ?? item.ownerName ?? owner?.ownerName ?? owner?.owner_name) ||
-    entityMasterLabel(item, item.clientName)
-  );
+/** Client dropdowns show only login `userName` (e.g. ravi / roshni). */
+function clientMasterLabel(item: ClientMaster): string | undefined {
+  return asTrimmedText(item.userName ?? item.username);
 }
 
 export const masterApi = api.injectEndpoints({
@@ -150,8 +145,9 @@ export const masterApi = api.injectEndpoints({
     }),
     getClientMaster: builder.query<MasterOption[], void>({
       query: () => "/master/client",
+      // Include inactive too — API returns them and dropdowns need every client username.
       transformResponse: (response: MasterListResponse<ClientMaster>) =>
-        toMasterOptions(response, clientMasterLabel),
+        toMasterOptions(response, clientMasterLabel, undefined, { includeInactive: true }),
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
     getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({
@@ -167,9 +163,10 @@ export const masterApi = api.injectEndpoints({
           response,
           (item) => entityMasterLabel(item, item.transporterName),
           (item) => {
-            const clientRef = asTrimmedText(item.client);
-            return clientRef ? { clientRef } : undefined;
+            const clientRef = masterRefId(item.client) ?? asTrimmedText(item.client);
+            return clientRef && clientRef !== "[object Object]" ? { clientRef } : undefined;
           },
+          { includeInactive: true },
         ),
       providesTags: (_result, _error, arg) => [
         {

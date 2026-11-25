@@ -1,4 +1,4 @@
-import { toPaymentDetailsType } from "@/enums/PaymentDetailsType";
+import { PaymentDetailsType, toPaymentDetailsType } from "@/enums/PaymentDetailsType";
 import { PaymentTerm, toPaymentTerm } from "@/enums/PaymentTerm";
 import { Status } from "@/enums/Status";
 import type { CreatePaymentDetailsRequest, PaymentDetails } from "@/interfaces/PaymentDetails";
@@ -8,6 +8,7 @@ import type { MasterOption } from "@/interfaces/EntityMaster";
 export type PaymentFormState = {
   type: string;
   transporter: string;
+  vehicle: string;
   sellingPrice: string;
   paymentTerm: string;
   installationDate: string;
@@ -15,8 +16,6 @@ export type PaymentFormState = {
   technicianName: string;
   rental: string;
   remark: string;
-  status: Status;
-  reason: string;
 };
 
 export const localDate = (offsetDays = 0) => {
@@ -54,6 +53,7 @@ export const displayText = (value?: string | number | null) => {
 export const emptyPaymentForm = (): PaymentFormState => ({
   type: "",
   transporter: "",
+  vehicle: "",
   sellingPrice: "0",
   paymentTerm: "",
   installationDate: localDate(),
@@ -61,8 +61,6 @@ export const emptyPaymentForm = (): PaymentFormState => ({
   technicianName: "",
   rental: "",
   remark: "",
-  status: Status.ACTIVE,
-  reason: "",
 });
 
 export const resolveTransporterId = (
@@ -85,6 +83,26 @@ export const resolveTransporterId = (
   return payment.transporter || "";
 };
 
+export const resolveVehicleId = (
+  master: MasterOption[],
+  payment?: Pick<PaymentDetails, "vehicle" | "vehicleName">,
+) => {
+  if (!payment) return "";
+
+  const byId = master.find(
+    (item) => item.id === payment.vehicle || item.externalId === payment.vehicle,
+  );
+  if (byId) return byId.id;
+
+  if (payment.vehicleName) {
+    const name = payment.vehicleName.trim().toLowerCase();
+    const byName = master.find((item) => item.name.trim().toLowerCase() === name);
+    if (byName) return byName.id;
+  }
+
+  return payment.vehicle || "";
+};
+
 export const transporterDisplayName = (
   row: PaymentDetails,
   nameById?: Map<string, string>,
@@ -94,12 +112,27 @@ export const transporterDisplayName = (
   row.transporter ||
   "";
 
+export const vehicleDisplayName = (
+  row: PaymentDetails,
+  nameById?: Map<string, string>,
+) => {
+  if (!row.vehicle && !row.vehicleName) return "";
+  return (
+    row.vehicleName ||
+    (row.vehicle ? nameById?.get(row.vehicle) : undefined) ||
+    row.vehicle ||
+    ""
+  );
+};
+
 export const formFromPayment = (
   payment: PaymentDetails,
-  master: MasterOption[] = [],
+  transporterMaster: MasterOption[] = [],
+  vehicleMaster: MasterOption[] = [],
 ): PaymentFormState => ({
   type: toPaymentDetailsType(payment.type) || payment.type || "",
-  transporter: resolveTransporterId(master, payment),
+  transporter: resolveTransporterId(transporterMaster, payment),
+  vehicle: resolveVehicleId(vehicleMaster, payment),
   sellingPrice: numberText(payment.sellingPrice, "0"),
   paymentTerm: toPaymentTerm(String(payment.paymentTerm ?? "")),
   installationDate: toDateInputValue(payment.installationDate),
@@ -107,19 +140,18 @@ export const formFromPayment = (
   technicianName: payment.technicianName ?? "",
   rental: numberText(payment.rental),
   remark: payment.remark ?? "",
-  status: payment.status === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE,
-  reason: payment.reason ?? "",
 });
 
 /** Build API create/update body from form state. Returns error string or payload. */
 export const buildPaymentPayload = (
   form: PaymentFormState,
 ): { error: string } | { error?: undefined; payload: CreatePaymentDetailsRequest } => {
-  if (!form.type.trim() || !form.transporter.trim() || !form.paymentTerm) {
+  const type = toPaymentDetailsType(form.type) || form.type.trim();
+  if (!type || !form.transporter.trim() || !form.paymentTerm) {
     return { error: "Type, Transporter and Payment Term are required." };
   }
-  if (!form.reason.trim()) {
-    return { error: "Reason is required." };
+  if (type === PaymentDetailsType.VEHICLE && !form.vehicle.trim()) {
+    return { error: "Vehicle is required when type is Vehicle." };
   }
 
   const selling = form.sellingPrice.trim() ? Number(form.sellingPrice) : undefined;
@@ -134,11 +166,13 @@ export const buildPaymentPayload = (
 
   return {
     payload: {
-      type: form.type.trim(),
+      type,
       transporter: form.transporter.trim(),
+      ...(type === PaymentDetailsType.VEHICLE && form.vehicle.trim()
+        ? { vehicle: form.vehicle.trim() }
+        : {}),
       paymentTerm: form.paymentTerm as PaymentTerm,
-      status: form.status,
-      reason: form.reason.trim(),
+      status: Status.ACTIVE,
       ...(selling != null ? { sellingPrice: selling } : {}),
       ...(form.installationDate ? { installationDate: form.installationDate } : {}),
       ...(form.rentalDueDate ? { rentalDueDate: form.rentalDueDate } : {}),

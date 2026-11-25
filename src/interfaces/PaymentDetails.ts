@@ -7,6 +7,8 @@ export interface CreatePaymentDetailsRequest {
   type: string;
   /** Transporter externalId. */
   transporter: string;
+  /** Vehicle externalId — required when `type` is `vehicle`. */
+  vehicle?: string;
   sellingPrice?: number;
   paymentTerm: PaymentTerm;
   installationDate?: string;
@@ -25,7 +27,8 @@ export interface PaymentDetails extends CreatePaymentDetailsRequest {
   externalId: string;
   /** Display label when API nests transporter. */
   transporterName?: string;
-  vehicle?: string;
+  /** Display label when API nests vehicle. */
+  vehicleName?: string;
   invoice?: string;
   createdAt?: string;
   updatedAt?: string;

@@ -1,33 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
-
-type CommandLogRecord = {
-	id: number;
-	client: string;
-	transporter: string;
-	vehicleNumber: string;
-	imei: string;
-	type: string;
-	message: string;
-	time: string;
-};
+import type { SendCommandLogRow } from "@/interfaces/SendCommandLogReport";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useLazyGetSendCommandLogReportQuery } from "@/store/services/api/SendCommandLogReport";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
 
 type ColumnKey = "sn" | "vehicleNumber" | "imei" | "transporter" | "client" | "type" | "message" | "time";
-
-type MenuKind = "client" | "transporter" | "vehicle";
-
-type AppliedFilters = {
-	clients: string[];
-	transporters: string[];
-	vehicles: string[];
-	from: string;
-	to: string;
-};
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -40,161 +26,204 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "time", label: "Time" },
 ];
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
-
 const pad = (value: number) => String(value).padStart(2, "0");
-
-const toInput = (date: Date, end: boolean) => {
-	const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-	return `${day}T${end ? "23:59" : "00:00"}`;
-};
 
 const todayRange = () => {
 	const now = new Date();
-	return { from: toInput(now, false), to: toInput(now, true) };
+	const day = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+	return { from: `${day}T00:00`, to: `${day}T23:59` };
+};
+
+/** datetime-local (YYYY-MM-DDTHH:mm) → API format DD/MM/YYYY HH:mm */
+const toApiDateTime = (value: string) => {
+	const [datePart, timePart = "00:00"] = value.split("T");
+	const [year, month, day] = datePart.split("-");
+	if (!year || !month || !day) return value;
+	return `${day}/${month}/${year} ${timePart}`;
 };
 
 const textValue = (value: string) => (value.trim() ? value : "—");
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 export default function SendComandLog() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const { data: allVehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const [fetchCommandLogs, { isFetching }] = useLazyGetSendCommandLogReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const initialRange = todayRange();
-	const clientRef = useRef<HTMLDivElement>(null);
-	const transporterRef = useRef<HTMLDivElement>(null);
-	const vehicleRef = useRef<HTMLDivElement>(null);
-	const [rows] = useState<CommandLogRecord[]>([]);
+
+	const [rows, setRows] = useState<SendCommandLogRow[]>([]);
+	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
+	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
-	const pageSize = 10;
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClients, setSelectedClients] = useState<string[]>([]);
-	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
-	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+	const [client, setClient] = useState("");
+	const [transporter, setTransporter] = useState("");
+	const [vehicle, setVehicle] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], from: initialRange.from, to: initialRange.to });
-	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
-	const [clientQuery, setClientQuery] = useState("");
-	const [transporterQuery, setTransporterQuery] = useState("");
-	const [vehicleQuery, setVehicleQuery] = useState("");
+
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+
+	const vehicles = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
+		});
+	}, [allVehicles, client, transporter]);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicle("");
+	}, [transporter, transporters]);
+
+	useEffect(() => {
+		if (!vehicle) return;
+		if (vehicles.some((item) => item.id === vehicle)) return;
+		setVehicle("");
+	}, [vehicle, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
-		const fromTime = applied.from ? new Date(applied.from).getTime() : Number.NEGATIVE_INFINITY;
-		const toTime = applied.to ? new Date(applied.to).getTime() : Number.POSITIVE_INFINITY;
+		if (!searched) return [];
 		const query = search.trim().toLowerCase();
-		return rows.filter((row, index) => {
-			if (applied.clients.length > 0 && !applied.clients.includes(row.client)) return false;
-			if (applied.transporters.length > 0 && !applied.transporters.includes(row.transporter)) return false;
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicleNumber)) return false;
-			const time = new Date(row.time).getTime();
-			if (!Number.isNaN(time) && (time < fromTime || time > toTime)) return false;
-			if (!query) return true;
-			return [String(index + 1), row.vehicleNumber, row.imei, row.transporter, row.client, row.type, row.message, row.time].join(" ").toLowerCase().includes(query);
-		});
-	}, [applied, rows, search]);
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[row.vehicleNumber, row.imei, row.transporter, row.client, row.type, row.message, row.time]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search, searched]);
+
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 
-	useEffect(() => {
-		if (!openMenu) return;
-		const onPointer = (event: MouseEvent) => {
-			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : openMenu === "transporter" ? transporterRef : vehicleRef;
-			if (!menuRef.current?.contains(target)) setOpenMenu(null);
-		};
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setOpenMenu(null);
-		};
-		document.addEventListener("mousedown", onPointer);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onPointer);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [openMenu]);
+	const selectClass = `h-10 w-full appearance-none rounded-lg border px-2.5 pr-7 text-[11px] outline-none transition ${
+		isDark
+			? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 focus:border-cyan-300/35 [color-scheme:dark]"
+			: "border-slate-200 bg-white text-slate-800 focus:border-cyan-400 [color-scheme:light]"
+	}`;
 
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+	const onClientChange = (next: string) => {
+		setClient(next);
+		setTransporter("");
+		setVehicle("");
+	};
+
+	const onTransporterChange = (next: string) => {
+		setTransporter(next);
+		setVehicle("");
+	};
+
+	const applyFilters = async () => {
+		if (!client || !transporter || !vehicle) {
+			toast.error("Select client, transporter, and vehicle.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
+
+		try {
+			const data = await fetchCommandLogs({
+				client,
+				transporter,
+				vehicle,
+				from: toApiDateTime(from),
+				to: toApiDateTime(to),
+			}).unwrap();
+			const clientName = clients.find((option) => option.id === client)?.name ?? "";
+			const transporterName = transporters.find((option) => option.id === transporter)?.name ?? "";
+			const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? "";
+			const nextRows = data.map((row, index) => ({
+				...row,
+				id: row.id || `${vehicle}-${index}`,
+				vehicleNumber: row.vehicleNumber || vehicleName,
+				client: row.client || clientName,
+				transporter: row.transporter || transporterName,
+			}));
+			setRows(nextRows);
+			setSearched(true);
+			setPage(0);
+			if (nextRows.length === 0) {
+				toast.message("No command logs for this range.");
+			} else {
+				toast.success("Send command logs loaded");
+			}
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load send command logs."));
+		}
 	};
 
 	const refresh = () => {
 		const range = todayRange();
+		setRows([]);
+		setSearched(false);
 		setSearch("");
-		setSelectedClients([]);
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		setClient("");
+		setTransporter("");
+		setVehicle("");
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [], from: range.from, to: range.to });
-		setClientQuery("");
-		setTransporterQuery("");
-		setVehicleQuery("");
-		setOpenMenu(null);
+		setHiddenColumns([]);
 		setPage(0);
+		setPageSize(10);
 	};
 
-	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[200px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
-	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
-
-	const multiSelect = (
-		kind: MenuKind,
-		ref: RefObject<HTMLDivElement | null>,
-		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
-		options: string[],
-		query: string,
-		setQuery: (value: string) => void,
-	) => (
-		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[190px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
-				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
-			</button>
-			{openMenu === kind && (
-				<div className={menuClass}>
-					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
-					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
-								</label>
-							</li>
-						))}
-						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
-					</ul>
-				</div>
-			)}
-		</div>
+	const SelectField = ({
+		id,
+		label,
+		value,
+		onChange,
+		disabled,
+		placeholder,
+		options,
+	}: {
+		id: string;
+		label: string;
+		value: string;
+		onChange: (value: string) => void;
+		disabled?: boolean;
+		placeholder: string;
+		options: { id: string; name: string }[];
+	}) => (
+		<label className="relative block min-w-0 flex-1 sm:max-w-[150px]">
+			<span className="sr-only">{label}</span>
+			<select
+				id={id}
+				value={value}
+				disabled={disabled}
+				onChange={(event) => onChange(event.target.value)}
+				className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-55`}
+			>
+				<option value="">{placeholder}</option>
+				{options.map((option) => (
+					<option key={option.id} value={option.id}>
+						{option.name}
+					</option>
+				))}
+			</select>
+			<ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+		</label>
 	);
 
-	const cell = (key: ColumnKey, row: CommandLogRecord, serial: number) => {
-		if (key === "sn") return String(serial).padStart(2, "0");
-		if (key === "vehicleNumber" || key === "imei") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
+	const cell = (key: ColumnKey, row: SendCommandLogRow, serial: number) => {
+		if (key === "sn") return String(row.sn || serial).padStart(2, "0");
+		if (key === "vehicleNumber" || key === "imei") {
+			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
+		}
 		return textValue(row[key]);
 	};
 
@@ -212,76 +241,222 @@ export default function SendComandLog() {
 						<p className={`mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>
 							<Activity className="h-3.5 w-3.5" /> Reports
 						</p>
-						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Send Command Logs</h1>
-						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} reports</p>
+						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>
+							Send Command Logs
+						</h1>
+						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>
+							{searched ? filteredRows.length : 0} reports
+						</p>
 					</div>
-					<button type="button" onClick={refresh} aria-label="Refresh command logs" title="Refresh command logs" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button
+						type="button"
+						onClick={refresh}
+						aria-label="Refresh command logs"
+						title="Refresh command logs"
+						className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}
+					>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
-				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
+				<section
+					aria-label="Send command log filters"
+					className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}
+				>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{multiSelect("client", clientRef, "Select Client", selectedClients, setSelectedClients, visibleClients, clientQuery, setClientQuery)}
-						{multiSelect("transporter", transporterRef, "Select Transporter", selectedTransporters, setSelectedTransporters, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{multiSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
-						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
-							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
+						<SelectField
+							id="send-command-client"
+							label="Client"
+							value={client}
+							onChange={onClientChange}
+							disabled={clientsLoading}
+							placeholder={clientsLoading ? "Loading clients…" : "Select Client"}
+							options={clients}
+						/>
+						<SelectField
+							id="send-command-transporter"
+							label="Transporter"
+							value={transporter}
+							onChange={onTransporterChange}
+							disabled={!client || transportersLoading || transportersFetching}
+							placeholder={
+								!client
+									? "Select client first"
+									: transportersLoading || transportersFetching
+										? "Loading transporters…"
+										: transporters.length === 0
+											? "No transporters"
+											: "Select Transporter"
+							}
+							options={transporters}
+						/>
+						<SelectField
+							id="send-command-vehicle"
+							label="Vehicle"
+							value={vehicle}
+							onChange={setVehicle}
+							disabled={!transporter || vehiclesLoading}
+							placeholder={
+								!transporter
+									? "Select transporter first"
+									: vehiclesLoading
+										? "Loading vehicles…"
+										: vehicles.length === 0
+											? "No vehicles"
+											: "Select Vehicle"
+							}
+							options={vehicles}
+						/>
+						<div
+							className={`flex h-10 min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2 sm:max-w-[280px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}
+						>
+							<input
+								type="datetime-local"
+								aria-label="From date"
+								value={from}
+								onChange={(event) => setFrom(event.target.value)}
+								className={`h-8 min-w-0 flex-1 bg-transparent text-[10px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`}
+							/>
 							<span className="text-slate-500">-</span>
-							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
+							<input
+								type="datetime-local"
+								aria-label="To date"
+								value={to}
+								onChange={(event) => setTo(event.target.value)}
+								className={`h-8 min-w-0 flex-1 bg-transparent text-[10px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`}
+							/>
 						</div>
-						<button type="button" onClick={() => { setApplied({ clients: selectedClients, transporters: selectedTransporters, vehicles: selectedVehicles, from, to }); setOpenMenu(null); setPage(0); }} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							Search
+						<button
+							type="button"
+							onClick={() => void applyFilters()}
+							disabled={isFetching}
+							className={`h-10 shrink-0 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+						>
+							{isFetching ? "Loading…" : "Search"}
 						</button>
 					</div>
 				</section>
 
-				<section className={`overflow-hidden rounded-xl border shadow-[0_24px_80px_rgba(0,0,0,0.24)] ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.06)]"}`}>
-					<div className={`flex flex-col gap-3 border-b p-3 sm:p-4 xl:flex-row xl:items-center xl:justify-between ${isDark ? "border-white/[0.07] bg-gradient-to-r from-cyan-300/[0.035] via-transparent to-violet-400/[0.04]" : "border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-violet-50"}`}>
+				<section
+					className={`overflow-hidden rounded-xl border shadow-[0_24px_80px_rgba(0,0,0,0.24)] ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.06)]"}`}
+				>
+					<div
+						className={`flex flex-col gap-3 border-b p-3 sm:p-4 xl:flex-row xl:items-center xl:justify-between ${isDark ? "border-white/[0.07] bg-gradient-to-r from-cyan-300/[0.035] via-transparent to-violet-400/[0.04]" : "border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-violet-50"}`}
+					>
 						<label className="relative block min-w-0 sm:w-[300px]">
 							<Search className={`absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-cyan-200/50" : "text-cyan-600/70"}`} />
-							<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search" aria-label="Search command logs" className={`h-10 w-full rounded-lg border pl-9 pr-9 text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-white placeholder:text-slate-600 focus:border-cyan-300/35 focus:ring-2 focus:ring-cyan-300/[0.08]" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"}`} />
+							<input
+								type="search"
+								value={search}
+								onChange={(event) => {
+									setSearch(event.target.value);
+									setPage(0);
+								}}
+								placeholder="Search"
+								aria-label="Search command logs"
+								className={`h-10 w-full rounded-lg border pl-9 pr-9 text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-white placeholder:text-slate-600 focus:border-cyan-300/35 focus:ring-2 focus:ring-cyan-300/[0.08]" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"}`}
+							/>
 							{search && (
-								<button type="button" onClick={() => setSearch("")} aria-label="Clear search" className={`absolute right-2.5 top-1/2 -translate-y-1/2 ${isDark ? "text-slate-500 hover:text-white" : "text-slate-500 hover:text-slate-900"}`}>
+								<button
+									type="button"
+									onClick={() => setSearch("")}
+									aria-label="Clear search"
+									className={`absolute right-2.5 top-1/2 -translate-y-1/2 ${isDark ? "text-slate-500 hover:text-white" : "text-slate-500 hover:text-slate-900"}`}
+								>
 									<X className="h-3.5 w-3.5" />
 								</button>
 							)}
 						</label>
-						<details className="relative">
-							<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
-								<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
-								Column Visibility
-								<ChevronDown className="h-3 w-3 text-slate-500" />
-							</summary>
-							<div className={`absolute right-0 top-11 z-30 max-h-52 w-56 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-								{columns.map((column) => (
-									<label key={column.key} className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-										<input type="checkbox" checked={!hiddenColumns.includes(column.key)} onChange={() => setHiddenColumns((current) => (current.includes(column.key) ? current.filter((item) => item !== column.key) : [...current, column.key]))} className="h-3.5 w-3.5 accent-cyan-300" />
-										{column.label}
-									</label>
-								))}
+						<div className="flex flex-wrap items-center gap-2">
+							<div className="relative">
+								<select
+									aria-label="No of Rows"
+									value={pageSize}
+									onChange={(event) => {
+										setPageSize(Number(event.target.value));
+										setPage(0);
+									}}
+									className={`h-9 appearance-none rounded-lg border pl-3 pr-8 text-[11px] outline-none ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 [color-scheme:dark]" : "border-slate-200 bg-white text-slate-700"}`}
+								>
+									<option value={10}>10 rows</option>
+									<option value={25}>25 rows</option>
+									<option value={50}>50 rows</option>
+								</select>
+								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-						</details>
+							<details className="relative">
+								<summary
+									className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}
+								>
+									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
+									Column Visibility
+									<ChevronDown className="h-3 w-3 text-slate-500" />
+								</summary>
+								<div
+									className={`absolute right-0 top-11 z-30 max-h-52 w-56 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+								>
+									{columns.map((column) => (
+										<label
+											key={column.key}
+											className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}
+										>
+											<input
+												type="checkbox"
+												checked={!hiddenColumns.includes(column.key)}
+												onChange={() =>
+													setHiddenColumns((current) =>
+														current.includes(column.key)
+															? current.filter((item) => item !== column.key)
+															: [...current, column.key],
+													)
+												}
+												className="h-3.5 w-3.5 accent-cyan-300"
+											/>
+											{column.label}
+										</label>
+									))}
+								</div>
+							</details>
+						</div>
 					</div>
 
 					<div className="overflow-x-auto">
 						<table className="w-full min-w-[1100px] border-collapse text-left">
 							<thead>
-								<tr className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
-									{visibleColumns.map((column) => <th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>)}
+								<tr
+									className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}
+								>
+									{visibleColumns.map((column) => (
+										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">
+											{column.label}
+										</th>
+									))}
 								</tr>
 							</thead>
 							<tbody>
 								{pageRows.map((row, index) => (
-									<tr key={row.id} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
-										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row, safePage * pageSize + index + 1)}</td>)}
+									<tr
+										key={row.id}
+										className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+									>
+										{visibleColumns.map((column) => (
+											<td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">
+												{cell(column.key, row, safePage * pageSize + index + 1)}
+											</td>
+										))}
 									</tr>
 								))}
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No command logs available</p>
-											<p className="mt-1 text-xs text-slate-500">Change the filters or search to see reports.</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+												{isFetching ? "Loading command logs…" : "No command logs available"}
+											</p>
+											<p className="mt-1 text-xs text-slate-500">
+												{searched
+													? "Change the filters or search to see reports."
+													: "Select client, transporter, and vehicle, then search."}
+											</p>
 										</td>
 									</tr>
 								)}
@@ -289,16 +464,37 @@ export default function SendComandLog() {
 						</table>
 					</div>
 
-					<footer className={`flex flex-col gap-3 border-t px-4 py-3 text-[10px] sm:flex-row sm:items-center sm:justify-between ${isDark ? "border-white/[0.07] text-slate-500" : "border-slate-200 text-slate-500"}`}>
+					<footer
+						className={`flex flex-col gap-3 border-t px-4 py-3 text-[10px] sm:flex-row sm:items-center sm:justify-between ${isDark ? "border-white/[0.07] text-slate-500" : "border-slate-200 text-slate-500"}`}
+					>
 						<span>
-							Showing <span className={`font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>{filteredRows.length === 0 ? 0 : safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, filteredRows.length)}</span> of {filteredRows.length} reports
+							Showing{" "}
+							<span className={`font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								{filteredRows.length === 0 ? 0 : safePage * pageSize + 1}–
+								{Math.min((safePage + 1) * pageSize, filteredRows.length)}
+							</span>{" "}
+							of {filteredRows.length} reports
 						</span>
 						<div className="flex items-center gap-1.5">
-							<button type="button" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={safePage === 0} aria-label="Previous page" className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+							<button
+								type="button"
+								onClick={() => setPage((current) => Math.max(0, current - 1))}
+								disabled={safePage === 0}
+								aria-label="Previous page"
+								className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+							>
 								<ChevronLeft className="h-4 w-4" />
 							</button>
-							<span className={`min-w-12 text-center ${isDark ? "text-slate-300" : "text-slate-700"}`}>{safePage + 1} / {pageCount}</span>
-							<button type="button" onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={safePage >= pageCount - 1} aria-label="Next page" className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+							<span className={`min-w-12 text-center ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								{safePage + 1} / {pageCount}
+							</span>
+							<button
+								type="button"
+								onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+								disabled={safePage >= pageCount - 1}
+								aria-label="Next page"
+								className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+							>
 								<ChevronRight className="h-4 w-4" />
 							</button>
 						</div>

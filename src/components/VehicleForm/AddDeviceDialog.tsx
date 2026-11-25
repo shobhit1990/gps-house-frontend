@@ -121,6 +121,12 @@ export function AddDeviceDialog({ isDark, onClose, onSaved, deviceId }: AddDevic
             return;
         }
 
+        const secondarySim = values.secondarySim?.trim() ?? "";
+        if (secondarySim && secondarySim.length !== 24) {
+            setFormError("Secondary Sim Number must contain exactly 24 digits.");
+            return;
+        }
+
         try {
             const body = buildDevicePayload(values);
             if (isEditMode && deviceId) {

@@ -1,12 +1,11 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ChevronDown, Loader2, X } from "lucide-react";
-import { paymentDetailsTypeOptions } from "@/enums/PaymentDetailsType";
+import { PaymentDetailsType, paymentDetailsTypeOptions } from "@/enums/PaymentDetailsType";
 import { paymentTermOptions } from "@/enums/PaymentTerm";
-import { Status, statusLabel } from "@/enums/Status";
 import type { CreatePaymentDetailsRequest, PaymentDetails } from "@/interfaces/PaymentDetails";
 import { decimalOnly } from "@/lib/formValidation";
-import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import {
 	buildPaymentPayload,
 	emptyPaymentForm,
@@ -25,6 +24,7 @@ type AddPaymentProps = {
 
 export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false }: AddPaymentProps) {
 	const { data: transporterMaster = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
+	const { data: vehicleMaster = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -33,13 +33,25 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 	const [form, setForm] = useState<PaymentFormState>(emptyPaymentForm);
 	const [formError, setFormError] = useState("");
 
+	const isVehicleType = form.type === PaymentDetailsType.VEHICLE;
+
+	const vehicleOptions = useMemo(() => {
+		if (!form.transporter) return [];
+		return vehicleMaster.filter((item) => item.transporterId === form.transporter);
+	}, [form.transporter, vehicleMaster]);
+
 	const update = <K extends keyof PaymentFormState>(key: K, value: PaymentFormState[K]) => {
-		setForm((current) => ({ ...current, [key]: value }));
+		setForm((current) => {
+			const next = { ...current, [key]: value };
+			if (key === "type" && value !== PaymentDetailsType.VEHICLE) next.vehicle = "";
+			if (key === "transporter") next.vehicle = "";
+			return next;
+		});
 		setFormError("");
 	};
 
 	const hydrate = (payment?: PaymentDetails) => {
-		setForm(payment ? formFromPayment(payment, transporterMaster) : emptyPaymentForm());
+		setForm(payment ? formFromPayment(payment, transporterMaster, vehicleMaster) : emptyPaymentForm());
 		setFormError("");
 	};
 
@@ -54,9 +66,15 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 	useEffect(() => {
 		if (!initialValues) return;
 		hydrate(initialValues);
-		// Re-run when master loads so transporter select can resolve id.
+		// Re-run when master loads so transporter/vehicle selects can resolve ids.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [initialValues, transporterMaster]);
+	}, [initialValues, transporterMaster, vehicleMaster]);
+
+	useEffect(() => {
+		if (!form.vehicle) return;
+		if (vehicleOptions.some((item) => item.id === form.vehicle)) return;
+		setForm((current) => ({ ...current, vehicle: "" }));
+	}, [form.vehicle, vehicleOptions]);
 
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] outline-none transition focus:ring-2 ${
 		isDark
@@ -168,6 +186,24 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 							),
 							true,
 						)}
+						{isVehicleType
+							? field(
+									"Vehicle",
+									selectControl(
+										"vehicle",
+										!form.transporter
+											? "Select transporter first"
+											: vehiclesLoading
+												? "Loading..."
+												: vehicleOptions.length === 0
+													? "No vehicles"
+													: "Select Vehicle",
+										vehicleOptions.map((item) => ({ value: item.id, label: item.name })),
+										!form.transporter || vehiclesLoading,
+									),
+									true,
+								)
+							: null}
 						{field(
 							"Selling Price",
 							<input
@@ -221,16 +257,8 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 							false,
 							true,
 						)}
-						{field(
-							"Status",
-							selectControl("status", "Select", [
-								{ value: Status.ACTIVE, label: statusLabel(Status.ACTIVE) },
-								{ value: Status.INACTIVE, label: statusLabel(Status.INACTIVE) },
-							]),
-							true,
-						)}
 
-						<label className="block min-w-0 sm:col-span-2">
+						<label className="block min-w-0 sm:col-span-2 xl:col-span-4">
 							<span className={labelClass}>
 								Remark <span className="font-normal text-slate-500">(Optional)</span>
 							</span>
@@ -242,20 +270,6 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 								className={inputClass}
 							/>
 							<span className="mt-1 block text-[11px] text-slate-500">Max 50 chars</span>
-						</label>
-
-						<label className="block min-w-0 sm:col-span-2">
-							<span className={labelClass}>
-								Reason <span className="ml-0.5 text-rose-400">*</span>
-							</span>
-							<textarea
-								required
-								value={form.reason}
-								rows={3}
-								placeholder="Reason"
-								onChange={(event) => update("reason", event.target.value)}
-								className={`${inputClass} h-auto resize-none py-2`}
-							/>
 						</label>
 					</div>
 				</div>

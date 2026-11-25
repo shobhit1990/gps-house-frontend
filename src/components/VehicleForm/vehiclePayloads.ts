@@ -232,16 +232,20 @@ export function buildVehicleLinkPayload(
 
 export function buildDevicePayload(values: FormValues): CreateDeviceRequest {
     const active = values.active == null ? true : flag(values.active);
+    const secondarySim = values.secondarySim?.trim() ?? "";
     return {
         imei: values.imei.trim(),
         simNumber: values.sim.trim(),
         simOperator: values.simOperator,
-        secondarySimNumber: values.secondarySim?.trim() ?? "",
-        secondarySimOperator: values.secondarySimOperator ?? "",
+        ...(secondarySim
+            ? {
+                    secondarySimNumber: secondarySim,
+                    secondarySimOperator: values.secondarySimOperator || undefined,
+                }
+            : {}),
         deviceType: values.deviceType,
         client: values.deviceClient,
         password: values.devicePassword ?? "",
-        active,
         status: active ? Status.ACTIVE : Status.INACTIVE,
         ...(active ? {} : { reason: text(values.reason) }),
         ignitionWireConnected: flag(values.ignitionPositive),

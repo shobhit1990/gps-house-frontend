@@ -68,7 +68,7 @@ export const deviceApi = api.injectEndpoints({
 			query: ({ externalId, status, reason }) => ({
 				url: `/device/update/${encodeURIComponent(externalId)}`,
 				method: "PUT",
-				body: statusChangeBody(status, reason, { active: status === Status.ACTIVE }),
+				body: statusChangeBody(status, reason),
 			}),
 			transformResponse: (response: ApiEnvelope<DeviceApiRecord>) =>
 				normalizeDevice(requireResponse(response, "device")),
