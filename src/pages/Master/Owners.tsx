@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddOwnerDialog } from "@/components/Owner/AddOwnerDialog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -56,9 +58,12 @@ export default function Owners() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
+	const columnVisibilityRef = useRef<HTMLDivElement>(null);
+	useCloseOnOutsideClick(columnVisibilityRef, showColumns, () => setShowColumns(false));
 	const [dialogOwner, setDialogOwner] = useState<Owner | null>(null);
 	const [showDialog, setShowDialog] = useState(false);
 	const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [reason, setReason] = useState("");
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
@@ -88,22 +93,40 @@ export default function Owners() {
 		setReason("");
 	};
 
-	const confirmAction = async () => {
-		if (!pendingAction) return;
-		const { type, owner } = pendingAction;
+	const confirmDelete = async () => {
+		if (!pendingAction || pendingAction.type !== "delete") return;
 		try {
-			if (type === "delete") {
-				await deleteOwner(owner.externalId).unwrap();
-				toast.success(`${owner.ownerName} deleted.`);
-			} else {
-				const nextStatus = owner.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
-				await updateOwnerStatus({ externalId: owner.externalId, status: nextStatus, reason }).unwrap();
-				toast.success(`${owner.ownerName} is now ${statusLabel(nextStatus).toLowerCase()}.`);
-			}
+			await deleteOwner(pendingAction.owner.externalId).unwrap();
+			toast.success(`${pendingAction.owner.ownerName} deleted.`);
 			closeConfirm();
 		} catch (error) {
-			console.error(`Failed to ${type} owner.`, error);
-			toast.error(apiErrorMessage(error, type === "delete" ? "Could not delete the owner." : "Could not update the owner status."));
+			console.error("Failed to delete owner.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the owner."));
+		}
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingAction || pendingAction.type !== "status") return;
+		const { owner } = pendingAction;
+		if (selectedStatus === owner.status) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !reason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
+		try {
+			await updateOwnerStatus({
+				externalId: owner.externalId,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? reason.trim() : "",
+			}).unwrap();
+			toast.success(`${owner.ownerName} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeConfirm();
+		} catch (error) {
+			console.error("Failed to update owner status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the owner status."));
 		}
 	};
 
@@ -142,8 +165,7 @@ export default function Owners() {
 		return `flex h-8 w-8 items-center justify-center rounded-lg border transition ${tones[tone]}`;
 	};
 
-	const nextStatusLabel = pendingAction?.owner.status === Status.ACTIVE ? "Inactive" : "Active";
-	const isConfirming = isDeleting || isUpdatingStatus;
+	const isConfirming = isDeleting;
 
 	return (
 		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -186,7 +208,7 @@ export default function Owners() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<div className="relative">
+							<div ref={columnVisibilityRef} className="relative">
 								<button type="button" onClick={() => setShowColumns((visible) => !visible)} aria-expanded={showColumns} className={toolbarButtonClass(isDark)}>
 									<Columns3 className="h-3.5 w-3.5" /> Column Visibility <ChevronDown className="h-3 w-3" />
 								</button>
@@ -244,7 +266,7 @@ export default function Owners() {
 													<button type="button" title="Edit owner" aria-label={`Edit ${owner.ownerName}`} onClick={() => openDialog(owner)} className={iconButtonClass("neutral")}>
 														<Pencil className="h-3.5 w-3.5" />
 													</button>
-													<button type="button" title="Change status" aria-label={`Change status of ${owner.ownerName}`} onClick={() => setPendingAction({ type: "status", owner })} className={iconButtonClass("violet")}>
+													<button type="button" title="Change status" aria-label={`Change status of ${owner.ownerName}`} onClick={() => { setSelectedStatus(owner.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE); setReason(""); setPendingAction({ type: "status", owner }); }} className={iconButtonClass("violet")}>
 														<Power className="h-3.5 w-3.5" />
 													</button>
 													<button type="button" title="Delete owner" aria-label={`Delete ${owner.ownerName}`} onClick={() => setPendingAction({ type: "delete", owner })} className={iconButtonClass("rose")}>
@@ -274,42 +296,40 @@ export default function Owners() {
 				<AddOwnerDialog isDark={isDark} owner={dialogOwner} onClose={() => setShowDialog(false)} />
 			)}
 
-			{pendingAction ? (
+			{pendingAction?.type === "delete" && (
 				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isConfirming) closeConfirm(); }}>
 					<section role="alertdialog" aria-modal="true" aria-labelledby="owner-confirm-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-						<h3 id="owner-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
-							{pendingAction.type === "delete" ? "Delete owner?" : "Change owner status?"}
-						</h3>
+						<h3 id="owner-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Delete owner?</h3>
 						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							{pendingAction.type === "delete"
-								? <>This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.owner.ownerName}</strong>.</>
-								: <>Change the status of <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.owner.ownerName}</strong> to {nextStatusLabel}?</>}
+							This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.owner.ownerName}</strong>.
 						</p>
-						{pendingAction.type === "status" && pendingAction.owner.status === Status.ACTIVE ? (
-							<label className="mt-4 block">
-								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>Reason <span className="font-normal text-slate-500">(Optional)</span></span>
-								<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} placeholder="Why is this owner being deactivated?" className={`${inputClass(isDark)} h-auto resize-none py-2`} />
-							</label>
-						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button type="button" onClick={closeConfirm} disabled={isConfirming} className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button
-								type="button"
-								onClick={confirmAction}
-								disabled={isConfirming}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									pendingAction.type === "delete"
-										? isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-										: isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50" : "border-cyan-300 bg-cyan-50 text-cyan-800"
-								}`}
-							>
+							<button type="button" onClick={() => void confirmDelete()} disabled={isConfirming} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}>
 								{isConfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								{pendingAction.type === "delete" ? "Delete" : "Confirm"}
+								Delete
 							</button>
 						</div>
 					</section>
 				</div>
-			) : null}
+			)}
+
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={pendingAction?.type === "status"}
+				title="Change owner status"
+				entityName={pendingAction?.owner.ownerName || "this owner"}
+				entityNoun="owner"
+				currentStatus={pendingAction?.owner.status ?? Status.ACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={reason}
+				onReasonChange={setReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeConfirm}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="owner-status-title"
+			/>
 		</div>
 	);
 }

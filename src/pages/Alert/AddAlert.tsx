@@ -24,6 +24,7 @@ import {
 } from "@/components/Alert/alertTheme";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { addAlertTypeOptions } from "@/enums/AddAlertType";
 import { Status } from "@/enums/Status";
 import type { Alert, AlertAssignee } from "@/interfaces/Alert";
 import type { MasterOption } from "@/interfaces/EntityMaster";
@@ -535,8 +536,8 @@ export default function AddAlert() {
           <label className={labelClass(isDark)} htmlFor="alert-type">Alert Type {required}</label>
           <select id="alert-type" className={inputClass(isDark)} value={alertType} onChange={(event) => setAlertType(event.target.value)}>
             <option value="">Select Type</option>
-            {alertTypes.map((type) => (
-              <option key={type.id} value={type.id}>{type.name}</option>
+            {addAlertTypeOptions.map((type) => (
+              <option key={type.value} value={type.value}>{type.label}</option>
             ))}
           </select>
           <label className={`mt-5 ${checkboxLabelClass(isDark)}`}>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import {useEffect, useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
@@ -101,6 +102,8 @@ export default function SpeedVsDistance() {
 	const initialRange = todayRange();
 
 	const [rows, setRows] = useState<SpeedRow[]>([]);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -431,7 +434,7 @@ export default function SpeedVsDistance() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary
 									className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}
 								>

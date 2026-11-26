@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +20,7 @@ import {
 	useGetExpensesQuery,
 	useLazyGetExpenseByIdQuery,
 	useUpdateExpenseMutation,
+	type ExpenseListParams,
 } from "@/store/services/api/ExpenseReport";
 import type { CreateExpenseRequest, Expense } from "@/interfaces/Expense";
 import type { MasterOption } from "@/interfaces/EntityMaster";
@@ -57,13 +59,6 @@ type ColumnKey =
 	| "documents";
 
 type MenuKind = "client" | "vehicle";
-
-type AppliedFilters = {
-	clients: string[];
-	vehicles: string[];
-	from: string;
-	to: string;
-};
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -104,8 +99,11 @@ const formatDateTime = (value: string) => {
 
 const textValue = (value: string) => (value.trim() ? value : "—");
 
-const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
-	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
+const optionLabel = (id: string, options: { id: string; name: string }[], fallback: string) => {
+	const match = options.find((option) => option.id === id)?.name;
+	if (typeof match === "string" && match.trim()) return match;
+	return typeof fallback === "string" ? fallback : typeof id === "string" ? id : "";
+};
 
 const valueAsString = (value: string | number | undefined) => (value === undefined ? "" : String(value));
 
@@ -155,7 +153,15 @@ export default function ExpenseReport() {
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
-	const { data: expenseData = [], isFetching, refetch } = useGetExpensesQuery();
+	const [listParams, setListParams] = useState<ExpenseListParams | void>(undefined);
+	const {
+		data: expenseData = [],
+		isFetching,
+		isLoading,
+		isError,
+		error,
+		refetch,
+	} = useGetExpensesQuery(listParams);
 	const [createExpense, { isLoading: isCreating }] = useCreateExpenseMutation();
 	const [updateExpense, { isLoading: isUpdating }] = useUpdateExpenseMutation();
 	const [deleteExpense] = useDeleteExpenseMutation();
@@ -166,20 +172,26 @@ export default function ExpenseReport() {
 	const initialRange = todayRange();
 	const clientRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [search, setSearch] = useState("");
 	const [pageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClients, setSelectedClients] = useState<string[]>([]);
-	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+	const [selectedClient, setSelectedClient] = useState("");
+	const [selectedVehicle, setSelectedVehicle] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], vehicles: [], from: "", to: "" });
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [vehicleQuery, setVehicleQuery] = useState("");
 	const [showForm, setShowForm] = useState(false);
 	const [editing, setEditing] = useState<ExpenseRecord | null>(null);
+
+	useEffect(() => {
+		if (!isError) return;
+		toast.error(apiErrorMessage(error, "Could not load expenses."));
+	}, [error, isError]);
 
 	const rows = useMemo<ExpenseRecord[]>(
 		() =>
@@ -220,16 +232,11 @@ export default function ExpenseReport() {
 	);
 	const clients = clientMaster;
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
+	/** Filters (client/vehicle/from/to) are applied via `/expense/getAll` params; only text search stays client-side. */
 	const filteredRows = useMemo(() => {
-		const fromTime = applied.from ? new Date(applied.from).getTime() : Number.NEGATIVE_INFINITY;
-		const toTime = applied.to ? new Date(applied.to).getTime() : Number.POSITIVE_INFINITY;
 		const query = search.trim().toLowerCase();
+		if (!query) return rows;
 		return rows.filter((row) => {
-			if (applied.clients.length > 0 && !applied.clients.includes(row.client)) return false;
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicleNo)) return false;
-			const expenseTime = new Date(row.expenseDate).getTime();
-			if (!Number.isNaN(expenseTime) && (expenseTime < fromTime || expenseTime > toTime)) return false;
-			if (!query) return true;
 			const haystack = [
 				row.vehicleNo,
 				row.driverName,
@@ -245,7 +252,7 @@ export default function ExpenseReport() {
 				.toLowerCase();
 			return haystack.includes(query);
 		});
-	}, [applied, rows, search]);
+	}, [rows, search]);
 	const totalExpense = filteredRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
@@ -278,14 +285,23 @@ export default function ExpenseReport() {
 		};
 	}, [openMenu]);
 
-	const applyFilters = () => {
-		setApplied({ clients: selectedClients, vehicles: selectedVehicles, from, to });
-		setOpenMenu(null);
-		setPage(0);
+	const buildListParams = (): ExpenseListParams => {
+		/** Vehicle dropdown stores plate/name as id — map to master UUID when available. */
+		const vehicleId =
+			vehicleMaster.find((option) => option.id === selectedVehicle || option.name === selectedVehicle)?.id ||
+			selectedVehicle;
+		return {
+			...(selectedClient ? { client: selectedClient } : {}),
+			...(vehicleId ? { vehicle: vehicleId } : {}),
+			...(from ? { from: toIsoExpenseDate(from) } : {}),
+			...(to ? { to: toIsoExpenseDate(to) } : {}),
+		};
 	};
 
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+	const applyFilters = () => {
+		setListParams(buildListParams());
+		setOpenMenu(null);
+		setPage(0);
 	};
 
 	const saveExpense = async (values: ExpenseFormValues) => {
@@ -347,19 +363,19 @@ export default function ExpenseReport() {
 
 	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[220px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
 
-	const multiSelect = (
+	const singleSelect = (
 		kind: MenuKind,
 		ref: RefObject<HTMLDivElement | null>,
 		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
+		selected: string,
+		setSelected: (next: string) => void,
 		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[220px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={`flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
+				<span className={`truncate ${selected ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{selected ? optionLabel(selected, options, selected) : emptyLabel}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -367,23 +383,35 @@ export default function ExpenseReport() {
 					<div className="p-2">
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((option) => (
-							<li key={option.id}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{option.name}
-								</label>
-							</li>
-						))}
+					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
+						{options.map((option) => {
+							const isSelected = selected === option.id;
+							return (
+								<li key={option.id}>
+									<button
+										type="button"
+										role="option"
+										aria-selected={isSelected}
+										onClick={() => {
+											setSelected(option.id);
+											setOpenMenu(null);
+											setQuery("");
+										}}
+										className={`w-full rounded-md px-2.5 py-2 text-left text-xs ${
+											isSelected
+												? isDark
+													? "bg-cyan-300/[0.16] text-cyan-50"
+													: "bg-cyan-50 text-cyan-800"
+												: isDark
+													? "text-slate-300 hover:bg-white/[0.04]"
+													: "text-slate-700 hover:bg-slate-100"
+										}`}
+									>
+										{typeof option.name === "string" ? option.name : String(option.name ?? "")}
+									</button>
+								</li>
+							);
+						})}
 						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
 					</ul>
 				</div>
@@ -434,15 +462,34 @@ export default function ExpenseReport() {
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Expense Report</h1>
 						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} expenses</p>
 					</div>
-					<button type="button" onClick={() => { const range = todayRange(); setSearch(""); setSelectedClients([]); setSelectedVehicles([]); setFrom(range.from); setTo(range.to); setApplied({ clients: [], vehicles: [], from: "", to: "" }); setClientQuery(""); setVehicleQuery(""); setOpenMenu(null); setPage(0); void refetch(); }} aria-label="Refresh expenses" title="Refresh expenses" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
+					<button
+						type="button"
+						onClick={() => {
+							const range = todayRange();
+							setSearch("");
+							setSelectedClient("");
+							setSelectedVehicle("");
+							setFrom(range.from);
+							setTo(range.to);
+							setListParams(undefined);
+							setClientQuery("");
+							setVehicleQuery("");
+							setOpenMenu(null);
+							setPage(0);
+							void refetch();
+						}}
+						aria-label="Refresh expenses"
+						title="Refresh expenses"
+						className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}
+					>
 						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{multiSelect("client", clientRef, "Select Client", selectedClients, setSelectedClients, visibleClients, clientQuery, setClientQuery)}
-						{multiSelect("vehicle", vehicleRef, "Select", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", selectedClient, setSelectedClient, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicle, setSelectedVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
 						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
 							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 							<span className="text-slate-500">-</span>
@@ -466,7 +513,7 @@ export default function ExpenseReport() {
 							)}
 						</label>
 						<div className="flex flex-wrap items-center gap-2">
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility
@@ -495,16 +542,38 @@ export default function ExpenseReport() {
 								</tr>
 							</thead>
 							<tbody>
+								{(isLoading || isFetching) && pageRows.length === 0 && (
+									<tr>
+										<td colSpan={Math.max(visibleColumns.length, 1)} className="px-6 py-16 text-center text-sm text-slate-500">
+											Loading expenses…
+										</td>
+									</tr>
+								)}
+								{isError && pageRows.length === 0 && !isFetching && (
+									<tr>
+										<td colSpan={Math.max(visibleColumns.length, 1)} className="px-6 py-16 text-center">
+											<p className={`text-sm font-medium ${isDark ? "text-rose-300" : "text-rose-600"}`}>Could not load expenses.</p>
+											<button
+												type="button"
+												onClick={() => void refetch()}
+												className={`mt-3 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-white/[0.05]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+											>
+												<RefreshCw className="h-3.5 w-3.5" />
+												Retry
+											</button>
+										</td>
+									</tr>
+								)}
 								{pageRows.map((row, index) => (
 									<tr key={row.externalId || String(row.id)} className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
 										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row, safePage * pageSize + index + 1)}</td>)}
 									</tr>
 								))}
-								{pageRows.length === 0 && (
+								{!isLoading && !isFetching && !isError && pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
+										<td colSpan={Math.max(visibleColumns.length, 1)} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No expenses available</p>
-											<p className="mt-1 text-xs text-slate-500">Add an expense to see it here.</p>
+											<p className="mt-1 text-xs text-slate-500">Try Search without date filters, or add an expense.</p>
 										</td>
 									</tr>
 								)}

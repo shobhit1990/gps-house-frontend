@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
@@ -27,6 +28,7 @@ type ClientRecord = {
 	password: string;
 	suspended: boolean;
 	active: boolean;
+	reason: string;
 	address: string;
 	source: ClientEntity;
 };
@@ -46,6 +48,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "language", label: "Language" },
 	{ key: "timezone", label: "Timezone" },
 	{ key: "accountStatus", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "owner", label: "Owner" },
 	{ key: "address", label: "Address" },
 ];
@@ -71,6 +74,7 @@ const toRecord = (client: ClientEntity): ClientRecord => ({
 	password: client.password ?? "",
 	suspended: Boolean(client.suspended),
 	active: isClientActive(client),
+	reason: isClientActive(client) ? "" : client.reason?.trim() ?? "",
 	address: client.address ?? "",
 	source: client,
 });
@@ -93,6 +97,7 @@ const displayCell = (key: Exclude<ColumnKey, "accountStatus">, row: ClientRecord
 	if (key === "added" || key === "inactiveDate") return formatDate(row[key]);
 	if (key === "vehicleCount") return String(row.vehicleCount);
 	if (key === "suspended") return row.suspended ? "Suspended" : "Active";
+	if (key === "reason") return row.reason.trim() ? row.reason : "—";
 	const value = row[key];
 	return value === "" ? "—" : String(value);
 };
@@ -106,6 +111,8 @@ export default function Client() {
 	const [deleteClient, { isLoading: isDeleting }] = useDeleteClientMutation();
 	const rows = useMemo(() => clients.map(toRecord), [clients]);
 	const [status, setStatus] = useState<StatusFilter>(StatusFilter.ALL);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [month, setMonth] = useState("");
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -168,8 +175,8 @@ export default function Client() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		try {
@@ -178,7 +185,7 @@ export default function Client() {
 				body: {
 					active: selectedStatus === Status.ACTIVE,
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 					userType: UserType.USER,
 				},
 			}).unwrap();
@@ -271,7 +278,7 @@ export default function Client() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Columns
@@ -321,8 +328,8 @@ export default function Client() {
 														className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
 															!row.active
 																? isDark
-																	? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
-																	: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+																	? "bg-rose-400/15 text-rose-200 hover:bg-rose-400/25"
+																	: "bg-rose-50 text-rose-700 hover:bg-rose-100"
 																: isDark
 																	? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
 																	: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
@@ -354,15 +361,15 @@ export default function Client() {
 											</td>
 										))}
 										<td className="whitespace-nowrap px-3 py-2">
-											<div className="flex items-center justify-center gap-1.5">
+											<div className="flex items-center justify-center gap-1">
 												<button
 													type="button"
-													title="Edit client"
+													title="Edit"
 													aria-label={`Edit ${row.username}`}
 													onClick={() => openForm(row.source)}
-													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition ${isDark ? "border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-300 hover:text-cyan-700"}`}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
 												>
-													<Pencil className="h-3.5 w-3.5" /> Edit
+													<Pencil className="h-3.5 w-3.5" />
 												</button>
 												<button
 													type="button"
@@ -370,22 +377,22 @@ export default function Client() {
 													aria-label={`Change status of ${row.username}`}
 													onClick={() => openStatusChange(row)}
 													disabled={isUpdatingStatus}
-													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-50 ${
 														isDark
 															? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
 															: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
 													}`}
 												>
-													<Power className="h-3.5 w-3.5" /> Status
+													<Power className="h-3.5 w-3.5" />
 												</button>
 												<button
 													type="button"
-													title="Delete client"
+													title="Delete"
 													aria-label={`Delete ${row.username}`}
 													onClick={() => setDeleteTarget(row)}
-													className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition ${isDark ? "border-rose-300/20 bg-rose-400/[0.06] text-rose-300 hover:bg-rose-400/[0.15]" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}
+													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 												>
-													<Trash2 className="h-3.5 w-3.5" /> Delete
+													<Trash2 className="h-3.5 w-3.5" />
 												</button>
 											</div>
 										</td>
@@ -461,7 +468,7 @@ export default function Client() {
 							<strong className={isDark ? "text-white" : "text-slate-900"}>
 								{pendingStatusClient.active ? "Active" : "Inactive"}
 							</strong>
-							. Choose Active or Inactive, then enter a reason.
+							. Choose Active or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -476,18 +483,20 @@ export default function Client() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this client being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`${inputClass(isDark)} h-auto resize-none py-2`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this client being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

@@ -92,12 +92,40 @@ const normalizeExpense = (record: ExpenseApiRecord): Expense => {
   };
 };
 
+export type ExpenseListParams = {
+  client?: string;
+  vehicle?: string;
+  /** ISO datetime preferred, e.g. 2026-11-25T00:00:00.000Z */
+  from?: string;
+  to?: string;
+};
+
 export const expenseApi = api.injectEndpoints({
   endpoints: (builder) => ({
-    getExpenses: builder.query<Expense[], void>({
-      query: () => "/expense/getAll",
-      transformResponse: (response: ApiEnvelope<ExpenseApiRecord[]>) =>
-        unwrapList(response).map(normalizeExpense),
+    getExpenses: builder.query<Expense[], ExpenseListParams | void>({
+      query: (arg) => {
+        const params =
+          arg && typeof arg === "object"
+            ? {
+                ...(arg.client ? { client: arg.client } : {}),
+                ...(arg.vehicle ? { vehicle: arg.vehicle } : {}),
+                ...(arg.from ? { from: arg.from } : {}),
+                ...(arg.to ? { to: arg.to } : {}),
+              }
+            : undefined;
+        return {
+          url: "/expense/getAll",
+          params: params && Object.keys(params).length > 0 ? params : undefined,
+        };
+      },
+      transformResponse: (response: ApiEnvelope<ExpenseApiRecord[]>) => {
+        try {
+          return unwrapList(response).map((item) => normalizeExpense(item ?? {}));
+        } catch (error) {
+          console.error("Failed to normalize expense list.", error);
+          return [];
+        }
+      },
       providesTags: (result) => [
         { type: "Expenses", id: "LIST" },
         ...(result ?? []).map((item) => ({ type: "Expenses" as const, id: item.externalId })),

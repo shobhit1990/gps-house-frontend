@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import {
 	ChevronDown,
@@ -16,6 +17,7 @@ import {
 	X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import AddDeviceForm from "@/components/Devices/AddDeviceForm";
 import { useAuth } from "@/contexts/AuthContext";
@@ -40,6 +42,7 @@ type DeviceRecord = {
 	client: string;
 	password: string;
 	status: DeviceStatus;
+	reason: string;
 	ignitionWire: "C" | "P";
 	assigned: "Y" | "N";
 	addedMonth: string;
@@ -57,6 +60,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "client", label: "Client" },
 	{ key: "password", label: "Password" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "ignitionWire", label: "Ign Wire" },
 	{ key: "assigned", label: "Assigned" },
 	{ key: "added", label: "Added" },
@@ -102,6 +106,8 @@ export default function Devices() {
 	const [deleteDevice, { isLoading: isDeleting }] = useDeleteDeviceMutation();
 	const [updateDeviceStatus, { isLoading: isUpdatingStatus }] = useUpdateDeviceStatusMutation();
 	const [search, setSearch] = useState("");
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [clientFilter, setClientFilter] = useState("All clients");
 	const [statusFilter, setStatusFilter] = useState("All");
 	const [monthFilter, setMonthFilter] = useState("");
@@ -112,6 +118,7 @@ export default function Devices() {
 	const [editingDeviceId, setEditingDeviceId] = useState<string | undefined>();
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const [pendingStatusDevice, setPendingStatusDevice] = useState<DeviceRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 
 	const clientNameById = useMemo(() => {
@@ -138,6 +145,9 @@ export default function Devices() {
 			const clientId = refId(device.client);
 			const typeId = refId(device.deviceType);
 			const { added, addedMonth } = formatAdded(device.createdAt);
+			const statusRaw = String(device.status ?? "").trim().toLowerCase();
+			const inactive =
+				device.active === false || statusRaw === Status.INACTIVE || statusRaw === "inactive";
 			return {
 				externalId: device.externalId,
 				imei: device.imei || "—",
@@ -146,7 +156,8 @@ export default function Devices() {
 				type: deviceTypeNameById.get(typeId) || typeId || "—",
 				client: clientNameById.get(clientId) || clientId || "—",
 				password: device.password || "",
-				status: device.active === false ? "Inactive" : "Active",
+				status: inactive ? "Inactive" : "Active",
+				reason: String(device.reason ?? "").trim(),
 				ignitionWire: device.ignitionWireConnected ? "C" : "P",
 				assigned: "N",
 				addedMonth,
@@ -163,7 +174,7 @@ export default function Devices() {
 		return rows.filter((row) => {
 			const matchesSearch =
 				!query ||
-				[row.imei, row.sim, row.operator, row.type, row.client, row.password]
+				[row.imei, row.sim, row.operator, row.type, row.client, row.password, row.reason]
 					.join(" ")
 					.toLowerCase()
 					.includes(query);
@@ -227,18 +238,33 @@ export default function Devices() {
 		setStatusReason("");
 	};
 
+	const openStatusChange = (device: DeviceRecord) => {
+		const currentStatus = device.status === "Active" ? Status.ACTIVE : Status.INACTIVE;
+		setSelectedStatus(currentStatus === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+		setPendingStatusDevice(device);
+	};
+
 	const confirmDeviceStatusChange = async () => {
 		if (!pendingStatusDevice?.externalId) return;
-		const nextStatus =
-			pendingStatusDevice.status === "Active" ? Status.INACTIVE : Status.ACTIVE;
+		const currentStatus =
+			pendingStatusDevice.status === "Active" ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
 		try {
 			await updateDeviceStatus({
 				externalId: pendingStatusDevice.externalId,
-				status: nextStatus,
-				reason: statusReason,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 			}).unwrap();
 			toast.success(
-				`${pendingStatusDevice.imei} is now ${statusLabel(nextStatus).toLowerCase()}.`,
+				`${pendingStatusDevice.imei} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
 			);
 			closeStatusDialog();
 		} catch (error) {
@@ -246,12 +272,6 @@ export default function Devices() {
 			toast.error(apiErrorMessage(error, "Could not update the device status."));
 		}
 	};
-
-	const pendingNextStatus = pendingStatusDevice
-		? pendingStatusDevice.status === "Active"
-			? Status.INACTIVE
-			: Status.ACTIVE
-		: null;
 
 	return (
 		<div
@@ -371,7 +391,7 @@ export default function Devices() {
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
 
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} /> Columns
 									<ChevronDown className="h-3 w-3 text-slate-500" />
@@ -442,10 +462,7 @@ export default function Devices() {
 																</button>
 																<button
 																	type="button"
-																	onClick={() => {
-																		setStatusReason("");
-																		setPendingStatusDevice(device);
-																	}}
+																	onClick={() => openStatusChange(device)}
 																	disabled={isUpdatingStatus || !device.externalId}
 																	aria-label={`Change status of ${device.imei}`}
 																	title="Change status"
@@ -479,8 +496,25 @@ export default function Devices() {
 														) : column.key === "imei" || column.key === "sim" ? (
 															<span className={`font-medium ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{device[column.key] || "—"}</span>
 														) : column.key === "status" ? (
-															<span className={`rounded-md border px-2 py-1 text-[9px] font-semibold ${device.status === "Active" ? (isDark ? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700") : (isDark ? "border-slate-300/15 bg-slate-300/[0.06] text-slate-300" : "border-slate-200 bg-slate-100 text-slate-700")}`}>
+															<span
+																className={`rounded-md border px-2 py-1 text-[9px] font-semibold ${
+																	device.status === "Active"
+																		? isDark
+																			? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200"
+																			: "border-emerald-200 bg-emerald-50 text-emerald-700"
+																		: isDark
+																			? "border-rose-300/25 bg-rose-500/20 text-rose-200"
+																			: "border-rose-200 bg-rose-100 text-rose-700"
+																}`}
+															>
 																{device.status}
+															</span>
+														) : column.key === "reason" ? (
+															<span
+																className={`block max-w-[220px] truncate ${isDark ? "text-slate-400" : "text-slate-600"}`}
+																title={device.reason || undefined}
+															>
+																{device.reason || "—"}
 															</span>
 														) : column.key === "ignitionWire" || column.key === "assigned" ? (
 															<span className={`inline-flex min-w-5 justify-center rounded px-1.5 py-0.5 text-[9px] font-bold ${device[column.key] === "C" || device[column.key] === "Y" ? (isDark ? "bg-emerald-300/20 text-emerald-200" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-amber-300/20 text-amber-200" : "bg-amber-100 text-amber-700")}`}>
@@ -561,82 +595,24 @@ export default function Devices() {
 				</div>
 			)}
 
-			{pendingStatusDevice && pendingNextStatus ? (
-				<div
-					className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
-						isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
-					}`}
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isUpdatingStatus) closeStatusDialog();
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="device-status-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="device-status-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Change device status?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							Change the status of{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingStatusDevice.imei}
-							</strong>{" "}
-							to {statusLabel(pendingNextStatus)}?
-						</p>
-						{pendingNextStatus === Status.INACTIVE ? (
-							<label className="mt-4 block">
-								<span
-									className={`mb-1.5 block text-[12px] font-medium ${
-										isDark ? "text-slate-300" : "text-slate-700"
-									}`}
-								>
-									Reason <span className="font-normal text-slate-500">(Optional)</span>
-								</span>
-								<textarea
-									value={statusReason}
-									onChange={(event) => setStatusReason(event.target.value)}
-									rows={3}
-									placeholder="Why is this device being deactivated?"
-									className={`${inputClass(isDark)} h-auto resize-none py-2`}
-								/>
-							</label>
-						) : null}
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={closeStatusDialog}
-								disabled={isUpdatingStatus}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDeviceStatusChange()}
-								disabled={isUpdatingStatus}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
-										: "border-cyan-300 bg-cyan-50 text-cyan-800"
-								}`}
-							>
-								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Confirm
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatusDevice)}
+				title="Change device status"
+				entityName={pendingStatusDevice?.imei || "this device"}
+				entityNoun="device"
+				currentStatus={
+					pendingStatusDevice?.status === "Active" ? Status.ACTIVE : Status.INACTIVE
+				}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmDeviceStatusChange()}
+				titleId="device-status-title"
+			/>
 		</div>
 	);
 }

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -48,6 +49,8 @@ export default function Geofence() {
 	const [deleteGeofence, { isLoading: isDeleting }] = useDeleteGeofenceMutation();
 	const [loadGeofence, { isFetching: isLoadingGeofence }] = useLazyGetGeofenceByIdQuery();
 	const [search, setSearch] = useState("");
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -157,8 +160,8 @@ export default function Geofence() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		try {
@@ -166,7 +169,7 @@ export default function Geofence() {
 				externalId: pendingStatusGeofence.externalId,
 				body: {
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 				},
 			}).unwrap();
 			toast.success(
@@ -231,8 +234,8 @@ export default function Geofence() {
 								? "bg-emerald-400/15 text-emerald-300"
 								: "bg-emerald-100 text-emerald-700"
 							: isDark
-								? "bg-slate-300/[0.08] text-slate-300"
-								: "bg-slate-100 text-slate-700"
+								? "bg-rose-400/15 text-rose-200"
+								: "bg-rose-50 text-rose-700"
 					}`}
 				>
 					{statusLabel(currentStatus(row.status))}
@@ -288,7 +291,7 @@ export default function Geofence() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Columns
@@ -402,7 +405,7 @@ export default function Geofence() {
 							Current status of{" "}
 							<span className="font-medium">{pendingStatusGeofence.name || "this geofence"}</span> is{" "}
 							<span className="font-medium">{statusLabel(currentStatus(pendingStatusGeofence.status))}</span>.
-							Choose Active or Inactive, then enter a reason.
+							Choose Active or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -421,22 +424,24 @@ export default function Geofence() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this geofence being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`h-auto w-full resize-none rounded-lg border px-3 py-2 text-[12px] outline-none ${
-									isDark
-										? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500"
-										: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
-								}`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this geofence being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`h-auto w-full resize-none rounded-lg border px-3 py-2 text-[12px] outline-none ${
+										isDark
+											? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500"
+											: "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+									}`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

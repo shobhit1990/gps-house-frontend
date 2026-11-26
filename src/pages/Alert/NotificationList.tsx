@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import {useEffect, useMemo, useState, useRef} from "react";
+import { useCloseOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { ArrowUpDown, ChevronDown, Columns3, Loader2, RefreshCw, Search } from "lucide-react";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
@@ -51,6 +52,8 @@ export default function NotificationList() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
+	const columnVisibilityRef = useRef<HTMLDivElement>(null);
+	useCloseOnOutsideClick(columnVisibilityRef, showColumns, () => setShowColumns(false));
 	const [sortKey, setSortKey] = useState<ColumnKey>("sn");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [filterError, setFilterError] = useState("");
@@ -341,7 +344,7 @@ export default function NotificationList() {
 								className={searchInputClass(isDark)}
 							/>
 						</label>
-						<div className="relative">
+						<div ref={columnVisibilityRef} className="relative">
 							<button
 								type="button"
 								onClick={() => setShowColumns((visible) => !visible)}

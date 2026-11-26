@@ -3,8 +3,9 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, Loader2, X } from "lucide-react";
 import { Status } from "@/enums/Status";
+import type { Group } from "@/interfaces/Group";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useCreateGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
+import { useCreateGroupMutation, useGetGroupsQuery, useUpdateGroupMutation } from "@/store/services/api/Group";
 import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 export type GroupFormValues = {
@@ -17,6 +18,8 @@ export type GroupFormValues = {
 type AddGroupsProps = {
 	onClose: () => void;
 	onSubmit: () => void;
+	/** When set, dialog opens in edit mode and saves via PUT `/addGroup/update/:externalId`. */
+	group?: Group | null;
 };
 
 export const groupAssignedToOptions = [
@@ -26,16 +29,31 @@ export const groupAssignedToOptions = [
 
 const emptyValues = (): GroupFormValues => ({ name: "", assignedTo: "", vehicle: "", transporter: "" });
 
-export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
+const valuesFromGroup = (group: Group): GroupFormValues => ({
+	name: group.groupName ?? "",
+	assignedTo: group.assignedTo ?? "",
+	vehicle: group.vehicle ?? group.vehicles?.[0] ?? "",
+	transporter: group.transporter ?? group.transporters?.[0] ?? "",
+});
+
+export function AddGroups({ onClose, onSubmit, group = null }: AddGroupsProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
-	const [values, setValues] = useState<GroupFormValues>(emptyValues);
+	const isEditMode = Boolean(group?.externalId);
+	const [values, setValues] = useState<GroupFormValues>(() => (group ? valuesFromGroup(group) : emptyValues()));
 	const [formError, setFormError] = useState("");
 	const { data: groups = [] } = useGetGroupsQuery();
 	const { data: vehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
 	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
-	const [createGroup, { isLoading: isSaving }] = useCreateGroupMutation();
+	const [createGroup, { isLoading: isCreating }] = useCreateGroupMutation();
+	const [updateGroup, { isLoading: isUpdating }] = useUpdateGroupMutation();
+	const isSaving = isCreating || isUpdating;
+
+	useEffect(() => {
+		setValues(group ? valuesFromGroup(group) : emptyValues());
+		setFormError("");
+	}, [group]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -82,24 +100,39 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 			setFormError("Please select a transporter.");
 			return;
 		}
-		if (groups.some((group) => group.groupName?.toLowerCase() === name.toLowerCase())) {
+		const duplicate = groups.some(
+			(item) =>
+				item.groupName?.toLowerCase() === name.toLowerCase() &&
+				(!isEditMode || item.externalId !== group?.externalId),
+		);
+		if (duplicate) {
 			setFormError("A group with this name already exists.");
 			return;
 		}
+
+		const body = {
+			groupName: name,
+			assignedTo: values.assignedTo,
+			...(values.assignedTo === "vehicle" ? { vehicle: values.vehicle } : {}),
+			...(values.assignedTo === "transporter" ? { transporter: values.transporter } : {}),
+			status: isEditMode ? (group?.status ?? Status.ACTIVE) : Status.ACTIVE,
+			reason: isEditMode ? group?.reason?.trim() || "Group updated" : "Group created",
+		};
+
 		try {
-			await createGroup({
-				groupName: name,
-				assignedTo: values.assignedTo,
-				...(values.assignedTo === "vehicle" ? { vehicle: values.vehicle } : {}),
-				...(values.assignedTo === "transporter" ? { transporter: values.transporter } : {}),
-				status: Status.ACTIVE,
-				reason: "Group created",
-			}).unwrap();
-			toast.success(`${name} saved.`);
+			if (isEditMode && group?.externalId) {
+				await updateGroup({ externalId: group.externalId, body }).unwrap();
+				toast.success(`${name} updated.`);
+			} else {
+				await createGroup(body).unwrap();
+				toast.success(`${name} saved.`);
+			}
 			onSubmit();
 		} catch (error) {
-			console.error("Failed to create group.", error);
-			setFormError(apiErrorMessage(error, "Could not save the group. Please try again."));
+			console.error(`Failed to ${isEditMode ? "update" : "create"} group.`, error);
+			setFormError(
+				apiErrorMessage(error, `Could not ${isEditMode ? "update" : "save"} the group. Please try again.`),
+			);
 		}
 	};
 
@@ -116,7 +149,7 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 				<header className={`flex h-[52px] shrink-0 items-center justify-between border-b px-5 ${isDark ? "border-white/[0.08] bg-[#08142e] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
 					<div>
 						<p className={`mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>Fleet operations</p>
-						<h2 id={titleId} className="text-[15px] font-semibold">Add Group</h2>
+						<h2 id={titleId} className="text-[15px] font-semibold">{isEditMode ? "Edit Group" : "Add Group"}</h2>
 					</div>
 					<button type="button" onClick={onClose} aria-label="Close" className={`rounded-lg p-1.5 transition ${isDark ? "text-slate-400 hover:bg-white/[0.06] hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>
 						<X className="h-5 w-5 stroke-[3]" />
@@ -181,12 +214,12 @@ export function AddGroups({ onClose, onSubmit }: AddGroupsProps) {
 					<button type="button" onClick={onClose} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-white/[0.08] bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}>
 						Skip
 					</button>
-					<button type="button" onClick={() => { setValues(emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
+					<button type="button" onClick={() => { setValues(group ? valuesFromGroup(group) : emptyValues()); setFormError(""); }} className={`h-9 rounded-lg border px-4 text-[12px] font-medium transition ${isDark ? "border-violet-300/20 bg-violet-300/[0.10] text-violet-100 hover:bg-violet-300/[0.16]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
 						Reset
 					</button>
 					<button type="submit" disabled={isSaving} className={`flex h-9 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 						{isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-						Save
+						{isEditMode ? "Update" : "Save"}
 					</button>
 				</footer>
 			</form>

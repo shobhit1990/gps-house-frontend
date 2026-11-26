@@ -23,12 +23,12 @@ export interface TravelSummaryApiRecord {
   vehicle?: NestedVehicle;
   vehicleNo?: string | null;
   vehicleName?: string | null;
-  startAddress?: string | null;
-  startLoc?: string | null;
-  startLocation?: string | null;
-  endAddress?: string | null;
-  endLoc?: string | null;
-  endLocation?: string | null;
+  startAddress?: string | NestedVehicle | null;
+  startLoc?: string | NestedVehicle | null;
+  startLocation?: string | NestedVehicle | null;
+  endAddress?: string | NestedVehicle | null;
+  endLoc?: string | NestedVehicle | null;
+  endLocation?: string | NestedVehicle | null;
   totalDistance?: number | string | null;
   distance?: number | string | null;
   running?: number | string | null;

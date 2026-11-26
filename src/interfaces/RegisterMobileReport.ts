@@ -1,8 +1,12 @@
+import type { MobileReportType } from "@/enums/MobileReportType";
+
 /** Query params for `GET /register-mobile-report`. */
 export type RegisterMobileReportParams = {
 	client: string;
-	/** e.g. `client`, `transporter`, `user`. */
-	type: string;
+	type: MobileReportType | `${MobileReportType}`;
+	/** Required when `type` is `user`. */
+	user?: string;
+	/** Required when `type` is `transporter`. */
 	transporter?: string;
 };
 

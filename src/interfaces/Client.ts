@@ -33,6 +33,7 @@ export interface Client extends Omit<CreateClientRequest, "password" | "confirmP
   externalId: string;
   password?: string;
   status?: Status;
+  reason?: string;
   vehicleCount?: number;
   suspended?: boolean;
   inactiveDate?: string;

@@ -187,15 +187,18 @@ export default function AnalyticsDashboard() {
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
 
-	/** Client → transporters via `/master/transporter?client=`. */
+	/** Full lists always available so dropdowns stay selectable without prior picks. */
 	const {
-		data: transportersByClient = [],
+		data: allTransporters = [],
 		isLoading: transportersLoading,
 		isError: transportersError,
 		refetch: refetchTransporters,
-	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
-	/** Full transporter list — fills gaps when API filter misses links that vehicle master still has. */
-	const { data: allTransporters = [] } = useGetTransporterMasterQuery();
+	} = useGetTransporterMasterQuery();
+	/** Optional client filter when a client is chosen. */
+	const { data: transportersByClient = [] } = useGetTransporterMasterQuery(
+		client ? { client } : undefined,
+		{ skip: !client },
+	);
 	/** Master vehicle IDs are UUIDs — required by `/analytics-dashboard`. */
 	const {
 		data: allVehicles = [],
@@ -252,24 +255,24 @@ export default function AnalyticsDashboard() {
 		[chartData],
 	);
 
-	/** Prefer API-filtered transporters; also include any linked via this client's vehicles. */
+	/** Full list by default; narrow when client is selected. */
 	const transporters = useMemo(() => {
-		if (!client) return [];
+		if (!client) return allTransporters;
 		const byId = new Map(transportersByClient.map((item) => [item.id, item]));
 		for (const item of allVehicles) {
 			if (item.clientId !== client || !item.transporterId || byId.has(item.transporterId)) continue;
 			const linked = allTransporters.find((row) => row.id === item.transporterId);
 			if (linked) byId.set(linked.id, linked);
 		}
-		return [...byId.values()];
+		return byId.size > 0 ? [...byId.values()] : allTransporters;
 	}, [allTransporters, allVehicles, client, transportersByClient]);
 
-	/** Vehicles for the selected client + transporter only. */
+	/** Full list by default; narrow when transporter (and optional client) is selected. */
 	const vehicles = useMemo(() => {
-		if (!client || !transporter) return [];
+		if (!transporter && !client) return allVehicles;
 		return allVehicles.filter((item) => {
-			const clientOk = !item.clientId || item.clientId === client;
-			const transporterOk = item.transporterId === transporter;
+			const clientOk = !client || !item.clientId || item.clientId === client;
+			const transporterOk = !transporter || item.transporterId === transporter;
 			return clientOk && transporterOk;
 		});
 	}, [allVehicles, client, transporter]);
@@ -415,6 +418,8 @@ export default function AnalyticsDashboard() {
 			: "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"
 	}`;
 
+	const fieldLabelClass = `mb-1.5 block text-[11px] font-semibold ${isDark ? "text-slate-300" : "text-slate-700"}`;
+
 	const filterSelect = (
 		kind: Exclude<FilterMenu, null>,
 		ref: RefObject<HTMLDivElement | null>,
@@ -427,8 +432,11 @@ export default function AnalyticsDashboard() {
 		setQuery: (next: string) => void,
 		onChoose: (id: string) => void,
 		disabled = false,
+		fieldLabel?: string,
 	) => (
-		<div ref={ref} className="relative z-[60] min-w-0">
+		<div className="min-w-0">
+			{fieldLabel ? <span className={fieldLabelClass}>{fieldLabel}</span> : null}
+			<div ref={ref} className="relative z-[60] min-w-0">
 			<button
 				type="button"
 				aria-expanded={openMenu === kind}
@@ -503,6 +511,7 @@ export default function AnalyticsDashboard() {
 					</ul>
 				</div>
 			)}
+			</div>
 		</div>
 	);
 
@@ -548,22 +557,18 @@ export default function AnalyticsDashboard() {
 			: clients.length === 0
 				? "No clients found"
 				: "Select client";
-	const transporterPlaceholder = !client
-		? "Select client first"
-		: transportersLoading
-			? "Loading transporters…"
-			: transportersError
-				? "Failed to load transporters"
-				: transporters.length === 0
-					? "No transporters found"
-					: "Select transporter";
-	const vehiclePlaceholder = !client || !transporter
-		? "Select client & transporter first"
-		: vehiclesLoading
-			? "Loading vehicles…"
-			: vehicles.length === 0
-				? "No vehicles found"
-				: "Select vehicle";
+	const transporterPlaceholder = transportersLoading
+		? "Loading transporters…"
+		: transportersError
+			? "Failed to load transporters"
+			: transporters.length === 0
+				? "No transporters found"
+				: "Select transporter";
+	const vehiclePlaceholder = vehiclesLoading
+		? "Loading vehicles…"
+		: vehicles.length === 0
+			? "No vehicles found"
+			: "Select vehicle";
 
 	return (
 		<div className={`relative min-h-screen overflow-x-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -624,6 +629,7 @@ export default function AnalyticsDashboard() {
 								setVehicleQuery("");
 							},
 							clientsLoading,
+							"Client",
 						)}
 						{filterSelect(
 							"transporter",
@@ -640,7 +646,8 @@ export default function AnalyticsDashboard() {
 								setVehicle("");
 								setVehicleQuery("");
 							},
-							!client || transportersLoading,
+							transportersLoading,
+							"Transporter",
 						)}
 						{filterSelect(
 							"vehicle",
@@ -653,36 +660,52 @@ export default function AnalyticsDashboard() {
 							vehicleQuery,
 							setVehicleQuery,
 							(id) => setVehicle(id),
-							!client || !transporter || vehiclesLoading,
+							vehiclesLoading,
+							"Vehicle",
 						)}
-						<div className={`flex h-11 min-w-0 items-center gap-2 overflow-hidden rounded-xl border px-2.5 ${isDark ? "border-white/[0.09] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
-							<input
-								aria-label="From date"
-								type="date"
-								value={dates.from}
-								onChange={(event) => setDates((current) => ({ ...current, from: event.target.value }))}
-								className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
-							/>
-							<span className="shrink-0 text-[10px] text-slate-500">to</span>
-							<input
-								aria-label="To date"
-								type="date"
-								value={dates.to}
-								onChange={(event) => setDates((current) => ({ ...current, to: event.target.value }))}
-								className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
-							/>
+						<div className="min-w-0">
+							<span className={`${fieldLabelClass} invisible select-none`} aria-hidden>
+								Date
+							</span>
+							<div className={`flex h-11 min-w-0 items-center gap-2 overflow-hidden rounded-xl border px-2.5 ${isDark ? "border-white/[0.09] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
+								<input
+									aria-label="From date"
+									type="date"
+									value={dates.from}
+									onChange={(event) => setDates((current) => ({ ...current, from: event.target.value }))}
+									className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
+								/>
+								<span className="shrink-0 text-[10px] text-slate-500">to</span>
+								<input
+									aria-label="To date"
+									type="date"
+									value={dates.to}
+									onChange={(event) => setDates((current) => ({ ...current, to: event.target.value }))}
+									className={`min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 [color-scheme:light]"}`}
+								/>
+							</div>
 						</div>
-						<button
-							type="submit"
-							disabled={isFetching}
-							className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl px-5 text-xs font-semibold transition disabled:opacity-60 ${isDark ? "bg-cyan-300 text-[#061328] shadow-[0_8px_24px_rgba(34,211,238,0.16)] hover:bg-cyan-200" : "bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(14,116,144,0.18)] hover:bg-primary/90"}`}
-						>
-							{isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-							Apply
-						</button>
-						<button type="button" onClick={resetFilters} aria-label="Reset filters" title="Reset filters" className={`inline-flex h-11 items-center justify-center rounded-xl border px-3 transition ${isDark ? "border-white/[0.09] bg-white/[0.03] text-slate-400 hover:text-white" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
-							<RefreshCw className="h-4 w-4" />
-						</button>
+						<div className="min-w-0">
+							<span className={`${fieldLabelClass} invisible select-none`} aria-hidden>
+								Apply
+							</span>
+							<button
+								type="submit"
+								disabled={isFetching}
+								className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl px-5 text-xs font-semibold transition disabled:opacity-60 ${isDark ? "bg-cyan-300 text-[#061328] shadow-[0_8px_24px_rgba(34,211,238,0.16)] hover:bg-cyan-200" : "bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(14,116,144,0.18)] hover:bg-primary/90"}`}
+							>
+								{isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+								Apply
+							</button>
+						</div>
+						<div className="min-w-0">
+							<span className={`${fieldLabelClass} invisible select-none`} aria-hidden>
+								Reset
+							</span>
+							<button type="button" onClick={resetFilters} aria-label="Reset filters" title="Reset filters" className={`inline-flex h-11 w-full items-center justify-center rounded-xl border px-3 transition ${isDark ? "border-white/[0.09] bg-white/[0.03] text-slate-400 hover:text-white" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
+								<RefreshCw className="h-4 w-4" />
+							</button>
+						</div>
 					</div>
 				</form>
 

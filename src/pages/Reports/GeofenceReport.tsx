@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
 import { Duration } from "@/enums/duration";
 type GeofenceReportRecord = {
 	id: number;
@@ -27,9 +31,9 @@ type ColumnKey = "sn" | "vehicle" | "geoName" | "inTime" | "outTime" | "inLoc" |
 type MenuKind = "client" | "transporter" | "vehicle" | "duration";
 
 type AppliedFilters = {
-	clients: string[];
-	transporters: string[];
-	vehicles: string[];
+	client: string;
+	transporter: string;
+	vehicle: string;
 	duration: string;
 	from: string;
 	to: string;
@@ -49,7 +53,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "remark", label: "Remark" },
 ];
 
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
 const durations = Object.values(Duration);
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -83,13 +86,14 @@ const matchesDuration = (haltTime: string, duration: string) => {
 };
 
 const textValue = (value: string) => (value.trim() ? value : "—");
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
 
 export default function GeofenceReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
+	const clients = clientMaster.map((client) => client.name).filter(Boolean);
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const transporters = transporterMaster.map((transporter) => transporter.name).filter(Boolean);
+	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const vehicleOptions = vehicleMaster.map((vehicle) => vehicle.name).filter(Boolean);
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -98,18 +102,27 @@ export default function GeofenceReport() {
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
 	const durationRef = useRef<HTMLDivElement>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [rows] = useState<GeofenceReportRecord[]>([]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClients, setSelectedClients] = useState<string[]>([]);
-	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
-	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+	const [selectedClient, setSelectedClient] = useState("");
+	const [selectedTransporter, setSelectedTransporter] = useState("");
+	const [selectedVehicle, setSelectedVehicle] = useState("");
 	const [duration, setDuration] = useState(Duration.ALL);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({ clients: [], transporters: [], vehicles: [], duration: Duration.ALL, from: initialRange.from, to: initialRange.to });
+	const [applied, setApplied] = useState<AppliedFilters>({
+		client: "",
+		transporter: "",
+		vehicle: "",
+		duration: Duration.ALL,
+		from: initialRange.from,
+		to: initialRange.to,
+	});
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
@@ -122,9 +135,9 @@ export default function GeofenceReport() {
 		const toTime = applied.to ? new Date(applied.to).getTime() : Number.POSITIVE_INFINITY;
 		const query = search.trim().toLowerCase();
 		return rows.filter((row, index) => {
-			if (applied.clients.length > 0 && !applied.clients.includes(row.client)) return false;
-			if (applied.transporters.length > 0 && !applied.transporters.includes(row.transporter)) return false;
-			if (applied.vehicles.length > 0 && !applied.vehicles.includes(row.vehicle)) return false;
+			if (applied.client && row.client !== applied.client) return false;
+			if (applied.transporter && row.transporter !== applied.transporter) return false;
+			if (applied.vehicle && row.vehicle !== applied.vehicle) return false;
 			if (!matchesDuration(row.haltTime, applied.duration)) return false;
 			const inTime = new Date(row.inTime).getTime();
 			if (!Number.isNaN(inTime) && (inTime < fromTime || inTime > toTime)) return false;
@@ -159,31 +172,34 @@ export default function GeofenceReport() {
 	}, [openMenu]);
 
 	const applyFilters = () => {
-		setApplied({ clients: selectedClients, transporters: selectedTransporters, vehicles: selectedVehicles, duration, from, to });
+		setApplied({
+			client: selectedClient,
+			transporter: selectedTransporter,
+			vehicle: selectedVehicle,
+			duration,
+			from,
+			to,
+		});
 		setOpenMenu(null);
 		setPage(0);
-	};
-
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
 	};
 
 	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[220px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
 	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
 
-	const multiSelect = (
+	const singleSelect = (
 		kind: MenuKind,
 		ref: RefObject<HTMLDivElement | null>,
 		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
+		selected: string,
+		setSelected: (next: string) => void,
 		options: string[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[190px]">
 			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+				<span className={`truncate ${selected ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{selected || emptyLabel}</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
@@ -191,23 +207,35 @@ export default function GeofenceReport() {
 					<div className="p-2">
 						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
 					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
-								</label>
-							</li>
-						))}
+					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
+						{options.map((name) => {
+							const isSelected = selected === name;
+							return (
+								<li key={name}>
+									<button
+										type="button"
+										role="option"
+										aria-selected={isSelected}
+										onClick={() => {
+											setSelected(name);
+											setOpenMenu(null);
+											setQuery("");
+										}}
+										className={`w-full rounded-md px-2.5 py-2 text-left text-xs ${
+											isSelected
+												? isDark
+													? "bg-cyan-300/[0.16] text-cyan-50"
+													: "bg-cyan-50 text-cyan-800"
+												: isDark
+													? "text-slate-300 hover:bg-white/[0.04]"
+													: "text-slate-700 hover:bg-slate-100"
+										}`}
+									>
+										{name}
+									</button>
+								</li>
+							);
+						})}
 						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
 					</ul>
 				</div>
@@ -224,13 +252,20 @@ export default function GeofenceReport() {
 	const refresh = () => {
 		const range = todayRange();
 		setSearch("");
-		setSelectedClients([]);
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		setSelectedClient("");
+		setSelectedTransporter("");
+		setSelectedVehicle("");
 		setDuration(Duration.ALL);
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({ clients: [], transporters: [], vehicles: [], duration: Duration.ALL, from: range.from, to: range.to });
+		setApplied({
+			client: "",
+			transporter: "",
+			vehicle: "",
+			duration: Duration.ALL,
+			from: range.from,
+			to: range.to,
+		});
 		setClientQuery("");
 		setTransporterQuery("");
 		setVehicleQuery("");
@@ -264,9 +299,9 @@ export default function GeofenceReport() {
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{multiSelect("client", clientRef, "Select Client", selectedClients, setSelectedClients, visibleClients, clientQuery, setClientQuery)}
-						{multiSelect("transporter", transporterRef, "Select Transporter", selectedTransporters, setSelectedTransporters, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{multiSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", selectedClient, setSelectedClient, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect("transporter", transporterRef, "Select Transporter", selectedTransporter, setSelectedTransporter, visibleTransporters, transporterQuery, setTransporterQuery)}
+						{singleSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicle, setSelectedVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
 						<div ref={durationRef} className="relative min-w-0 flex-1 sm:max-w-[210px]">
 							<button type="button" aria-expanded={openMenu === "duration"} aria-haspopup="listbox" aria-label="Select Duration" onClick={() => setOpenMenu((current) => (current === "duration" ? null : "duration"))} className={controlClass}>
 								<span className={`truncate ${duration === Duration.ALL ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{duration === Duration.ALL ? "Select Duration" : duration}</span>
@@ -319,7 +354,7 @@ export default function GeofenceReport() {
 							)}
 						</label>
 						<div className="flex flex-wrap items-center gap-2">
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility

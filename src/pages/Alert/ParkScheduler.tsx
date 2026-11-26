@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ArrowUpDown, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
@@ -42,6 +43,7 @@ type ParkedRow = {
 	startTime: string;
 	endTime: string;
 	status: Status;
+	reason: string;
 };
 
 type ColumnKey = keyof Omit<ParkedRow, "id">;
@@ -55,6 +57,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "startTime", label: "Start Time" },
 	{ key: "endTime", label: "End Time" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 const schedules: ParkedScheduleFrequency[] = ["Daily", "Weekly", "Monthly"];
@@ -151,6 +154,10 @@ export default function ParkScheduler() {
 				startTime: schedule.scheduledFrom ?? "",
 				endTime: schedule.scheduledTill ?? "",
 				status: currentStatus(schedule.status),
+				reason:
+					currentStatus(schedule.status) === Status.INACTIVE
+						? (schedule.reason?.trim() ?? "")
+						: "",
 			};
 		});
 	}, [schedulesData, transporters, vehicles]);
@@ -163,6 +170,7 @@ export default function ParkScheduler() {
 	const [form, setForm] = useState(emptyForm);
 	const [pendingStatus, setPendingStatus] = useState<ParkedRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<ParkedRow | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 
 	const pageSize = 10;
@@ -265,20 +273,31 @@ export default function ParkScheduler() {
 		}
 	};
 
+	const closeStatusDialog = () => {
+		setPendingStatus(null);
+		setStatusReason("");
+	};
+
 	const confirmStatusChange = async () => {
 		if (!pendingStatus?.id) return;
-		const nextStatus = pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
+		if (selectedStatus === pendingStatus.status) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
 		try {
 			await updateParkedScheduleStatus({
 				externalId: pendingStatus.id,
-				status: nextStatus,
-				reason: statusReason,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 			}).unwrap();
 			toast.success(
-				`${pendingStatus.vehicles || "Schedule"} is now ${statusLabel(nextStatus).toLowerCase()}.`,
+				`${pendingStatus.vehicles || "Schedule"} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
 			);
-			setPendingStatus(null);
-			setStatusReason("");
+			closeStatusDialog();
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not update the schedule status."));
 		}
@@ -467,6 +486,7 @@ export default function ParkScheduler() {
 														title="Change status"
 														aria-label={`Change status of ${row.vehicles || row.id}`}
 														onClick={() => {
+															setSelectedStatus(row.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
 															setStatusReason("");
 															setPendingStatus(row);
 														}}
@@ -649,90 +669,23 @@ export default function ParkScheduler() {
 				</AlertModal>
 			)}
 
-			{pendingStatus ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isUpdatingStatus) {
-							setPendingStatus(null);
-							setStatusReason("");
-						}
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="park-status-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="park-status-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Change schedule status?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							Change the status of{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingStatus.vehicles || "this schedule"}
-							</strong>{" "}
-							to{" "}
-							{statusLabel(
-								pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE,
-							)}
-							?
-						</p>
-						{pendingStatus.status === Status.ACTIVE ? (
-							<label className="mt-4 block">
-								<span
-									className={`mb-1.5 block text-[12px] font-medium ${
-										isDark ? "text-slate-300" : "text-slate-700"
-									}`}
-								>
-									Reason <span className="font-normal text-slate-500">(Optional)</span>
-								</span>
-								<textarea
-									value={statusReason}
-									onChange={(event) => setStatusReason(event.target.value)}
-									rows={3}
-									placeholder="Why is this schedule being deactivated?"
-									className={`${inputClass(isDark)} h-auto resize-none py-2`}
-								/>
-							</label>
-						) : null}
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => {
-									setPendingStatus(null);
-									setStatusReason("");
-								}}
-								disabled={isUpdatingStatus}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmStatusChange()}
-								disabled={isUpdatingStatus}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
-										: "border-cyan-300 bg-cyan-50 text-cyan-800"
-								}`}
-							>
-								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Confirm
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatus)}
+				title="Change schedule status"
+				entityName={pendingStatus?.vehicles || "this schedule"}
+				entityNoun="schedule"
+				currentStatus={pendingStatus?.status ?? Status.ACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="park-status-title"
+				zIndexClassName="z-[810]"
+			/>
 
 			{pendingDelete ? (
 				<div

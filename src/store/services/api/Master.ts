@@ -202,6 +202,7 @@ export const masterApi = api.injectEndpoints({
     }),
     getVehicleMaster: builder.query<MasterOption[], void>({
       query: () => "/master/vehicle",
+      // Include inactive — QA/local often marks vehicles inactive; dropdowns still need them.
       transformResponse: (response: MasterListResponse<VehicleMaster>) =>
         toMasterOptions(
           response,
@@ -214,6 +215,7 @@ export const masterApi = api.injectEndpoints({
               ...(transporterId ? { transporterId } : {}),
             };
           },
+          { includeInactive: true },
         ),
       providesTags: [{ type: "Master", id: "VEHICLE" }, { type: "Vehicles", id: "LIST" }],
     }),

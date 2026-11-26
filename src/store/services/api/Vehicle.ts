@@ -94,10 +94,23 @@ type SubscriptionChangedApiRecord = {
   subscriptionExtendDate?: string;
 };
 
-const normalizeVehicle = (record: VehicleApiRecord): Vehicle => ({
-  ...record,
-  externalId: String(record?.externalId ?? record?.id ?? ""),
-});
+const normalizeVehicle = (record: VehicleApiRecord): Vehicle => {
+  const plate =
+    (typeof record.vehicle === "string" && record.vehicle.trim()) ||
+    record.vehicleNo?.trim() ||
+    (typeof record.vehicle === "object" && record.vehicle
+      ? record.vehicle.vehicle?.trim() ||
+        record.vehicle.vehicleNo?.trim() ||
+        record.vehicle.name?.trim()
+      : "") ||
+    "";
+
+  return {
+    ...record,
+    vehicle: plate || String(record.vehicle ?? ""),
+    externalId: String(record?.externalId ?? record?.id ?? ""),
+  };
+};
 
 const refId = (value: RefLike): string => {
   if (value == null || value === "") return "";

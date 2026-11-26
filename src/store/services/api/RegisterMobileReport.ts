@@ -63,11 +63,12 @@ const unwrapRegisterMobile = (
 export const registerMobileReportApi = api.injectEndpoints({
 	endpoints: (builder) => ({
 		getRegisterMobileReport: builder.query<RegisterMobileRow[], RegisterMobileReportParams>({
-			query: ({ client, type, transporter }) => ({
+			query: ({ client, type, user, transporter }) => ({
 				url: "/register-mobile-report",
 				params: {
 					client,
 					type,
+					...(user ? { user } : {}),
 					...(transporter ? { transporter } : {}),
 				},
 			}),

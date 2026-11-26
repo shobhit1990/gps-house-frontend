@@ -1,10 +1,15 @@
 import { api } from "../api";
 import type { CreateDeviceRequest, Device, DeviceInventoryRecord, UpdateDeviceRequest } from "@/interfaces/AddDevice";
 import { Status } from "@/enums/Status";
-import { statusChangeBody } from "@/lib/statusPayload";
+import { normalizeReason, statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-type DeviceApiRecord = Omit<Device, "externalId"> & { externalId?: string };
+type DeviceApiRecord = Omit<Device, "externalId"> & {
+	externalId?: string;
+	status?: string | null;
+	reason?: string | null;
+	active?: boolean | null;
+};
 
 function requireResponse<T>(response: ApiEnvelope<T>, resource: string): T {
 	const record = unwrapResponse(response);
@@ -12,10 +17,23 @@ function requireResponse<T>(response: ApiEnvelope<T>, resource: string): T {
 	return record;
 }
 
-const normalizeDevice = (record: DeviceApiRecord): Device => ({
-	...record,
-	externalId: String(record.externalId ?? record.id ?? ""),
-});
+const isInactive = (record: DeviceApiRecord): boolean => {
+	const status = String(record.status ?? "").trim().toLowerCase();
+	if (status === Status.INACTIVE || status === "inactive") return true;
+	if (status === Status.ACTIVE || status === "active") return false;
+	return record.active === false;
+};
+
+const normalizeDevice = (record: DeviceApiRecord): Device => {
+	const inactive = isInactive(record);
+	return {
+		...record,
+		externalId: String(record.externalId ?? record.id ?? ""),
+		active: !inactive,
+		status: inactive ? Status.INACTIVE : Status.ACTIVE,
+		reason: normalizeReason(record.reason),
+	};
+};
 
 export const deviceApi = api.injectEndpoints({
 	endpoints: (builder) => ({
@@ -68,7 +86,11 @@ export const deviceApi = api.injectEndpoints({
 			query: ({ externalId, status, reason }) => ({
 				url: `/device/update/${encodeURIComponent(externalId)}`,
 				method: "PUT",
-				body: statusChangeBody(status, reason),
+				/** Backend list/UI rely on `active` as well as `status`. */
+				body: statusChangeBody(status, reason, {
+					active: status === Status.ACTIVE,
+					...(reason?.trim() ? { reason: reason.trim() } : {}),
+				}),
 			}),
 			transformResponse: (response: ApiEnvelope<DeviceApiRecord>) =>
 				normalizeDevice(requireResponse(response, "device")),

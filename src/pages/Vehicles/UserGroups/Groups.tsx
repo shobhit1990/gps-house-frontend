@@ -1,13 +1,30 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import {
+	Activity,
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
+	Columns3,
+	Loader2,
+	Pencil,
+	Plus,
+	Power,
+	RefreshCw,
+	Search,
+	Trash2,
+	X,
+} from "lucide-react";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddGroups, groupAssignedToOptions } from "@/components/UserGroups/AddGroups";
 import { useAuth } from "@/contexts/AuthContext";
+import { Status, statusLabel } from "@/enums/Status";
 import type { Group } from "@/interfaces/Group";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useDeleteGroupMutation, useGetGroupsQuery } from "@/store/services/api/Group";
+import { useDeleteGroupMutation, useGetGroupsQuery, useUpdateGroupMutation } from "@/store/services/api/Group";
 import { useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 
 type GroupRecord = {
@@ -16,19 +33,23 @@ type GroupRecord = {
 	assignedTo: string;
 	vehicles: string;
 	transporters: string;
+	active: boolean;
+	reason: string;
 };
 
 const joinNames = (ids: string[] | undefined, names: Map<string, string>) =>
 	(ids ?? []).map((id) => names.get(id) ?? id).filter(Boolean).join(", ");
 
-type ColumnKey = "name" | "assignedTo" | "vehicles" | "transporters" | "delete";
+type ColumnKey = "name" | "assignedTo" | "vehicles" | "transporters" | "action" | "status" | "reason";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "name", label: "Name" },
 	{ key: "assignedTo", label: "Assigned To" },
 	{ key: "vehicles", label: "Vehicle(s)" },
 	{ key: "transporters", label: "Transporter(s)" },
-	{ key: "delete", label: "Delete" },
+	{ key: "action", label: "Action" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 const textValue = (value: string) => (value.trim() ? value : "—");
@@ -41,6 +62,14 @@ export default function Groups() {
 	const { data: vehicles = [] } = useGetVehicleMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const [deleteGroup, { isLoading: isDeleting }] = useDeleteGroupMutation();
+	const [updateGroup, { isLoading: isUpdatingStatus }] = useUpdateGroupMutation();
+	const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
+	const [pendingDelete, setPendingDelete] = useState<GroupRecord | null>(null);
+	const [pendingStatusGroup, setPendingStatusGroup] = useState<GroupRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 	const rows = useMemo(() => {
 		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
 		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
@@ -50,6 +79,8 @@ export default function Groups() {
 			assignedTo: groupAssignedToOptions.find((option) => option.value === group.assignedTo)?.label ?? group.assignedTo ?? "",
 			vehicles: joinNames(group.vehicles, vehicleNames),
 			transporters: joinNames(group.transporters, transporterNames),
+			active: group.status !== Status.INACTIVE,
+			reason: group.reason?.trim() ?? "",
 		}));
 	}, [groups, vehicles, transporters]);
 	const [search, setSearch] = useState("");
@@ -62,35 +93,161 @@ export default function Groups() {
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
-		return rows.filter((row) => [row.name, row.assignedTo, row.vehicles, row.transporters].join(" ").toLowerCase().includes(query));
+		return rows.filter((row) =>
+			[row.name, row.assignedTo, row.vehicles, row.transporters, row.reason].join(" ").toLowerCase().includes(query),
+		);
 	}, [rows, search]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const removeGroup = async (row: GroupRecord) => {
+	const saveGroup = () => {
+		setSearch("");
+		setPage(0);
+		setShowAddDialog(false);
+		setEditingGroup(null);
+		void refetch();
+	};
+
+	const openEdit = (id: string) => {
+		const group = groups.find((item) => item.externalId === id) ?? null;
+		if (!group) {
+			toast.error("Could not find this group.");
+			return;
+		}
+		setShowAddDialog(false);
+		setEditingGroup(group);
+	};
+
+	const openStatusChange = (row: GroupRecord) => {
+		setPendingStatusGroup(row);
+		setSelectedStatus(row.active ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+	};
+
+	const closeStatusDialog = (force = false) => {
+		if (!force && isUpdatingStatus) return;
+		setPendingStatusGroup(null);
+		setStatusReason("");
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingStatusGroup) return;
+		const currentStatus = pendingStatusGroup.active ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
 		try {
-			await deleteGroup(row.id).unwrap();
-			toast.success(`${row.name} deleted.`);
+			await updateGroup({
+				externalId: pendingStatusGroup.id,
+				body: {
+					status: selectedStatus,
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
+				},
+			}).unwrap();
+			toast.success(`${pendingStatusGroup.name} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeStatusDialog(true);
+			void refetch();
+		} catch (error) {
+			console.error("Failed to update group status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the group status."));
+		}
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDelete?.id) return;
+		try {
+			await deleteGroup(pendingDelete.id).unwrap();
+			toast.success(`${pendingDelete.name} deleted.`);
+			setPendingDelete(null);
+			void refetch();
 		} catch (error) {
 			console.error("Failed to delete group.", error);
 			toast.error(apiErrorMessage(error, "Could not delete the group."));
 		}
 	};
 
-	const saveGroup = () => {
-		setSearch("");
-		setPage(0);
-		setShowAddDialog(false);
-	};
-
 	const cell = (key: ColumnKey, row: GroupRecord) => {
-		if (key === "name") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.name}</span>;
-		if (key === "delete") {
+		if (key === "name") {
+			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.name}</span>;
+		}
+		if (key === "status") {
 			return (
-				<button type="button" aria-label={`Delete ${row.name}`} onClick={() => removeGroup(row)} disabled={isDeleting} className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}>
-					<Trash2 className="h-3.5 w-3.5" />
-				</button>
+				<span
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
+						row.active
+							? isDark
+								? "bg-emerald-400/15 text-emerald-300"
+								: "bg-emerald-100 text-emerald-700"
+							: isDark
+								? "bg-rose-400/15 text-rose-200"
+								: "bg-rose-50 text-rose-700"
+					}`}
+				>
+					{row.active ? "Active" : "Inactive"}
+				</span>
+			);
+		}
+		if (key === "reason") {
+			return (
+				<span
+					className={`block max-w-[220px] truncate ${isDark ? "text-slate-400" : "text-slate-600"}`}
+					title={row.reason || undefined}
+				>
+					{row.reason || "—"}
+				</span>
+			);
+		}
+		if (key === "action") {
+			return (
+				<div className="flex items-center gap-1.5">
+					<button
+						type="button"
+						onClick={() => openEdit(row.id)}
+						aria-label={`Edit ${row.name}`}
+						title="Edit"
+						className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition ${
+							isDark
+								? "border-white/[0.10] text-slate-300 hover:border-cyan-300/30 hover:bg-cyan-300/[0.10] hover:text-cyan-100"
+								: "border-slate-200 text-slate-600 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
+						}`}
+					>
+						<Pencil className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
+						onClick={() => openStatusChange(row)}
+						disabled={isUpdatingStatus}
+						aria-label={`Change status of ${row.name}`}
+						title="Change status"
+						className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition disabled:opacity-50 ${
+							isDark
+								? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+								: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+						}`}
+					>
+						<Power className="h-3.5 w-3.5" />
+					</button>
+					<button
+						type="button"
+						onClick={() => setPendingDelete(row)}
+						disabled={isDeleting}
+						aria-label={`Delete ${row.name}`}
+						title="Delete"
+						className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition disabled:opacity-50 ${
+							isDark
+								? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+								: "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+						}`}
+					>
+						<Trash2 className="h-3.5 w-3.5" />
+					</button>
+				</div>
 			);
 		}
 		return textValue(row[key]);
@@ -136,7 +293,7 @@ export default function Groups() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility
@@ -151,14 +308,14 @@ export default function Groups() {
 									))}
 								</div>
 							</details>
-							<button type="button" onClick={() => setShowAddDialog(true)} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
+							<button type="button" onClick={() => { setEditingGroup(null); setShowAddDialog(true); }} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 								<Plus className="h-3.5 w-3.5" /> Add
 							</button>
 						</div>
 					</div>
 
 					<div className="overflow-x-auto">
-						<table className="w-full min-w-[760px] border-collapse text-left">
+						<table className="w-full min-w-[980px] border-collapse text-left">
 							<thead>
 								<tr className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
 									{visibleColumns.map((column) => <th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>)}
@@ -199,7 +356,86 @@ export default function Groups() {
 				</section>
 			</main>
 
-			{showAddDialog && <AddGroups onClose={() => setShowAddDialog(false)} onSubmit={saveGroup} />}
+			{(showAddDialog || editingGroup) && (
+				<AddGroups
+					group={editingGroup}
+					onClose={() => {
+						setShowAddDialog(false);
+						setEditingGroup(null);
+					}}
+					onSubmit={saveGroup}
+				/>
+			)}
+
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatusGroup)}
+				title="Change group status"
+				entityName={pendingStatusGroup?.name ?? ""}
+				entityNoun="group"
+				currentStatus={pendingStatusGroup?.active ? Status.ACTIVE : Status.INACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="group-status-title"
+			/>
+
+			{pendingDelete ? (
+				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
+					<button
+						type="button"
+						aria-label="Close delete dialog"
+						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
+						onClick={() => {
+							if (!isDeleting) setPendingDelete(null);
+						}}
+					/>
+					<section
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="group-delete-title"
+						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
+							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
+						}`}
+					>
+						<h2 id="group-delete-title" className="text-[15px] font-semibold">
+							Delete group
+						</h2>
+						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							Delete <span className="font-medium">{pendingDelete.name}</span>? This cannot be undone.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(null)}
+								disabled={isDeleting}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmDelete()}
+								disabled={isDeleting}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-rose-300/30 bg-rose-300/[0.14] text-rose-50"
+										: "border-rose-300 bg-rose-50 text-rose-700"
+								}`}
+							>
+								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }
