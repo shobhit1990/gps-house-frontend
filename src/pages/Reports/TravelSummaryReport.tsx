@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
@@ -49,8 +50,25 @@ const toApiDateTime = (value: string) => {
 	return `${day}/${month}/${year} ${timePart}`;
 };
 
-const selectionLabel = (selected: string[], options: { id: string; name: string }[]) =>
-	selected.length === 1 ? options.find((option) => option.id === selected[0])?.name ?? selected[0] : `${selected.length} selected`;
+const optionLabel = (id: string, options: { id: string; name: string }[]) => {
+	const match = options.find((option) => option.id === id)?.name;
+	return typeof match === "string" && match.trim() ? match : typeof id === "string" ? id : "";
+};
+
+const displayText = (value: unknown) => {
+	if (value == null) return "—";
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+		const text = String(value).trim();
+		return text || "—";
+	}
+	if (typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return displayText(
+			record.name ?? record.vehicleNo ?? record.vehicle ?? record.address ?? record.location ?? record.id,
+		);
+	}
+	return "—";
+};
 
 const formatMinutes = (minutes: number) => {
 	const hours = Math.floor(minutes / 60);
@@ -74,15 +92,17 @@ export default function TravelSummaryReport() {
 	const clientRef = useRef<HTMLDivElement>(null);
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [rows, setRows] = useState<TravelSummary[]>([]);
 	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClients, setSelectedClients] = useState<string[]>([]);
-	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
-	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+	const [client, setClient] = useState("");
+	const [transporter, setTransporter] = useState("");
+	const [vehicle, setVehicle] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
@@ -137,13 +157,9 @@ export default function TravelSummaryReport() {
 		};
 	}, [openMenu]);
 
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
-	};
-
 	const applyFilters = async () => {
-		if (selectedClients.length !== 1 || selectedTransporters.length !== 1 || selectedVehicles.length === 0) {
-			toast.error("Select one client, one transporter, and at least one vehicle.");
+		if (!client || !transporter || !vehicle) {
+			toast.error("Select client, transporter, and vehicle.");
 			return;
 		}
 		if (!from || !to) {
@@ -151,25 +167,31 @@ export default function TravelSummaryReport() {
 			return;
 		}
 
-		const client = selectedClients[0];
-		const transporter = selectedTransporters[0];
 		const apiFrom = toApiDateTime(from);
 		const apiTo = toApiDateTime(to);
 
 		try {
-			const vehicleNameById = new Map(vehicleMaster.map((option) => [option.id, option.name]));
-			const batches = await Promise.all(
-				selectedVehicles.map(async (vehicle) => {
-					const data = await fetchTravelSummary({ client, transporter, vehicle, from: apiFrom, to: apiTo }).unwrap();
-					const vehicleName = vehicleNameById.get(vehicle) ?? "";
-					return data.map((row, index) => ({
-						...row,
-						id: row.id || `${vehicle}-${index}`,
-						vehicle: row.vehicle || vehicleName,
-					}));
-				}),
+			const data = await fetchTravelSummary({
+				client,
+				transporter,
+				vehicle,
+				from: apiFrom,
+				to: apiTo,
+			}).unwrap();
+			const vehicleName = vehicleMaster.find((option) => option.id === vehicle)?.name ?? "";
+			const asField = (value: unknown, fallback = "") => {
+				const text = displayText(value);
+				return text === "—" ? fallback : text;
+			};
+			setRows(
+				data.map((row, index) => ({
+					...row,
+					id: row.id || `${vehicle}-${index}`,
+					vehicle: asField(row.vehicle, vehicleName),
+					startAddress: asField(row.startAddress),
+					endAddress: asField(row.endAddress),
+				})),
 			);
-			setRows(batches.flat());
 			setSearched(true);
 			setOpenMenu(null);
 			setPage(0);
@@ -183,9 +205,9 @@ export default function TravelSummaryReport() {
 		setRows([]);
 		setSearched(false);
 		setSearch("");
-		setSelectedClients([]);
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		setClient("");
+		setTransporter("");
+		setVehicle("");
 		setFrom(range.from);
 		setTo(range.to);
 		setClientQuery("");
@@ -199,45 +221,64 @@ export default function TravelSummaryReport() {
 
 	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[200px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
 	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
+	const optionClass = (selected: boolean) =>
+		`w-full rounded-md px-2.5 py-2 text-left text-xs leading-5 transition ${selected ? (isDark ? "bg-cyan-300/[0.16] text-cyan-50" : "bg-cyan-50 text-cyan-800") : isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`;
 
-	const multiSelect = (
+	const singleSelect = (
 		kind: MenuKind,
 		ref: RefObject<HTMLDivElement | null>,
 		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
+		value: string,
+		setValue: (next: string) => void,
 		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected, options)}</span>
+			<button
+				type="button"
+				aria-expanded={openMenu === kind}
+				aria-haspopup="listbox"
+				aria-label={emptyLabel}
+				onClick={() => setOpenMenu((current) => (current === kind ? null : kind))}
+				className={controlClass}
+			>
+				<span className={`truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
+					{value ? optionLabel(value, options) : emptyLabel}
+				</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
 				<div className={menuClass}>
 					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							aria-label={`Search ${emptyLabel}`}
+							className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`}
+						/>
 					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options.map((option) => option.id)])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
+					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
 						{options.map((option) => (
 							<li key={option.id}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(option.id)} onChange={() => toggleValue(option.id, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{option.name}
-								</label>
+								<button
+									type="button"
+									role="option"
+									aria-selected={value === option.id}
+									onClick={() => {
+										setValue(option.id);
+										setOpenMenu(null);
+										setQuery("");
+									}}
+									className={optionClass(value === option.id)}
+								>
+									{typeof option.name === "string" ? option.name : displayText(option.name)}
+								</button>
 							</li>
 						))}
-						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
+						{options.length === 0 && (
+							<li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>
+						)}
 					</ul>
 				</div>
 			)}
@@ -246,14 +287,26 @@ export default function TravelSummaryReport() {
 
 	const cell = (key: ColumnKey, row: TravelSummary, serial: number) => {
 		if (key === "sn") return String(serial);
-		if (key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicle || "—"}</span>;
-		if (key === "startAddress" || key === "endAddress") return <span className="block max-w-[280px] whitespace-normal leading-5">{row[key] || "—"}</span>;
-		if (key === "totalDistance") return formatDistance(row.totalDistance);
-		if (key === "running") return formatMinutes(row.runningMinutes);
-		if (key === "idle") return formatMinutes(row.idleMinutes);
-		if (key === "stop") return formatMinutes(row.stopMinutes);
-		if (key === "overSpeed") return formatMinutes(row.overSpeedMinutes);
-		return String(row.overSpeedCount);
+		if (key === "vehicle") {
+			return (
+				<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>
+					{displayText(row.vehicle)}
+				</span>
+			);
+		}
+		if (key === "startAddress" || key === "endAddress") {
+			return (
+				<span className="block max-w-[280px] whitespace-normal leading-5">
+					{displayText(row[key])}
+				</span>
+			);
+		}
+		if (key === "totalDistance") return formatDistance(Number(row.totalDistance) || 0);
+		if (key === "running") return formatMinutes(Number(row.runningMinutes) || 0);
+		if (key === "idle") return formatMinutes(Number(row.idleMinutes) || 0);
+		if (key === "stop") return formatMinutes(Number(row.stopMinutes) || 0);
+		if (key === "overSpeed") return formatMinutes(Number(row.overSpeedMinutes) || 0);
+		return String(Number(row.overSpeedCount) || 0);
 	};
 
 	return (
@@ -280,9 +333,9 @@ export default function TravelSummaryReport() {
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{multiSelect("client", clientRef, "Select Client", selectedClients, setSelectedClients, visibleClients, clientQuery, setClientQuery)}
-						{multiSelect("transporter", transporterRef, "Select Transporter", selectedTransporters, setSelectedTransporters, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{multiSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", client, setClient, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect("transporter", transporterRef, "Select Transporter", transporter, setTransporter, visibleTransporters, transporterQuery, setTransporterQuery)}
+						{singleSelect("vehicle", vehicleRef, "Select Vehicle", vehicle, setVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
 						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
 							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 							<span className="text-slate-500">-</span>
@@ -306,7 +359,7 @@ export default function TravelSummaryReport() {
 							)}
 						</label>
 						<div className="flex flex-wrap items-center gap-2">
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility

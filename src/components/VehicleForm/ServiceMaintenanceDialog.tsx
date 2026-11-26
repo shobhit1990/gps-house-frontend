@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
-import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 
 export type ServiceRecord = {
 	id: string;
@@ -28,6 +28,7 @@ export type ServiceRecord = {
 type ServiceMaintenanceDialogProps = {
 	vehicleNo: string;
 	records: ServiceRecord[];
+	isLoading?: boolean;
 	onClose: () => void;
 };
 
@@ -64,7 +65,7 @@ const formatDate = (value: string) => {
 	return `${day}/${month}/${year}`;
 };
 
-export function ServiceMaintenanceDialog({ vehicleNo, records, onClose }: ServiceMaintenanceDialogProps) {
+export function ServiceMaintenanceDialog({ vehicleNo, records, isLoading = false, onClose }: ServiceMaintenanceDialogProps) {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -152,31 +153,44 @@ export function ServiceMaintenanceDialog({ vehicleNo, records, onClose }: Servic
 							</tr>
 						</thead>
 						<tbody>
-							{pageRows.map((row) => (
-								<tr key={row.id} className={`border-b text-[11px] last:border-0 ${isDark ? "border-white/[0.055] text-slate-300" : "border-slate-200 text-slate-700"}`}>
-									{columns.map((column) => (
-										<td key={column.key} className="whitespace-nowrap px-3 py-3">
-											{column.key === "vehicleNo" ? (
-												<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicleNo}</span>
-											) : column.key === "update" ? (
-												<button type="button" className={actionClass}>Update</button>
-											) : column.key === "upload" ? (
-												<button type="button" className={actionClass}>Upload</button>
-											) : column.key === "clone" ? (
-												<button type="button" className={actionClass}>Clone</button>
-											) : (
-												cellText(column.key, row)
-											)}
-										</td>
-									))}
-								</tr>
-							))}
-							{pageRows.length === 0 && (
+							{isLoading ? (
 								<tr>
-									<td colSpan={columns.length} className="px-6 py-10 text-center text-xs text-slate-500">
-										No data available
+									<td colSpan={columns.length} className="px-6 py-14 text-center text-xs text-slate-500">
+										<span className="inline-flex items-center gap-2">
+											<Loader2 className="h-4 w-4 animate-spin" />
+											Loading services…
+										</span>
 									</td>
 								</tr>
+							) : (
+								<>
+									{pageRows.map((row) => (
+										<tr key={row.id} className={`border-b text-[11px] last:border-0 ${isDark ? "border-white/[0.055] text-slate-300" : "border-slate-200 text-slate-700"}`}>
+											{columns.map((column) => (
+												<td key={column.key} className="whitespace-nowrap px-3 py-3">
+													{column.key === "vehicleNo" ? (
+														<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicleNo}</span>
+													) : column.key === "update" ? (
+														<button type="button" className={actionClass}>Update</button>
+													) : column.key === "upload" ? (
+														<button type="button" className={actionClass}>Upload</button>
+													) : column.key === "clone" ? (
+														<button type="button" className={actionClass}>Clone</button>
+													) : (
+														cellText(column.key, row)
+													)}
+												</td>
+											))}
+										</tr>
+									))}
+									{pageRows.length === 0 && (
+										<tr>
+											<td colSpan={columns.length} className="px-6 py-10 text-center text-xs text-slate-500">
+												No data available
+											</td>
+										</tr>
+									)}
+								</>
 							)}
 						</tbody>
 					</table>

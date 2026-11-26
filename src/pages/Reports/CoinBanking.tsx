@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
+import {useEffect, useId, useMemo, useState, type FormEvent, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, X } from "lucide-react";
 import { toast } from "sonner";
@@ -82,6 +83,8 @@ export default function CoinBanking() {
 	const isDark = theme !== "light";
 	const titleId = useId();
 	const [search, setSearch] = useState("");
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -232,7 +235,7 @@ export default function CoinBanking() {
 							<span className={`inline-flex h-9 items-center rounded-lg border px-3 text-[11px] font-medium ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
 								Remaining Coins : {houseBalance}
 							</span>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility

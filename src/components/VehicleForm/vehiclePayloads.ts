@@ -10,8 +10,14 @@ type FormValues = Record<string, string>;
 /** Trimmed text, or undefined when the field was left empty. Coerces numbers (e.g. phone). */
 const text = (value?: string | number | null) => {
     if (value == null || value === "") return undefined;
-    return String(value).trim() || undefined;
+    const trimmed = String(value).trim();
+    // Avoid sending the literal strings "null" / "undefined" to the API.
+    if (!trimmed || /^null$/i.test(trimmed) || /^undefined$/i.test(trimmed)) return undefined;
+    return trimmed;
 };
+
+/** Same as text(), but empty optional fields become JSON `null` (SQL NULL), not omitted. */
+const textOrNull = (value?: string | number | null): string | null => text(value) ?? null;
 const number = (value?: string | number | null) => {
     if (value == null || value === "") return undefined;
     const trimmed = String(value).trim();
@@ -157,10 +163,10 @@ export function buildTransporterPayload(
         timezone: values.timezone,
         inactiveTime: Number(values.inactiveTime),
         language: values.language,
-        name: text(values.name),
-        email: text(values.email),
-        phone: text(values.phone),
-        address: text(values.address),
+        name: textOrNull(values.name),
+        email: textOrNull(values.email),
+        phone: textOrNull(values.phone),
+        address: textOrNull(values.address),
         subscriptionStartDate: values.subscriptionStartDate ?? values.subscriptionStart,
         subscriptionDueDate: values.subscriptionDueDate ?? values.subscriptionDue,
         subscriptionExtendDate:

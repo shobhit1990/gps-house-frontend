@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { AddRoleDialog } from "@/components/Master/AddRoleDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
@@ -45,9 +47,12 @@ export default function Roles() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
+	const columnVisibilityRef = useRef<HTMLDivElement>(null);
+	useCloseOnOutsideClick(columnVisibilityRef, showColumns, () => setShowColumns(false));
 	const [dialogRole, setDialogRole] = useState<RoleRecord | null>(null);
 	const [showDialog, setShowDialog] = useState(false);
 	const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [reason, setReason] = useState("");
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
@@ -61,8 +66,7 @@ export default function Roles() {
 	const pageCount = Math.max(1, Math.ceil(filteredRoles.length / pageSize));
 	const currentPage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRoles.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-	const isConfirming = isUpdating || isDeleting;
-	const nextStatus = pendingAction?.role.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
+	const isConfirming = isDeleting;
 
 	const toggleColumn = (key: ColumnKey) => {
 		setHiddenColumns((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
@@ -78,24 +82,40 @@ export default function Roles() {
 		setReason("");
 	};
 
-	const confirmAction = async () => {
-		if (!pendingAction) return;
+	const confirmDelete = async () => {
+		if (!pendingAction || pendingAction.type !== "delete") return;
 		try {
-			if (pendingAction.type === "delete") {
-				await deleteRole(pendingAction.role.externalId).unwrap();
-				toast.success(`${pendingAction.role.name} deleted.`);
-			} else {
-				await updateRoleStatus({
-					externalId: pendingAction.role.externalId,
-					status: nextStatus,
-					reason,
-				}).unwrap();
-				toast.success(`${pendingAction.role.name} is now ${statusLabel(nextStatus).toLowerCase()}.`);
-			}
+			await deleteRole(pendingAction.role.externalId).unwrap();
+			toast.success(`${pendingAction.role.name} deleted.`);
 			closeConfirm();
 		} catch (error) {
-			console.error(`Failed to ${pendingAction.type} role.`, error);
-			toast.error(apiErrorMessage(error, pendingAction.type === "delete" ? "Could not delete the role." : "Could not update role status."));
+			console.error("Failed to delete role.", error);
+			toast.error(apiErrorMessage(error, "Could not delete the role."));
+		}
+	};
+
+	const confirmStatusChange = async () => {
+		if (!pendingAction || pendingAction.type !== "status") return;
+		const { role } = pendingAction;
+		if (selectedStatus === role.status) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !reason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
+		try {
+			await updateRoleStatus({
+				externalId: role.externalId,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? reason.trim() : "",
+			}).unwrap();
+			toast.success(`${role.name} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeConfirm();
+		} catch (error) {
+			console.error("Failed to update role status.", error);
+			toast.error(apiErrorMessage(error, "Could not update role status."));
 		}
 	};
 
@@ -175,7 +195,7 @@ export default function Roles() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<div className="relative">
+							<div ref={columnVisibilityRef} className="relative">
 								<button type="button" onClick={() => setShowColumns((current) => !current)} aria-expanded={showColumns} className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-medium transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/20" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-300"}`}>
 									<Columns3 className="h-3.5 w-3.5" /> Column Visibility <ChevronDown className="h-3 w-3" />
 								</button>
@@ -207,7 +227,7 @@ export default function Roles() {
 										{visibleColumns.map((column) => <td key={column.key} className="whitespace-nowrap px-4 py-3 text-xs">{cell(role, column.key, index)}</td>)}
 										<td className="px-4 py-2.5"><div className="flex items-center justify-center gap-2">
 											<button type="button" title="Edit role" aria-label={`Edit ${role.name}`} onClick={() => openDialog(role)} className={iconButtonClass("neutral")}><Pencil className="h-3.5 w-3.5" /></button>
-											<button type="button" title="Change status" aria-label={`Change status of ${role.name}`} onClick={() => { setReason(""); setPendingAction({ type: "status", role }); }} className={iconButtonClass("violet")}><Power className="h-3.5 w-3.5" /></button>
+											<button type="button" title="Change status" aria-label={`Change status of ${role.name}`} onClick={() => { setSelectedStatus(role.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE); setReason(""); setPendingAction({ type: "status", role }); }} className={iconButtonClass("violet")}><Power className="h-3.5 w-3.5" /></button>
 											<button type="button" title="Delete role" aria-label={`Delete ${role.name}`} onClick={() => { setReason(""); setPendingAction({ type: "delete", role }); }} className={iconButtonClass("rose")}><Trash2 className="h-3.5 w-3.5" /></button>
 										</div></td>
 									</tr>
@@ -228,29 +248,40 @@ export default function Roles() {
 			</main>
 
 			{showDialog && <AddRoleDialog isDark={isDark} role={dialogRole} onClose={() => setShowDialog(false)} />}
-			{pendingAction && (
+			{pendingAction?.type === "delete" && (
 				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isConfirming) closeConfirm(); }}>
 					<section role="alertdialog" aria-modal="true" aria-labelledby="role-confirm-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-						<h3 id="role-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>{pendingAction.type === "delete" ? "Delete role?" : "Change role status?"}</h3>
+						<h3 id="role-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Delete role?</h3>
 						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							{pendingAction.type === "delete" ? <>This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.role.name}</strong>.</> : <>Change the status of <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.role.name}</strong> to {statusLabel(nextStatus)}?</>}
+							This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.role.name}</strong>.
 						</p>
-						{pendingAction.type === "status" && pendingAction.role.status === Status.ACTIVE ? (
-							<label className="mt-4 block">
-								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>Reason <span className="font-normal text-slate-500">(Optional)</span></span>
-								<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} placeholder="Why is this role being deactivated?" className={`${inputClass(isDark)} h-auto resize-none py-2`} />
-							</label>
-						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button type="button" onClick={closeConfirm} disabled={isConfirming} className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button type="button" onClick={() => void confirmAction()} disabled={isConfirming} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${pendingAction.type === "delete" ? isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100" : "border-rose-300 bg-rose-50 text-rose-700" : isDark ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50" : "border-cyan-300 bg-cyan-50 text-cyan-800"}`}>
+							<button type="button" onClick={() => void confirmDelete()} disabled={isConfirming} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100" : "border-rose-300 bg-rose-50 text-rose-700"}`}>
 								{isConfirming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-								{pendingAction.type === "delete" ? "Delete" : "Confirm"}
+								Delete
 							</button>
 						</div>
 					</section>
 				</div>
 			)}
+
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={pendingAction?.type === "status"}
+				title="Change role status"
+				entityName={pendingAction?.role.name || "this role"}
+				entityNoun="role"
+				currentStatus={pendingAction?.role.status ?? Status.ACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={reason}
+				onReasonChange={setReason}
+				isSubmitting={isUpdating}
+				onCancel={closeConfirm}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="role-status-title"
+			/>
 		</div>
 	);
 }

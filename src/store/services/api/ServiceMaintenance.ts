@@ -35,6 +35,17 @@ export const serviceMaintenanceApi = api.injectEndpoints({
       providesTags: (_result, _error, externalId) => [{ type: "ServiceMaintenance", id: externalId }],
     }),
 
+    getServiceMaintenancesByVehicleId: builder.query<ServiceMaintenance[], string>({
+      query: (vehicleId) => `/serviceMaintenance/getByVehicleId/${encodeURIComponent(vehicleId)}`,
+      transformResponse: (response: ApiEnvelope<ServiceMaintenanceApiRecord[]>) =>
+        unwrapList(response).map(normalizeServiceMaintenance),
+      providesTags: (result, _error, vehicleId) => [
+        { type: "ServiceMaintenance", id: "LIST" },
+        { type: "ServiceMaintenance", id: `VEHICLE-${vehicleId}` },
+        ...(result ?? []).map((item) => ({ type: "ServiceMaintenance" as const, id: item.externalId })),
+      ],
+    }),
+
     createServiceMaintenance: builder.mutation<ServiceMaintenance, CreateServiceMaintenanceRequest>({
       query: (body) => ({
         url: "/serviceMaintenance",
@@ -92,6 +103,8 @@ export const serviceMaintenanceApi = api.injectEndpoints({
 export const {
   useGetServiceMaintenancesQuery,
   useGetServiceMaintenanceByIdQuery,
+  useGetServiceMaintenancesByVehicleIdQuery,
+  useLazyGetServiceMaintenancesByVehicleIdQuery,
   useCreateServiceMaintenanceMutation,
   useUpdateServiceMaintenanceMutation,
   useUpdateServiceMaintenanceStatusMutation,

@@ -8,17 +8,32 @@ import { unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type NestedVehicle = StoppageSummaryApiRecord["vehicle"];
 
-const asVehicleNo = (value: NestedVehicle, fallback?: string | null): string => {
-  if (fallback?.trim()) return fallback.trim();
-  if (!value) return "";
-  if (typeof value === "string") return value.trim();
-  return (
-    value.vehicle?.trim() ||
-    value.vehicleNo?.trim() ||
-    value.vehicleNickname?.trim() ||
-    value.name?.trim() ||
-    ""
-  );
+const asText = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).trim();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => asText(item)).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return asText(
+      record.vehicleNo ??
+        record.vehicle ??
+        record.vehicleNickname ??
+        record.name ??
+        record.externalId ??
+        record.id,
+    );
+  }
+  return "";
+};
+
+const asVehicleNo = (value: NestedVehicle, fallback?: unknown): string => {
+  const fromFallback = asText(fallback);
+  if (fromFallback) return fromFallback;
+  return asText(value);
 };
 
 const asNumber = (value: number | string | null | undefined): number => {
@@ -76,7 +91,7 @@ export const stoppageSummaryReportApi = api.injectEndpoints({
       ],
     }),
   }),
-  overrideExisting: false,
+  overrideExisting: true,
 });
 
 export const { useGetStoppageSummaryReportQuery, useLazyGetStoppageSummaryReportQuery } =

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
@@ -26,6 +27,7 @@ type TechnicianRecord = {
 	timezone: string;
 	password: string;
 	active: boolean;
+	reason: string;
 };
 
 type ColumnKey =
@@ -37,6 +39,7 @@ type ColumnKey =
 	| "company"
 	| "timezone"
 	| "status"
+	| "reason"
 	| "action";
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -48,6 +51,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "company", label: "Company" },
 	{ key: "timezone", label: "Timezone" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "action", label: "Action" },
 ];
 
@@ -95,6 +99,8 @@ export default function TechnicianList() {
 	const [deleteTechnician, { isLoading: isDeleting }] = useDeleteTechnicianMutation();
 	const [updateTechnician, { isLoading: isUpdatingStatus }] = useUpdateTechnicianMutation();
 	const [editingTechnician, setEditingTechnician] = useState<Technician | null>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pendingDelete, setPendingDelete] = useState<TechnicianRecord | null>(null);
 	const [pendingStatusTechnician, setPendingStatusTechnician] = useState<TechnicianRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
@@ -109,18 +115,22 @@ export default function TechnicianList() {
 		const timezoneNames = new Map(
 			timezones.map((timezone) => [timezone.externalId ?? String(timezone.id ?? ""), timezone.timezone ?? ""]),
 		);
-		return technicians.map((technician) => ({
-			id: stringValue(technician.externalId || technician.id),
-			username: stringValue(technician.userName),
-			contactPerson: stringValue(technician.name),
-			phone: stringValue(technician.phone),
-			client: clientNames.get(referenceValue(technician.client)) ?? stringValue(technician.client),
-			email: stringValue(technician.email),
-			company: stringValue(technician.companyName),
-			timezone: timezoneNames.get(referenceValue(technician.timezone)) || stringValue(technician.timezone),
-			password: stringValue(technician.password),
-			active: technician.status !== Status.INACTIVE,
-		}));
+		return technicians.map((technician) => {
+			const active = technician.status !== Status.INACTIVE;
+			return {
+				id: stringValue(technician.externalId || technician.id),
+				username: stringValue(technician.userName),
+				contactPerson: stringValue(technician.name),
+				phone: stringValue(technician.phone),
+				client: clientNames.get(referenceValue(technician.client)) ?? stringValue(technician.client),
+				email: stringValue(technician.email),
+				company: stringValue(technician.companyName),
+				timezone: timezoneNames.get(referenceValue(technician.timezone)) || stringValue(technician.timezone),
+				password: stringValue(technician.password),
+				active,
+				reason: active ? "" : stringValue(technician.reason).trim(),
+			};
+		});
 	}, [technicians, clients, timezones]);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -180,8 +190,8 @@ export default function TechnicianList() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		try {
@@ -189,7 +199,7 @@ export default function TechnicianList() {
 				externalId: pendingStatusTechnician.id,
 				body: {
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 				},
 			}).unwrap();
 			toast.success(
@@ -220,6 +230,9 @@ export default function TechnicianList() {
 		if (key === "username") {
 			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.username}</span>;
 		}
+		if (key === "reason") {
+			return row.reason.trim() ? row.reason : "—";
+		}
 		if (key === "status") {
 			return (
 				<button
@@ -234,8 +247,8 @@ export default function TechnicianList() {
 								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
 								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
 							: isDark
-								? "bg-white/[0.06] text-slate-400 hover:bg-white/[0.10]"
-								: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+								? "bg-rose-400/15 text-rose-200 hover:bg-rose-400/25"
+								: "bg-rose-50 text-rose-700 hover:bg-rose-100"
 					}`}
 				>
 					{row.active ? "Active" : "Inactive"}
@@ -386,7 +399,7 @@ export default function TechnicianList() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary
 									className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${
 										isDark
@@ -573,7 +586,7 @@ export default function TechnicianList() {
 						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
 							Current status of <span className="font-medium">{pendingStatusTechnician.username}</span> is{" "}
 							<span className="font-medium">{pendingStatusTechnician.active ? "Active" : "Inactive"}</span>.
-							Choose Active or Inactive, then enter a reason.
+							Choose Active or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -588,18 +601,20 @@ export default function TechnicianList() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this technician being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`${inputClass(isDark)} h-auto resize-none py-2`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this technician being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

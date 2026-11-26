@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useEffect, useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
@@ -9,8 +10,9 @@ import { ServiceMaintenanceDialog, type ServiceRecord } from "@/components/Vehic
 import { useAuth } from "@/contexts/AuthContext";
 import { Status, statusLabel } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useGetVehicleMasterQuery } from "@/store/services/api/Master";
-import { useCreateServiceMaintenanceMutation, useGetServiceMaintenancesQuery } from "@/store/services/api/ServiceMaintenance";
+import type { ServiceMaintenance, ServiceMaintenanceVehicle } from "@/interfaces/ServiceMaintenance";
+import type { Vehicle } from "@/interfaces/Vehicle";
+import { useCreateServiceMaintenanceMutation, useLazyGetServiceMaintenancesByVehicleIdQuery } from "@/store/services/api/ServiceMaintenance";
 import { useGetVehiclesQuery, useUpdateVehicleStatusMutation } from "@/store/services/api/Vehicle";
 
 type VehicleDetailRecord = {
@@ -27,6 +29,7 @@ type VehicleDetailRecord = {
 	manufactureDate: string;
 	purchaseDate: string;
 	active: boolean;
+	reason: string;
 	vehicleExternalId?: string;
 };
 
@@ -60,6 +63,7 @@ const seedRows: VehicleDetailRecord[] = [
 		manufactureDate: "2025-10-26",
 		purchaseDate: "2025-10-26",
 		active: true,
+		reason: "",
 	},
 	{
 		id: 2,
@@ -75,6 +79,7 @@ const seedRows: VehicleDetailRecord[] = [
 		manufactureDate: "2026-10-21",
 		purchaseDate: "2026-10-21",
 		active: true,
+		reason: "",
 	},
 	{
 		id: 3,
@@ -90,6 +95,7 @@ const seedRows: VehicleDetailRecord[] = [
 		manufactureDate: "2026-10-21",
 		purchaseDate: "2026-10-21",
 		active: true,
+		reason: "",
 	},
 ];
 
@@ -155,6 +161,61 @@ const daysUntil = (date: string) => {
 	return String(Math.round((target.getTime() - today.getTime()) / 86400000));
 };
 
+const textValue = (value?: string | number | null) => (value === undefined || value === null ? "" : String(value));
+
+const serviceVehicleLabel = (vehicle: ServiceMaintenanceVehicle, fallback: string) => {
+	if (typeof vehicle === "string") return fallback || vehicle;
+	return vehicle.vehicle ?? vehicle.vehicleNo ?? vehicle.name ?? fallback;
+};
+
+const toServiceRecord = (service: ServiceMaintenance, fallbackVehicleNo: string): ServiceRecord => {
+	const day = (value?: string) => (value ? value.slice(0, 10) : "");
+	const nextServiceDueOn = day(service.nextServiceDueOn) || addDays(day(service.lastServiceDate), textValue(service.daysInterval));
+	const nextOdometer = textValue(service.nextServiceDueOdometer) || addNumbers(textValue(service.lastServiceOdometer), textValue(service.odometerInterval));
+	return {
+		id: service.externalId,
+		vehicleNo: serviceVehicleLabel(service.vehicle, fallbackVehicleNo),
+		serviceName: service.serviceName ?? "",
+		odometerInterval: textValue(service.odometerInterval),
+		lastServiceOdometer: textValue(service.lastServiceOdometer),
+		nextServiceDueOdometer: nextOdometer,
+		currentOdometer: textValue(service.currentOdometer),
+		kmLeftForNextService: subtractNumbers(nextOdometer, textValue(service.currentOdometer ?? service.lastServiceOdometer)),
+		odometerLeft: textValue(service.odometerLeft),
+		engineHoursInterval: textValue(service.engineInterval),
+		lastServiceEngineHour: textValue(service.lastServiceEngine),
+		nextServiceDueEngineHour: textValue(service.nextServiceDueEngineHour) || addNumbers(textValue(service.lastServiceEngine), textValue(service.engineInterval)),
+		engineHourLeft: textValue(service.engineLeft),
+		daysInterval: textValue(service.daysInterval),
+		lastServiceOn: day(service.lastServiceDate),
+		nextServiceDueOn,
+		daysLeftForNextService: daysUntil(nextServiceDueOn),
+		daysLeft: textValue(service.daysLeft) || daysUntil(nextServiceDueOn),
+		remark: service.remark ?? "",
+		documentName: service.serviceDocument ? "Uploaded" : "",
+	};
+};
+
+const dayValue = (value?: string) => (value ? value.slice(0, 10) : "");
+
+const toDetailRow = (vehicle: Vehicle, index: number): VehicleDetailRecord => ({
+	id: Number(vehicle.id) || index + 1,
+	client: String(vehicle.client ?? ""),
+	transporter: String(vehicle.transporter ?? ""),
+	vehicleNo: String(vehicle.vehicle ?? ""),
+	ownerName: vehicle.ownerName ?? "",
+	ownedBy: vehicle.ownedBy ?? "",
+	vehicleBrand: vehicle.vehicleBrand ?? "",
+	vehicleModel: vehicle.vehicleModel ?? "",
+	vehicleBody: vehicle.vehicleBody ?? "",
+	capacity: Number(vehicle.capacity ?? 0) || 0,
+	manufactureDate: dayValue(vehicle.manufactureDate),
+	purchaseDate: dayValue(vehicle.purchaseDate),
+	active: String(vehicle.status ?? "").toLowerCase() !== Status.INACTIVE,
+	reason: vehicle.reason ?? "",
+	vehicleExternalId: String(vehicle.externalId || vehicle.id || ""),
+});
+
 const displayCell = (key: keyof VehicleDetailRecord, row: VehicleDetailRecord) => {
 	if (key === "manufactureDate" || key === "purchaseDate") return formatDate(row[key]);
 	if (key === "capacity") return String(row.capacity);
@@ -167,6 +228,8 @@ export default function VehicleDetail() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const [rows, setRows] = useState<VehicleDetailRecord[]>(seedRows);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [month, setMonth] = useState("");
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
@@ -176,13 +239,13 @@ export default function VehicleDetail() {
 	const [editingRow, setEditingRow] = useState<VehicleDetailRecord | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<VehicleDetailRecord | null>(null);
 	const [serviceRow, setServiceRow] = useState<VehicleDetailRecord | null>(null);
+	const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>([]);
 	const [pendingStatusRow, setPendingStatusRow] = useState<VehicleDetailRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
 	const [statusReason, setStatusReason] = useState("");
-	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
 	const { data: vehicles = [] } = useGetVehiclesQuery();
-	const { data: serviceData = [] } = useGetServiceMaintenancesQuery();
 	const [createService] = useCreateServiceMaintenanceMutation();
+	const [fetchServicesByVehicle, { isFetching: isServiceLoading }] = useLazyGetServiceMaintenancesByVehicleIdQuery();
 	const [updateVehicleStatus, { isLoading: isUpdatingStatus }] = useUpdateVehicleStatusMutation();
 
 	const vehicleIdByNo = useMemo(() => {
@@ -194,37 +257,38 @@ export default function VehicleDetail() {
 		}
 		return map;
 	}, [vehicles]);
-	const services = useMemo<ServiceRecord[]>(() => {
-		const vehicleNames = new Map(vehicleMaster.map((vehicle) => [vehicle.id, vehicle.name]));
-		const text = (value?: string | number) => (value === undefined || value === null ? "" : String(value));
-		const day = (value?: string) => (value ? value.slice(0, 10) : "");
-		return serviceData.map((service) => {
-			const nextServiceDueOn = day(service.nextServiceDueOn) || addDays(day(service.lastServiceDate), text(service.daysInterval));
-			const nextOdometer = text(service.nextServiceDueOdometer) || addNumbers(text(service.lastServiceOdometer), text(service.odometerInterval));
-			return {
-				id: service.externalId,
-				vehicleNo: vehicleNames.get(service.vehicle) ?? service.vehicle ?? "",
-				serviceName: service.serviceName ?? "",
-				odometerInterval: text(service.odometerInterval),
-				lastServiceOdometer: text(service.lastServiceOdometer),
-				nextServiceDueOdometer: nextOdometer,
-				currentOdometer: text(service.currentOdometer),
-				kmLeftForNextService: subtractNumbers(nextOdometer, text(service.currentOdometer ?? service.lastServiceOdometer)),
-				odometerLeft: text(service.odometerLeft),
-				engineHoursInterval: text(service.engineInterval),
-				lastServiceEngineHour: text(service.lastServiceEngine),
-				nextServiceDueEngineHour: text(service.nextServiceDueEngineHour) || addNumbers(text(service.lastServiceEngine), text(service.engineInterval)),
-				engineHourLeft: text(service.engineLeft),
-				daysInterval: text(service.daysInterval),
-				lastServiceOn: day(service.lastServiceDate),
-				nextServiceDueOn,
-				daysLeftForNextService: daysUntil(nextServiceDueOn),
-				daysLeft: text(service.daysLeft) || daysUntil(nextServiceDueOn),
-				remark: service.remark ?? "",
-				documentName: service.serviceDocument ? "Uploaded" : "",
-			};
-		});
-	}, [serviceData, vehicleMaster]);
+
+	useEffect(() => {
+		if (!vehicles.length) return;
+		setRows(vehicles.map((vehicle, index) => toDetailRow(vehicle, index)));
+	}, [vehicles]);
+
+	const resolveVehicleId = (row: VehicleDetailRecord) =>
+		row.vehicleExternalId || vehicleIdByNo.get(row.vehicleNo.trim().toUpperCase()) || "";
+
+	const openServices = async (row: VehicleDetailRecord) => {
+		const externalId = resolveVehicleId(row);
+		if (!externalId) {
+			toast.error("Vehicle id not found for service lookup.");
+			return;
+		}
+		const nextRow = { ...row, vehicleExternalId: externalId };
+		setServiceRow(nextRow);
+		setServiceRecords([]);
+		try {
+			const data = await fetchServicesByVehicle(externalId).unwrap();
+			setServiceRecords(data.map((service) => toServiceRecord(service, nextRow.vehicleNo)));
+		} catch (error) {
+			console.error("Failed to load service maintenance by vehicle.", error);
+			toast.error(apiErrorMessage(error, "Could not load services for this vehicle."));
+			setServiceRecords([]);
+		}
+	};
+
+	const closeServices = () => {
+		setServiceRow(null);
+		setServiceRecords([]);
+	};
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -278,8 +342,8 @@ export default function VehicleDetail() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		const externalId =
@@ -291,13 +355,19 @@ export default function VehicleDetail() {
 				await updateVehicleStatus({
 					externalId,
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 				}).unwrap();
 			}
+			const nextReason = selectedStatus === Status.INACTIVE ? statusReason.trim() : "";
 			setRows((current) =>
 				current.map((row) =>
 					row.id === pendingStatusRow.id
-						? { ...row, active: selectedStatus === Status.ACTIVE, vehicleExternalId: externalId || row.vehicleExternalId }
+						? {
+								...row,
+								active: selectedStatus === Status.ACTIVE,
+								reason: nextReason,
+								vehicleExternalId: externalId || row.vehicleExternalId,
+							}
 						: row,
 				),
 			);
@@ -324,6 +394,7 @@ export default function VehicleDetail() {
 			manufactureDate: values.manufactureDate,
 			purchaseDate: values.purchaseDate,
 			active: editingRow?.active ?? true,
+			reason: editingRow?.reason ?? "",
 			vehicleExternalId: editingRow?.vehicleExternalId || vehicleIdByNo.get(values.vehicleNo.trim().toUpperCase()),
 		};
 		if (editingRow) {
@@ -433,7 +504,7 @@ export default function VehicleDetail() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Columns
@@ -469,7 +540,8 @@ export default function VehicleDetail() {
 										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>
 									))}
 									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Status</th>
-									<th scope="col" className="w-28 px-3 py-3"><span className="sr-only">Actions</span></th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Reason</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Action</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -480,7 +552,11 @@ export default function VehicleDetail() {
 												{column.key === "vehicleNo" ? (
 													<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{row.vehicleNo}</span>
 												) : column.key === "service" ? (
-													<button type="button" onClick={() => setServiceRow(row)} className={`text-[11px] font-semibold underline underline-offset-2 ${isDark ? "text-cyan-200 hover:text-cyan-100" : "text-cyan-700 hover:text-cyan-800"}`}>
+													<button
+														type="button"
+														onClick={() => void openServices(row)}
+														className={`text-[11px] font-semibold underline underline-offset-2 ${isDark ? "text-cyan-200 hover:text-cyan-100" : "text-cyan-700 hover:text-cyan-800"}`}
+													>
 														View
 													</button>
 												) : (
@@ -501,13 +577,14 @@ export default function VehicleDetail() {
 															? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
 															: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
 														: isDark
-															? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
-															: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+															? "bg-rose-400/15 text-rose-200 hover:bg-rose-400/25"
+															: "bg-rose-50 text-rose-700 hover:bg-rose-100"
 												}`}
 											>
 												{row.active ? "Active" : "Inactive"}
 											</button>
 										</td>
+										<td className="whitespace-nowrap px-3 py-3">{row.active ? "—" : row.reason.trim() || "—"}</td>
 										<td className="px-3 py-3">
 											<div className="flex items-center gap-1">
 												<button
@@ -587,8 +664,9 @@ export default function VehicleDetail() {
 			{serviceRow && (
 				<ServiceMaintenanceDialog
 					vehicleNo={serviceRow.vehicleNo}
-					records={services.filter((record) => record.vehicleNo === serviceRow.vehicleNo)}
-					onClose={() => setServiceRow(null)}
+					records={serviceRecords}
+					isLoading={isServiceLoading}
+					onClose={closeServices}
 				/>
 			)}
 
@@ -614,7 +692,7 @@ export default function VehicleDetail() {
 						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
 							Current status of <span className="font-medium">{pendingStatusRow.vehicleNo}</span> is{" "}
 							<span className="font-medium">{pendingStatusRow.active ? "Active" : "Inactive"}</span>. Choose Active or
-							Inactive, then enter a reason.
+							Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -629,18 +707,20 @@ export default function VehicleDetail() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this vehicle being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`${inputClass(isDark)} h-auto resize-none py-2`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this vehicle being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

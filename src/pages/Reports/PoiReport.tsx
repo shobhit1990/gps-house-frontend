@@ -1,16 +1,62 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
-import { Activity, ChevronDown, RefreshCw, Search } from "lucide-react";
+import { toast } from "sonner";
+import {
+	Activity,
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
+	Columns3,
+	RefreshCw,
+	Search,
+	X,
+} from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { vehicles } from "@/components/data/vehicles";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import type { PoiReportRow } from "@/interfaces/PoiReport";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useGetGroupsQuery } from "@/store/services/api/Group";
+import {
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
+import { useLazyGetPoiReportQuery } from "@/store/services/api/PoiReport";
 
-type MenuKind = "report" | "filter" | "transporter" | "vehicle";
+type ColumnKey =
+	| "sn"
+	| "vehicle"
+	| "poiName"
+	| "inTime"
+	| "outTime"
+	| "duration"
+	| "location"
+	| "distance"
+	| "reportType"
+	| "remark";
 
-const reportTypes = ["Vehicle Wise", "Geofence Wise"];
-const filterTypes = ["Transporter", "Group"];
-const vehicleOptions = vehicles.map((vehicle) => vehicle.vehicle);
+type MenuKind = "transporter" | "group" | "vehicle";
+
+const reportTypes = ["Vehicle Wise", "Geofence Wise"] as const;
+
+/** Filter Type options that unlock after a Report Type is chosen (image cascade). */
+const filterTypesByReport: Record<string, string[]> = {
+	"Vehicle Wise": ["Transporter", "Group"],
+	"Geofence Wise": ["Transporter", "Group"],
+};
+
+const columns: { key: ColumnKey; label: string }[] = [
+	{ key: "sn", label: "SN" },
+	{ key: "vehicle", label: "Vehicle" },
+	{ key: "poiName", label: "POI Name" },
+	{ key: "inTime", label: "In Time" },
+	{ key: "outTime", label: "Out Time" },
+	{ key: "duration", label: "Duration" },
+	{ key: "location", label: "Location" },
+	{ key: "distance", label: "Distance" },
+	{ key: "reportType", label: "Report Type" },
+	{ key: "remark", label: "Remark" },
+];
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -24,39 +70,101 @@ const todayRange = () => {
 	return { from: toInput(now, false), to: toInput(now, true) };
 };
 
-const selectionLabel = (selected: string[]) => (selected.length === 1 ? selected[0] : `${selected.length} selected`);
+/** datetime-local → API `YYYY-MM-DDTHH:mm:ss` */
+const toApiDateTime = (value: string) => {
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) return trimmed.slice(0, 19);
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) return `${trimmed}:00`;
+	return trimmed;
+};
+
+const textValue = (value: string) => (value.trim() ? value : "—");
+
+const optionLabel = (id: string, options: { id: string; name: string }[]) => {
+	const match = options.find((option) => option.id === id)?.name;
+	return typeof match === "string" && match.trim() ? match : typeof id === "string" ? id : "";
+};
 
 export default function PoiReport() {
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: transporterMaster = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
+	const { data: vehicleMaster = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
+	const [fetchPoiReport, { isFetching }] = useLazyGetPoiReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const initialRange = todayRange();
-	const reportRef = useRef<HTMLDivElement>(null);
-	const filterRef = useRef<HTMLDivElement>(null);
+
 	const transporterRef = useRef<HTMLDivElement>(null);
+	const groupRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
+
+	const [rows, setRows] = useState<PoiReportRow[]>([]);
+	const [searched, setSearched] = useState(false);
+	const [search, setSearch] = useState("");
+	const [pageSize, setPageSize] = useState(10);
+	const [page, setPage] = useState(0);
+	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [reportType, setReportType] = useState("");
 	const [filterType, setFilterType] = useState("");
-	const [selectedTransporters, setSelectedTransporters] = useState<string[]>([]);
-	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+	const [transporter, setTransporter] = useState("");
+	const [group, setGroup] = useState("");
+	const [vehicle, setVehicle] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [transporterQuery, setTransporterQuery] = useState("");
+	const [groupQuery, setGroupQuery] = useState("");
 	const [vehicleQuery, setVehicleQuery] = useState("");
 
-	const showFilter = reportType !== "";
-	const showAssignments = filterType === "Transporter";
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+	/** After Report Type is selected, Filter Type options are set for that report. */
+	const filterTypeOptions = reportType ? (filterTypesByReport[reportType] ?? []) : [];
+	const showFilter = filterTypeOptions.length > 0;
+	const showTransporter = filterType === "Transporter";
+	const showGroup = filterType === "Group";
+	const showAssignments = showTransporter || showGroup;
+
+	const groupOptions = useMemo(
+		() =>
+			groups
+				.map((item) => ({
+					id: item.externalId || String(item.id ?? ""),
+					name: item.groupName?.trim() || item.externalId || String(item.id ?? ""),
+				}))
+				.filter((item) => item.id && item.name),
+		[groups],
+	);
+
+	const vehicles = useMemo(() => {
+		if (showTransporter) {
+			if (!transporter) return [];
+			return vehicleMaster.filter((item) => !item.transporterId || item.transporterId === transporter);
+		}
+		if (showGroup) {
+			if (!group) return [];
+			const selected = groups.find((item) => (item.externalId || String(item.id ?? "")) === group);
+			const allowed = new Set((selected?.vehicles ?? []).map(String));
+			if (allowed.size === 0) return vehicleMaster;
+			return vehicleMaster.filter((item) => allowed.has(item.id) || allowed.has(String(item.externalId ?? "")));
+		}
+		return [];
+	}, [groups, group, showGroup, showTransporter, transporter, vehicleMaster]);
+
+	useEffect(() => {
+		if (!vehicle) return;
+		if (vehicles.some((item) => item.id === vehicle)) return;
+		setVehicle("");
+	}, [vehicle, vehicles]);
 
 	useEffect(() => {
 		if (!openMenu) return;
 		const onPointer = (event: MouseEvent) => {
 			const target = event.target as Node;
-			const menuRef = openMenu === "report" ? reportRef : openMenu === "filter" ? filterRef : openMenu === "transporter" ? transporterRef : vehicleRef;
+			const menuRef =
+				openMenu === "transporter" ? transporterRef : openMenu === "group" ? groupRef : vehicleRef;
 			if (!menuRef.current?.contains(target)) setOpenMenu(null);
 		};
 		const onKey = (event: KeyboardEvent) => {
@@ -70,112 +178,233 @@ export default function PoiReport() {
 		};
 	}, [openMenu]);
 
+	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
+	const filteredRows = useMemo(() => {
+		if (!searched) return [];
+		const query = search.trim().toLowerCase();
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[
+				row.vehicle,
+				row.poiName,
+				row.inTime,
+				row.outTime,
+				row.duration,
+				row.location,
+				row.distance,
+				row.reportType,
+				row.remark,
+			]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search, searched]);
+
+	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+	const safePage = Math.min(page, pageCount - 1);
+	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
+
+	const visibleTransporters = transporterMaster.filter((option) =>
+		option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()),
+	);
+	const visibleGroups = groupOptions.filter((option) =>
+		option.name.toLowerCase().includes(groupQuery.trim().toLowerCase()),
+	);
+	const visibleVehicles = vehicles.filter((option) =>
+		option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()),
+	);
+
 	const chooseReport = (value: string) => {
 		setReportType(value);
+		/** Reset next selects — Filter Type options re-set from the chosen report type. */
 		setFilterType("");
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		setTransporter("");
+		setGroup("");
+		setVehicle("");
+		setTransporterQuery("");
+		setGroupQuery("");
+		setVehicleQuery("");
 		setOpenMenu(null);
 	};
 
 	const chooseFilter = (value: string) => {
 		setFilterType(value);
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		/** Whichever filter column is chosen (Transporter / Group) unlocks that select next. */
+		setTransporter("");
+		setGroup("");
+		setVehicle("");
+		setTransporterQuery("");
+		setGroupQuery("");
+		setVehicleQuery("");
 		setOpenMenu(null);
 	};
 
-	const toggleValue = (value: string, selected: string[], setSelected: (next: string[]) => void) => {
-		setSelected(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+	const applyFilters = async () => {
+		if (!reportType) {
+			toast.error("Select report type.");
+			return;
+		}
+		if (!filterType) {
+			toast.error("Select filter type.");
+			return;
+		}
+		if (filterType === "Transporter" && !transporter) {
+			toast.error("Select transporter.");
+			return;
+		}
+		if (filterType === "Group" && !group) {
+			toast.error("Select group.");
+			return;
+		}
+		if (!vehicle) {
+			toast.error("Select vehicle.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
+
+		const apiFrom = toApiDateTime(from);
+		const apiTo = toApiDateTime(to);
+		if (!apiFrom || !apiTo) {
+			toast.error("Invalid date range.");
+			return;
+		}
+
+		try {
+			const data = await fetchPoiReport({
+				type: reportType,
+				filterType,
+				...(filterType === "Transporter" ? { transporter } : { group }),
+				vehicle,
+				from: apiFrom,
+				to: apiTo,
+			}).unwrap();
+
+			const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? "";
+			const nextRows = data.map((row, index) => ({
+				...row,
+				id: row.id || `${vehicle}-${index}`,
+				vehicle: row.vehicle && row.vehicle !== "—" ? row.vehicle : vehicleName || row.vehicle,
+				reportType: row.reportType && row.reportType !== "—" ? row.reportType : reportType,
+			}));
+			setRows(nextRows);
+			setSearched(true);
+			setPage(0);
+			setOpenMenu(null);
+			if (nextRows.length === 0) {
+				toast.message("No POI records for this range.");
+			} else {
+				toast.success("POI report loaded");
+			}
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load POI report."));
+		}
 	};
 
 	const refresh = () => {
 		const range = todayRange();
+		setRows([]);
+		setSearched(false);
+		setSearch("");
 		setReportType("");
 		setFilterType("");
-		setSelectedTransporters([]);
-		setSelectedVehicles([]);
+		setTransporter("");
+		setGroup("");
+		setVehicle("");
 		setFrom(range.from);
 		setTo(range.to);
 		setTransporterQuery("");
+		setGroupQuery("");
 		setVehicleQuery("");
+		setHiddenColumns([]);
+		setPage(0);
+		setPageSize(10);
 		setOpenMenu(null);
 	};
 
 	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[200px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
 	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
-	const optionClass = (selected: boolean) => `w-full rounded-md px-2.5 py-2 text-left text-xs leading-5 transition ${selected ? (isDark ? "bg-cyan-300/[0.16] text-cyan-50" : "bg-cyan-50 text-cyan-800") : isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`;
+	const optionClass = (selected: boolean) =>
+		`w-full rounded-md px-2.5 py-2 text-left text-xs leading-5 transition ${selected ? (isDark ? "bg-cyan-300/[0.16] text-cyan-50" : "bg-cyan-50 text-cyan-800") : isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`;
 
-	const singleSelect = (
+	const entitySelect = (
 		kind: MenuKind,
 		ref: RefObject<HTMLDivElement | null>,
 		emptyLabel: string,
 		value: string,
-		options: string[],
-		onPick: (next: string) => void,
-	) => (
-		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[200px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{value || emptyLabel}</span>
-				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
-			</button>
-			{openMenu === kind && (
-				<ul role="listbox" aria-label={emptyLabel} className={`${menuClass} p-1`}>
-					{options.map((item) => (
-						<li key={item}>
-							<button type="button" role="option" aria-selected={value === item} onClick={() => onPick(item)} className={optionClass(value === item)}>
-								{item}
-							</button>
-						</li>
-					))}
-				</ul>
-			)}
-		</div>
-	);
-
-	const multiSelect = (
-		kind: MenuKind,
-		ref: RefObject<HTMLDivElement | null>,
-		emptyLabel: string,
-		selected: string[],
-		setSelected: (next: string[]) => void,
-		options: string[],
+		setValue: (next: string) => void,
+		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
+		loading?: boolean,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[190px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected.length === 0 ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{selected.length === 0 ? emptyLabel : selectionLabel(selected)}</span>
+			<button
+				type="button"
+				aria-expanded={openMenu === kind}
+				aria-haspopup="listbox"
+				aria-label={emptyLabel}
+				onClick={() => setOpenMenu((current) => (current === kind ? null : kind))}
+				className={controlClass}
+			>
+				<span className={`truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
+					{value ? optionLabel(value, options) : loading ? "Loading…" : emptyLabel}
+				</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
 			{openMenu === kind && (
 				<div className={menuClass}>
 					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							aria-label={`Search ${emptyLabel}`}
+							className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`}
+						/>
 					</div>
-					<div className={`grid grid-cols-2 border-y text-[11px] ${isDark ? "border-white/[0.08]" : "border-slate-200"}`}>
-						<button type="button" onClick={() => setSelected([...new Set([...selected, ...options])])} className={`h-9 border-r font-medium transition ${isDark ? "border-white/[0.08] text-slate-300 hover:bg-cyan-300/[0.08] hover:text-cyan-100" : "border-slate-200 text-slate-700 hover:bg-cyan-50 hover:text-cyan-800"}`}>
-							Select All
-						</button>
-						<button type="button" onClick={() => setSelected([])} className={`h-9 font-medium transition ${isDark ? "text-slate-300 hover:bg-white/[0.04] hover:text-white" : "text-slate-700 hover:bg-slate-50"}`}>
-							Deselect All
-						</button>
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} aria-multiselectable="true" className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => (
-							<li key={name}>
-								<label className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-									<input type="checkbox" checked={selected.includes(name)} onChange={() => toggleValue(name, selected, setSelected)} className="h-3.5 w-3.5 accent-cyan-300" />
-									{name}
-								</label>
+					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
+						{options.map((option) => (
+							<li key={option.id}>
+								<button
+									type="button"
+									role="option"
+									aria-selected={value === option.id}
+									onClick={() => {
+										setValue(option.id);
+										setOpenMenu(null);
+										setQuery("");
+									}}
+									className={optionClass(value === option.id)}
+								>
+									{typeof option.name === "string" ? option.name : String(option.name ?? "")}
+								</button>
 							</li>
 						))}
-						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
+						{options.length === 0 && (
+							<li className="px-2 py-3 text-center text-[11px] text-slate-500">
+								{loading ? "Loading…" : "Nothing found"}
+							</li>
+						)}
 					</ul>
 				</div>
 			)}
 		</div>
 	);
+
+	const cell = (key: ColumnKey, row: PoiReportRow, serial: number) => {
+		if (key === "sn") return String(row.sn || serial).padStart(2, "0");
+		if (key === "vehicle" || key === "poiName") {
+			return (
+				<span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>
+					{textValue(row[key])}
+				</span>
+			);
+		}
+		return textValue(row[key]);
+	};
 
 	return (
 		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -191,29 +420,327 @@ export default function PoiReport() {
 						<p className={`mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] ${isDark ? "text-cyan-200/70" : "text-cyan-700"}`}>
 							<Activity className="h-3.5 w-3.5" /> Reports
 						</p>
-						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>POI Report</h1>
+						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>
+							POI Report
+						</h1>
+						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>
+							{searched ? filteredRows.length : 0} reports
+						</p>
 					</div>
-					<button type="button" onClick={refresh} aria-label="Refresh POI report" title="Refresh POI report" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button
+						type="button"
+						onClick={refresh}
+						aria-label="Refresh POI report"
+						title="Refresh POI report"
+						className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}
+					>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
-				<section className={`rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
+				<section
+					aria-label="POI report filters"
+					className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}
+				>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{singleSelect("report", reportRef, "Select Report Type", reportType, reportTypes, chooseReport)}
-						{showFilter && singleSelect("filter", filterRef, "Select Filter Type", filterType, filterTypes, chooseFilter)}
-						{showAssignments && multiSelect("transporter", transporterRef, "Select Transporter", selectedTransporters, setSelectedTransporters, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{showAssignments && multiSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicles, setSelectedVehicles, visibleVehicles, vehicleQuery, setVehicleQuery)}
-						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
-							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
+						{/* Report Type — selected value stays set in this select (image: "Vehicle Wise") */}
+						<label className="relative block min-w-0 flex-1 sm:max-w-[200px]">
+							<span className="sr-only">Report Type</span>
+							<select
+								aria-label="Select Report Type"
+								value={reportType}
+								onChange={(event) => chooseReport(event.target.value)}
+								className={`h-10 w-full appearance-none rounded-lg border px-3 pr-9 text-xs outline-none transition ${
+									isDark
+										? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 focus:border-cyan-300/35 [color-scheme:dark]"
+										: "border-slate-200 bg-white text-slate-800 focus:border-cyan-400"
+								} ${reportType ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}
+							>
+								<option value="">Select Report Type</option>
+								{reportTypes.map((item) => (
+									<option key={item} value={item}>
+										{item}
+									</option>
+								))}
+							</select>
+							<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+						</label>
+
+						{/* Filter Type — options set from chosen Report Type (image: "Select Filter Type") */}
+						{showFilter && (
+							<label className="relative block min-w-0 flex-1 sm:max-w-[200px]">
+								<span className="sr-only">Filter Type</span>
+								<select
+									aria-label="Select Filter Type"
+									value={filterType}
+									onChange={(event) => chooseFilter(event.target.value)}
+									className={`h-10 w-full appearance-none rounded-lg border px-3 pr-9 text-xs outline-none transition ${
+										isDark
+											? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 focus:border-cyan-300/35 [color-scheme:dark]"
+											: "border-slate-200 bg-white text-slate-800 focus:border-cyan-400"
+									} ${filterType ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}
+								>
+									<option value="">Select Filter Type</option>
+									{filterTypeOptions.map((item) => (
+										<option key={item} value={item}>
+											{item}
+										</option>
+									))}
+								</select>
+								<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+							</label>
+						)}
+
+						{/* Next select matches Filter Type column: Transporter or Group */}
+						{showTransporter &&
+							entitySelect(
+								"transporter",
+								transporterRef,
+								"Select Transporter",
+								transporter,
+								(next) => {
+									setTransporter(next);
+									setVehicle("");
+								},
+								visibleTransporters,
+								transporterQuery,
+								setTransporterQuery,
+								transportersLoading,
+							)}
+						{showGroup &&
+							entitySelect(
+								"group",
+								groupRef,
+								"Select Group",
+								group,
+								(next) => {
+									setGroup(next);
+									setVehicle("");
+								},
+								visibleGroups,
+								groupQuery,
+								setGroupQuery,
+								groupsLoading,
+							)}
+						{showAssignments &&
+							entitySelect(
+								"vehicle",
+								vehicleRef,
+								"Select Vehicle",
+								vehicle,
+								setVehicle,
+								visibleVehicles,
+								vehicleQuery,
+								setVehicleQuery,
+								vehiclesLoading,
+							)}
+
+						<div
+							className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}
+						>
+							<input
+								type="datetime-local"
+								aria-label="From date"
+								value={from}
+								onChange={(event) => setFrom(event.target.value)}
+								className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`}
+							/>
 							<span className="text-slate-500">-</span>
-							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
+							<input
+								type="datetime-local"
+								aria-label="To date"
+								value={to}
+								onChange={(event) => setTo(event.target.value)}
+								className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`}
+							/>
 						</div>
-						<button type="button" onClick={() => setOpenMenu(null)} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							<Search className="mr-1.5 inline h-3.5 w-3.5" />
-							Search
+						<button
+							type="button"
+							onClick={() => void applyFilters()}
+							disabled={isFetching}
+							className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+						>
+							{isFetching ? (
+								"Searching..."
+							) : (
+								<>
+									<Search className="mr-1.5 inline h-3.5 w-3.5" />
+									Search
+								</>
+							)}
 						</button>
 					</div>
+				</section>
+
+				<section
+					className={`overflow-hidden rounded-xl border shadow-[0_24px_80px_rgba(0,0,0,0.24)] ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.06)]"}`}
+				>
+					<div
+						className={`flex flex-col gap-3 border-b p-3 sm:p-4 xl:flex-row xl:items-center xl:justify-between ${isDark ? "border-white/[0.07] bg-gradient-to-r from-cyan-300/[0.035] via-transparent to-violet-400/[0.04]" : "border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-violet-50"}`}
+					>
+						<label className="relative block min-w-0 sm:w-[300px]">
+							<Search
+								className={`absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isDark ? "text-cyan-200/50" : "text-cyan-600/70"}`}
+							/>
+							<input
+								type="search"
+								value={search}
+								onChange={(event) => {
+									setSearch(event.target.value);
+									setPage(0);
+								}}
+								placeholder="Search"
+								aria-label="Search POI report"
+								className={`h-10 w-full rounded-lg border pl-9 pr-9 text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-white placeholder:text-slate-600 focus:border-cyan-300/35 focus:ring-2 focus:ring-cyan-300/[0.08]" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"}`}
+							/>
+							{search && (
+								<button
+									type="button"
+									onClick={() => setSearch("")}
+									aria-label="Clear search"
+									className={`absolute right-2.5 top-1/2 -translate-y-1/2 ${isDark ? "text-slate-500 hover:text-white" : "text-slate-500 hover:text-slate-900"}`}
+								>
+									<X className="h-3.5 w-3.5" />
+								</button>
+							)}
+						</label>
+						<div className="flex flex-wrap items-center gap-2">
+							<details ref={columnVisibilityRef} className="relative">
+								<summary
+									className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}
+								>
+									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
+									Column Visibility
+									<ChevronDown className="h-3 w-3 text-slate-500" />
+								</summary>
+								<div
+									className={`absolute right-0 top-11 z-30 max-h-52 w-56 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
+								>
+									{columns.map((column) => (
+										<label
+											key={column.key}
+											className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}
+										>
+											<input
+												type="checkbox"
+												checked={!hiddenColumns.includes(column.key)}
+												onChange={() =>
+													setHiddenColumns((current) =>
+														current.includes(column.key)
+															? current.filter((item) => item !== column.key)
+															: [...current, column.key],
+													)
+												}
+												className="h-3.5 w-3.5 accent-cyan-300"
+											/>
+											{column.label}
+										</label>
+									))}
+								</div>
+							</details>
+							<div className="relative">
+								<select
+									aria-label="No of Rows"
+									value={pageSize}
+									onChange={(event) => {
+										setPageSize(Number(event.target.value));
+										setPage(0);
+									}}
+									className={`h-9 appearance-none rounded-lg border pl-3 pr-8 text-[11px] outline-none ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 [color-scheme:dark]" : "border-slate-200 bg-white text-slate-700"}`}
+								>
+									<option value={10}>10 rows</option>
+									<option value={25}>25 rows</option>
+									<option value={50}>50 rows</option>
+								</select>
+								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+							</div>
+						</div>
+					</div>
+
+					<div className="overflow-x-auto">
+						<table className="w-full min-w-[1100px] border-collapse text-left">
+							<thead>
+								<tr
+									className={`border-b text-[9px] font-semibold uppercase tracking-[0.12em] ${isDark ? "border-white/[0.08] bg-white/[0.025] text-slate-500" : "border-slate-200 bg-slate-50 text-slate-600"}`}
+								>
+									{visibleColumns.map((column) => (
+										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">
+											{column.label}
+										</th>
+									))}
+								</tr>
+							</thead>
+							<tbody>
+								{isFetching && pageRows.length === 0 && (
+									<tr>
+										<td colSpan={Math.max(visibleColumns.length, 1)} className="px-6 py-16 text-center text-sm text-slate-500">
+											Loading POI report…
+										</td>
+									</tr>
+								)}
+								{pageRows.map((row, index) => (
+									<tr
+										key={row.id || row.externalId || String(index)}
+										className={`border-b text-[11px] transition last:border-0 ${isDark ? "border-white/[0.055] text-slate-300 hover:bg-white/[0.035]" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+									>
+										{visibleColumns.map((column) => (
+											<td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">
+												{cell(column.key, row, safePage * pageSize + index + 1)}
+											</td>
+										))}
+									</tr>
+								))}
+								{!isFetching && pageRows.length === 0 && (
+									<tr>
+										<td colSpan={Math.max(visibleColumns.length, 1)} className="px-6 py-16 text-center">
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+												No POI records available
+											</p>
+											<p className="mt-1 text-xs text-slate-500">
+												Select report type, filter, vehicle, and date range, then search.
+											</p>
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</div>
+
+					<footer
+						className={`flex flex-col gap-3 border-t px-4 py-3 text-[10px] sm:flex-row sm:items-center sm:justify-between ${isDark ? "border-white/[0.07] text-slate-500" : "border-slate-200 text-slate-500"}`}
+					>
+						<span>
+							Showing{" "}
+							<span className={`font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								{filteredRows.length === 0 ? 0 : safePage * pageSize + 1}–
+								{Math.min((safePage + 1) * pageSize, filteredRows.length)}
+							</span>{" "}
+							of {filteredRows.length} reports
+						</span>
+						<div className="flex items-center gap-1.5">
+							<button
+								type="button"
+								onClick={() => setPage((current) => Math.max(0, current - 1))}
+								disabled={safePage === 0}
+								aria-label="Previous page"
+								className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+							>
+								<ChevronLeft className="h-4 w-4" />
+							</button>
+							<span className={`min-w-12 text-center ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+								{safePage + 1} / {pageCount}
+							</span>
+							<button
+								type="button"
+								onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+								disabled={safePage >= pageCount - 1}
+								aria-label="Next page"
+								className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-35 ${isDark ? "border-white/[0.08] text-slate-400 hover:bg-white/[0.05]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+							>
+								<ChevronRight className="h-4 w-4" />
+							</button>
+						</div>
+					</footer>
 				</section>
 			</main>
 		</div>

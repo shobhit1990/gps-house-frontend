@@ -1,5 +1,6 @@
 
-import { useMemo, useState, type FormEvent } from "react";
+import {useMemo, useState, type FormEvent, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { autoTable } from "jspdf-autotable";
 import { jsPDF } from "jspdf";
@@ -35,6 +36,7 @@ import {
   X,
   Loader2,
 } from "lucide-react";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleForm } from "@/components/VehicleForm/AddVehicleForm";
 import { ChangeVehicleClientDialog } from "@/components/VehicleForm/ChangeVehicleClientDialog";
@@ -123,6 +125,7 @@ const columns: { key: string; label: string }[] = [
   { key: "certificate", label: "Certificate" },
   { key: "command", label: "Command" },
   { key: "technician", label: "Assign To Technician" },
+  { key: "reason", label: "Reason" },
 ];
 
 const chartOptions = [
@@ -316,11 +319,26 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
     clientId: referenceId(vehicle.client),
     transporterId: referenceId(vehicle.transporter),
     sn: String(index + 1),
-    vehicleNo: displayValue(vehicle.vehicle),
+    vehicleNo: displayValue(
+      vehicle.vehicle ??
+        record.vehicleNo ??
+        record.vehicleName ??
+        record.vehicleNickname ??
+        vehicle.vehicleNickname,
+    ),
     imei: displayValue(record.imei ?? device?.imei),
     sim: displayValue(record.simNumber ?? record.sim ?? device?.simNumber),
-    client: displayValue(vehicle.client, "Unassigned"),
-    transporter: displayValue(vehicle.transporter, "Unassigned"),
+    client: displayValue(
+      client?.userName ?? client?.username ?? vehicle.client,
+      "Unassigned",
+    ),
+    transporter: displayValue(
+      transporter?.userName ??
+        transporter?.username ??
+        transporter?.companyName ??
+        vehicle.transporter,
+      "Unassigned",
+    ),
     company: displayValue(
       record.company ??
         record.companyName ??
@@ -361,6 +379,7 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
     certificate: displayValue(record.certificate),
     command: displayValue(record.command),
     technician: displayValue(record.technician),
+    reason: displayValue(vehicle.reason ?? record.reason),
     filterStatus,
     month: getVehicleMonth(lastUpdated || vehicle.createdAt || ""),
   };
@@ -385,20 +404,21 @@ export default function Vehicle() {
 
   // Chart view states
   const [chartOption, setChartOption] = useState("Added");
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
   const [showYearSelector, setShowYearSelector] = useState(false);
   const [showChart, setShowChart] = useState(false);
   const [isYearMenuOpen, setIsYearMenuOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState("");
-  const vehiclesQuery = chartDateFields[chartOption] && selectedYear
-    ? { year: selectedYear }
-    : undefined;
 
+  /** Always load the full vehicle list for the table. Chart year is filtered client-side only —
+   *  passing `?year=` to `/vehicle/getAll` often returns [] and empties the table. */
   const {
-    currentData: vehicleData = [],
+    data: vehicleData = [],
     isLoading: isVehiclesLoading,
     isError: isVehiclesError,
     refetch: refetchVehicles,
-  } = useGetVehiclesQuery(vehiclesQuery);
+  } = useGetVehiclesQuery();
   const [localEdits, setLocalEdits] = useState<Record<string, Partial<Record<EditableVehicleField, string>>>>({});
   const rows = useMemo(
     () => vehicleData.map(toVehicleRow).map((row) => ({ ...row, ...localEdits[row.vehicleId] })),
@@ -412,13 +432,13 @@ export default function Vehicle() {
   const [editError, setEditError] = useState("");
   const [pendingDelete, setPendingDelete] = useState<VehicleRecord | null>(null);
   const [pendingStatusVehicle, setPendingStatusVehicle] = useState<VehicleRecord | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
   const [statusReason, setStatusReason] = useState("");
   const [commandVehicle, setCommandVehicle] = useState<VehicleRecord | null>(null);
   const [certificateVehicle, setCertificateVehicle] = useState<VehicleRecord | null>(null);
   const [logVehicle, setLogVehicle] = useState<VehicleRecord | null>(null);
   const [editingTransporterId, setEditingTransporterId] = useState<string | null>(null);
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
-  const [showAddDeviceDialog, setShowAddDeviceDialog] = useState(false);
   const [changeClientVehicle, setChangeClientVehicle] = useState<VehicleRecord | null>(null);
   const [assignVehicleId, setAssignVehicleId] = useState("");
   const [search, setSearch] = useState("");
@@ -534,6 +554,17 @@ export default function Vehicle() {
     setStatusReason("");
   };
 
+  const openStatusChange = (row: VehicleRecord) => {
+    if (!row.vehicleId) {
+      toast.error("This vehicle does not have a valid ID.");
+      return;
+    }
+    const currentStatus = normalizeLifecycleStatus(row.lifecycleStatus);
+    setSelectedStatus(currentStatus === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+    setStatusReason("");
+    setPendingStatusVehicle(row);
+  };
+
   const confirmVehicleStatusChange = async () => {
     if (!pendingStatusVehicle?.vehicleId) {
       toast.error("This vehicle does not have a valid ID.");
@@ -541,16 +572,23 @@ export default function Vehicle() {
     }
 
     const currentStatus = normalizeLifecycleStatus(pendingStatusVehicle.lifecycleStatus);
-    const nextStatus = currentStatus === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
+    if (selectedStatus === currentStatus) {
+      toast.error("Select a different status to change.");
+      return;
+    }
+    if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+      toast.error("Please enter a reason when setting Inactive.");
+      return;
+    }
 
     try {
       await updateVehicleStatus({
         externalId: pendingStatusVehicle.vehicleId,
-        status: nextStatus,
-        reason: statusReason,
+        status: selectedStatus,
+        reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
       }).unwrap();
       toast.success(
-        `${pendingStatusVehicle.vehicleNo} is now ${statusLabel(nextStatus).toLowerCase()}.`,
+        `${pendingStatusVehicle.vehicleNo} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
       );
       closeStatusDialog();
     } catch (error) {
@@ -560,12 +598,6 @@ export default function Vehicle() {
       );
     }
   };
-
-  const pendingNextStatus = pendingStatusVehicle
-    ? normalizeLifecycleStatus(pendingStatusVehicle.lifecycleStatus) === Status.ACTIVE
-      ? Status.INACTIVE
-      : Status.ACTIVE
-    : null;
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -581,6 +613,7 @@ export default function Vehicle() {
           row.transporter,
           row.company,
           row.address,
+          row.reason,
         ]
           .join(" ")
           .toLowerCase()
@@ -1385,7 +1418,7 @@ export default function Vehicle() {
                 <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               </div>
 
-              <details className="relative">
+              <details ref={columnVisibilityRef} className="relative">
                 <summary
                   className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${
                     isDark
@@ -1458,19 +1491,6 @@ export default function Vehicle() {
 
               <button
                 type="button"
-                onClick={() => setShowAddDeviceDialog(true)}
-                className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold transition ${
-                  isDark
-                    ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/20"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-cyan-300"
-                }`}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add Device
-              </button>
-
-              <button
-                type="button"
                 onClick={() => {
                   setEditingVehicleId(null);
                   setEditingRelationSeed(null);
@@ -1508,7 +1528,7 @@ export default function Vehicle() {
                     </th>
                   ))}
                   <th className="w-24 whitespace-nowrap px-3 py-3 font-medium">
-                    <span className="sr-only">Actions</span>
+                    Action
                   </th>
                 </tr>
               </thead>
@@ -1720,7 +1740,7 @@ export default function Vehicle() {
                                 page * pageSize + rowIndex + 1,
                               ).padStart(2, "0")}
                             </span>
-                          ) : column.key === "address" ? (
+                          ) : column.key === "address" || column.key === "reason" ? (
                             <span
                               className="block max-w-[250px] truncate"
                               title={value}
@@ -1751,14 +1771,7 @@ export default function Vehicle() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            if (!row.vehicleId) {
-                              toast.error("This vehicle does not have a valid ID.");
-                              return;
-                            }
-                            setStatusReason("");
-                            setPendingStatusVehicle(row);
-                          }}
+                          onClick={() => openStatusChange(row)}
                           disabled={isUpdatingVehicleStatus || !row.vehicleId}
                           aria-label={`Change status of ${row.vehicleNo}`}
                           title="Change status"
@@ -2078,97 +2091,26 @@ export default function Vehicle() {
         />
       )}
 
-      {showAddDeviceDialog && (
-        <AddDeviceDialog
-          isDark={isDark}
-          onClose={() => setShowAddDeviceDialog(false)}
-          onSaved={() => {
-            setShowAddDeviceDialog(false);
-            void refetchVehicles();
-          }}
-        />
-      )}
-
-      {pendingStatusVehicle && pendingNextStatus && (
-        <div
-          className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
-            isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
-          }`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isUpdatingVehicleStatus) closeStatusDialog();
-          }}
-        >
-          <section
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="vehicle-status-title"
-            className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-              isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-            }`}
-          >
-            <h3
-              id="vehicle-status-title"
-              className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-            >
-              Change vehicle status?
-            </h3>
-            <p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-              Change the status of{" "}
-              <strong className={isDark ? "text-white" : "text-slate-900"}>
-                {pendingStatusVehicle.vehicleNo || "this vehicle"}
-              </strong>{" "}
-              to {statusLabel(pendingNextStatus)}?
-            </p>
-            {pendingNextStatus === Status.INACTIVE ? (
-              <label className="mt-4 block">
-                <span
-                  className={`mb-1.5 block text-[12px] font-medium ${
-                    isDark ? "text-slate-300" : "text-slate-700"
-                  }`}
-                >
-                  Reason <span className="font-normal text-slate-500">(Optional)</span>
-                </span>
-                <textarea
-                  value={statusReason}
-                  onChange={(event) => setStatusReason(event.target.value)}
-                  rows={3}
-                  placeholder="Why is this vehicle being deactivated?"
-                  className={`h-auto w-full resize-none rounded-lg border px-3 py-2 text-xs outline-none transition focus:ring-2 ${
-                    isDark
-                      ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
-                      : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
-                  }`}
-                />
-              </label>
-            ) : null}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeStatusDialog}
-                disabled={isUpdatingVehicleStatus}
-                className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-                  isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmVehicleStatusChange()}
-                disabled={isUpdatingVehicleStatus}
-                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-                  isDark
-                    ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50 hover:bg-cyan-300/[0.22]"
-                    : "border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
-                }`}
-              >
-                {isUpdatingVehicleStatus && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Confirm
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+      <ChangeStatusDialog
+        isDark={isDark}
+        open={Boolean(pendingStatusVehicle)}
+        title="Change vehicle status"
+        entityName={pendingStatusVehicle?.vehicleNo || "this vehicle"}
+        entityNoun="vehicle"
+        currentStatus={
+          pendingStatusVehicle
+            ? normalizeLifecycleStatus(pendingStatusVehicle.lifecycleStatus)
+            : Status.ACTIVE
+        }
+        selectedStatus={selectedStatus}
+        onSelectedStatusChange={setSelectedStatus}
+        reason={statusReason}
+        onReasonChange={setStatusReason}
+        isSubmitting={isUpdatingVehicleStatus}
+        onCancel={closeStatusDialog}
+        onConfirm={() => void confirmVehicleStatusChange()}
+        titleId="vehicle-status-title"
+      />
 
       {changeClientVehicle && (
         <ChangeVehicleClientDialog

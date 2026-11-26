@@ -2,8 +2,10 @@ import { fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { BaseQueryFn, FetchArgs, FetchBaseQueryError } from "@reduxjs/toolkit/query";
 import type { RootState } from "../../store";
 import { startGlobalLoading, stopGlobalLoading } from "../../slices/globalLoaderSlice";
-import { API_CONFIG } from "@/config/env";
+import { API_CONFIG, AUTH_CONFIG } from "@/config/env";
 import { toast } from "@/hooks/use-toast";
+import { SessionRevokeReason } from "@/enums/SessionRevokeReason";
+import { forceLogout } from "@/utils/forceLogout";
 
 const baseQuery = fetchBaseQuery({
   baseUrl: API_CONFIG.BASE_URL,
@@ -15,6 +17,9 @@ const baseQuery = fetchBaseQuery({
     return headers;
   },
 });
+
+const getRequestUrl = (args: string | FetchArgs): string =>
+  typeof args === "string" ? args : args.url ?? "";
 
 export const baseQueryWithInterceptor: BaseQueryFn<
   string | FetchArgs,
@@ -41,8 +46,14 @@ export const baseQueryWithInterceptor: BaseQueryFn<
   if (result.error) {
     const { status } = result.error as { status?: number };
 
-    // 401: do not call /user/refresh and do not auto-logout (keeps Job Sheet save from kicking the user out).
+    // Expired/invalid session → clear auth and send user to login.
+    // Skip login itself so wrong credentials still show the form error toast.
     if (status === 401) {
+      const requestUrl = getRequestUrl(args);
+      const isLoginRequest = requestUrl.includes("/user/login");
+      if (AUTH_CONFIG.ENABLED && !isLoginRequest) {
+        forceLogout(api.dispatch, { reason: SessionRevokeReason.SESSION_EXPIRED });
+      }
       return result;
     }
 

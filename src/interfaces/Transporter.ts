@@ -7,10 +7,10 @@ export interface CreateTransporterRequest {
   timezone: string;
   inactiveTime: number;
   language: string;
-  name?: string;
-  email?: string;
-  phone?: string;
-  address?: string;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
   subscriptionStartDate: string;
   subscriptionDueDate: string;
   subscriptionExtendDate?: string;
@@ -21,6 +21,7 @@ export interface CreateTransporterRequest {
   active: boolean;
   overwriteSubscription: boolean;
   inactiveAfterExpiry: boolean;
+  status?: string;
   reason?: string;
   roles?: string[];
 }
@@ -33,7 +34,6 @@ export interface Transporter extends Omit<CreateTransporterRequest, "password" |
   password?: string;
   suspended?: boolean;
   inactiveDate?: string;
-  status?: string;
   createdAt?: string;
   updatedAt?: string;
 }

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useCloseOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import {
 	ArrowUpDown,
@@ -15,6 +16,7 @@ import {
 	Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { BulkUploadDialog } from "@/components/Alert/BulkUploadDialog";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
@@ -72,6 +74,7 @@ type ServiceRow = {
 	uploadDoc: string;
 	clone: string;
 	status: Status;
+	reason: string;
 	client: string;
 	transporter: string;
 	vehicleId: string;
@@ -102,6 +105,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "uploadDoc", label: "Upload Doc" },
 	{ key: "clone", label: "Clone" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 
@@ -241,6 +245,10 @@ export default function ServiceAndMaintenance() {
 				uploadDoc: service.serviceDocument ? "Uploaded" : "",
 				clone: "Clone",
 				status: currentStatus(service.status),
+				reason:
+					currentStatus(service.status) === Status.INACTIVE
+						? (service.reason?.trim() ?? "")
+						: "",
 				client: service.client ?? "",
 				transporter: service.transporter ?? "",
 				vehicleId: serviceVehicleId,
@@ -255,6 +263,8 @@ export default function ServiceAndMaintenance() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showColumns, setShowColumns] = useState(false);
+	const columnVisibilityRef = useRef<HTMLDivElement>(null);
+	useCloseOnOutsideClick(columnVisibilityRef, showColumns, () => setShowColumns(false));
 	const [sortKey, setSortKey] = useState<ColumnKey>("vehicleNo");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [formOpen, setFormOpen] = useState(false);
@@ -263,6 +273,7 @@ export default function ServiceAndMaintenance() {
 	const [form, setForm] = useState<FormState>(emptyForm);
 	const [pendingStatus, setPendingStatus] = useState<ServiceRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<ServiceRow | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 
 	const pageSize = 10;
@@ -426,18 +437,29 @@ export default function ServiceAndMaintenance() {
 		}
 	};
 
+	const closeStatusDialog = () => {
+		setPendingStatus(null);
+		setStatusReason("");
+	};
+
 	const confirmStatusChange = async () => {
 		if (!pendingStatus?.id) return;
-		const nextStatus = pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE;
+		if (selectedStatus === pendingStatus.status) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
 		try {
 			await updateServiceStatus({
 				externalId: pendingStatus.id,
-				status: nextStatus,
-				reason: statusReason,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 			}).unwrap();
-			toast.success(`${pendingStatus.serviceName || "Service"} is now ${statusLabel(nextStatus).toLowerCase()}.`);
-			setPendingStatus(null);
-			setStatusReason("");
+			toast.success(`${pendingStatus.serviceName || "Service"} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
+			closeStatusDialog();
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not update the service status."));
 		}
@@ -542,7 +564,7 @@ export default function ServiceAndMaintenance() {
 							<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search vehicle, service..." aria-label="Search services" className={searchInputClass(isDark)} />
 						</label>
 						<div className="flex flex-wrap items-center gap-2">
-							<div className="relative">
+							<div ref={columnVisibilityRef} className="relative">
 								<button type="button" onClick={() => setShowColumns((open) => !open)} aria-expanded={showColumns} className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] font-medium ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300" : "border-slate-200 bg-white text-slate-700"}`}>
 									<Columns3 className="h-3.5 w-3.5" /> Column Visibility <ChevronDown className="h-3 w-3" />
 								</button>
@@ -634,6 +656,7 @@ export default function ServiceAndMaintenance() {
 														title="Change status"
 														aria-label={`Change status of ${row.serviceName || "service"}`}
 														onClick={() => {
+															setSelectedStatus(row.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
 															setStatusReason("");
 															setPendingStatus(row);
 														}}
@@ -784,90 +807,23 @@ export default function ServiceAndMaintenance() {
 				</AlertModal>
 			)}
 
-			{pendingStatus ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isUpdatingStatus) {
-							setPendingStatus(null);
-							setStatusReason("");
-						}
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="service-status-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="service-status-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Change service status?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							Change the status of{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingStatus.serviceName || "this service"}
-							</strong>{" "}
-							to{" "}
-							{statusLabel(
-								pendingStatus.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE,
-							)}
-							?
-						</p>
-						{pendingStatus.status === Status.ACTIVE ? (
-							<label className="mt-4 block">
-								<span
-									className={`mb-1.5 block text-[12px] font-medium ${
-										isDark ? "text-slate-300" : "text-slate-700"
-									}`}
-								>
-									Reason <span className="font-normal text-slate-500">(Optional)</span>
-								</span>
-								<textarea
-									value={statusReason}
-									onChange={(event) => setStatusReason(event.target.value)}
-									rows={3}
-									placeholder="Why is this service being deactivated?"
-									className={`${inputClass(isDark)} h-auto resize-none py-2`}
-								/>
-							</label>
-						) : null}
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => {
-									setPendingStatus(null);
-									setStatusReason("");
-								}}
-								disabled={isUpdatingStatus}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmStatusChange()}
-								disabled={isUpdatingStatus}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
-										: "border-cyan-300 bg-cyan-50 text-cyan-800"
-								}`}
-							>
-								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Confirm
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatus)}
+				title="Change service status"
+				entityName={pendingStatus?.serviceName || "this service"}
+				entityNoun="service"
+				currentStatus={pendingStatus?.status ?? Status.ACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="service-status-title"
+				zIndexClassName="z-[810]"
+			/>
 
 			{pendingDelete ? (
 				<div

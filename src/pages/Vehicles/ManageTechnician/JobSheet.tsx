@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,10 +30,11 @@ type JobSheetRecord = {
 	assignOn: string;
 	doneOn: string;
 	status: JobStatus;
+	reason: string;
 	closedBy: string;
 };
 
-type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "orderNo" | "assignOn" | "doneOn" | "status" | "closedBy" | "action";
+type ColumnKey = "technicianName" | "vehicle" | "transporter" | "contactPerson" | "phone" | "instruction" | "task" | "remark" | "orderNo" | "assignOn" | "doneOn" | "status" | "reason" | "closedBy" | "action";
 type StatusFilter = "All" | JobStatus;
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -47,6 +50,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "assignOn", label: "Assign On" },
 	{ key: "doneOn", label: "Done On" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "closedBy", label: "Closed By" },
 	{ key: "action", label: "Action" },
 ];
@@ -75,8 +79,11 @@ export default function JobSheet() {
 	const [updateJobSheet, { isLoading: isUpdatingStatus }] = useUpdateJobSheetMutation();
 	const [deleteJobSheet, { isLoading: isDeleting }] = useDeleteJobSheetMutation();
 	const [editingJob, setEditingJob] = useState<JobSheetEntity | null>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pendingStatusJob, setPendingStatusJob] = useState<JobSheetRecord | null>(null);
 	const [pendingDeleteJob, setPendingDeleteJob] = useState<JobSheetRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const rows = useMemo<JobSheetRecord[]>(() => {
 		const vehicleNames = new Map(
@@ -135,6 +142,7 @@ export default function JobSheet() {
 				"";
 			const reason = String(job.reason ?? "").trim();
 			const systemReasons = new Set(["New jobsheet created", "Job completed", "Jobsheet updated"]);
+			const inactiveReason = inactive && reason && !systemReasons.has(reason) ? reason : "";
 			return {
 				id: job.externalId || String(job.id),
 				technicianName,
@@ -144,11 +152,12 @@ export default function JobSheet() {
 				phone: job.phone ?? "",
 				instruction: job.instruction ?? "",
 				task: "",
-				remark: reason && !systemReasons.has(reason) ? reason : "",
+				remark: "",
 				orderNo: job.orderNo ?? "",
 				assignOn: dateLabel(job.createdAt),
 				doneOn: inactive ? dateLabel(job.updatedAt) : "",
 				status: inactive ? "Inactive" : "Active",
+				reason: inactiveReason,
 				closedBy: inactive ? technicianName : "",
 			};
 		});
@@ -168,7 +177,7 @@ export default function JobSheet() {
 		return rows.filter((row) => {
 			if (statusFilter !== "All" && row.status !== statusFilter) return false;
 			if (!query) return true;
-			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.orderNo, row.status].join(" ").toLowerCase().includes(query);
+			return [row.technicianName, row.vehicle, row.transporter, row.contactPerson, row.phone, row.instruction, row.task, row.remark, row.orderNo, row.status, row.reason].join(" ").toLowerCase().includes(query);
 		});
 	}, [rows, search, statusFilter]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
@@ -217,32 +226,36 @@ export default function JobSheet() {
 		}
 	};
 
-	const pendingNextStatus = pendingStatusJob
-		? pendingStatusJob.status === "Active"
-			? Status.INACTIVE
-			: Status.ACTIVE
-		: null;
+	const jobSheetCurrentStatus = (row: JobSheetRecord) =>
+		row.status === "Active" ? Status.ACTIVE : Status.INACTIVE;
 
 	const openStatusChange = (row: JobSheetRecord) => {
+		const currentStatus = jobSheetCurrentStatus(row);
+		setSelectedStatus(currentStatus === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
 		setStatusReason("");
 		setPendingStatusJob(row);
 	};
 
 	const confirmStatusChange = async () => {
-		if (!pendingStatusJob || !pendingNextStatus) return;
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (!pendingStatusJob) return;
+		const currentStatus = jobSheetCurrentStatus(pendingStatusJob);
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		try {
 			await updateJobSheet({
 				externalId: pendingStatusJob.id,
 				body: {
-					status: pendingNextStatus,
-					reason: statusReason.trim(),
+					status: selectedStatus,
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 				},
 			}).unwrap();
-			toast.success(`Job sheet is now ${statusLabel(pendingNextStatus).toLowerCase()}.`);
+			toast.success(`Job sheet is now ${statusLabel(selectedStatus).toLowerCase()}.`);
 			closeStatusDialog();
 			void refetch();
 		} catch (error) {
@@ -253,6 +266,7 @@ export default function JobSheet() {
 
 	const cell = (key: ColumnKey, row: JobSheetRecord) => {
 		if (key === "technicianName" || key === "vehicle") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
+		if (key === "reason") return row.reason.trim() ? row.reason : "—";
 		if (key === "status") {
 			const active = row.status === "Active";
 			return (
@@ -382,7 +396,7 @@ export default function JobSheet() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Column Visibility
@@ -456,64 +470,24 @@ export default function JobSheet() {
 				/>
 			)}
 
-			{pendingStatusJob && pendingNextStatus ? (
-				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
-					<button type="button" aria-label="Close status dialog" className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]" onClick={closeStatusDialog} />
-					<section
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="job-status-title"
-						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
-							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
-						}`}
-					>
-						<h2 id="job-status-title" className="text-[15px] font-semibold">
-							Change status
-						</h2>
-						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							Set <span className="font-medium">{pendingStatusJob.vehicle}</span> to{" "}
-							<span className="font-semibold">{statusLabel(pendingNextStatus)}</span>?
-						</p>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this job sheet being set ${statusLabel(pendingNextStatus).toLowerCase()}?`}
-								className={`${inputClass} h-auto resize-none py-2`}
-							/>
-						</label>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={closeStatusDialog}
-								disabled={isUpdatingStatus}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmStatusChange()}
-								disabled={isUpdatingStatus}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-50"
-										: "border-cyan-300 bg-cyan-50 text-cyan-800"
-								}`}
-							>
-								{isUpdatingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Confirm
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatusJob)}
+				title="Change job sheet status"
+				entityName={pendingStatusJob?.vehicle || pendingStatusJob?.technicianName || "this job sheet"}
+				entityNoun="job sheet"
+				currentStatus={
+					pendingStatusJob ? jobSheetCurrentStatus(pendingStatusJob) : Status.ACTIVE
+				}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="job-status-title"
+			/>
 
 			{pendingDeleteJob ? (
 				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">

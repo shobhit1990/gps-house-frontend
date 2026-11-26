@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, LoaderCircle, Pencil, Plus, Power, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ import {
 	useGetDriverDetailsQuery,
 	useLazyGetDriverDetailByIdQuery,
 	useUpdateDriverDetailMutation,
+	useUpdateDriverDetailStatusMutation,
 } from "@/store/services/api/DriverDetails";
 
 type DriverRecord = {
@@ -44,6 +46,7 @@ type DriverRecord = {
 	bloodGroup: string;
 	supervisorName: string;
 	supervisorPhone: string;
+	reason: string;
 };
 
 type ColumnKey = keyof Omit<DriverRecord, "id">;
@@ -52,7 +55,6 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "name", label: "Name" },
 	{ key: "transporter", label: "Transporter" },
 	{ key: "vehicle", label: "Vehicle" },
-	{ key: "active", label: "Active" },
 	{ key: "assigned", label: "Assigned" },
 	{ key: "joiningDate", label: "D.O.J" },
 	{ key: "leavingDate", label: "D.O.L" },
@@ -108,7 +110,7 @@ const toDriverRecord = (driver: DriverDetail, transporterName: string): DriverRe
 	name: `${driver.firstName} ${driver.lastName}`.trim(),
 	transporter: transporterName || driver.transporterName || driver.transporter,
 	vehicle: driver.deviceId ?? "",
-	active: driver.status === Status.ACTIVE,
+	active: String(driver.status ?? "").trim().toLowerCase() === Status.ACTIVE,
 	assigned: false,
 	joiningDate: driver.dateOfJoining ?? "",
 	leavingDate: driver.dateOfLeaving ?? "",
@@ -128,6 +130,7 @@ const toDriverRecord = (driver: DriverDetail, transporterName: string): DriverRe
 	bloodGroup: driver.bloodGroup ?? "",
 	supervisorName: driver.supervisorName ?? "",
 	supervisorPhone: driver.supervisorPhoneNumber ?? "",
+	reason: driver.reason?.trim() ?? "",
 });
 
 export default function DriverDetails() {
@@ -137,10 +140,15 @@ export default function DriverDetails() {
 	const { data: driverDetails = [], isLoading, isError, refetch } = useGetDriverDetailsQuery();
 	const { data: transporterOptions = [] } = useGetTransporterMasterQuery();
 	const [createDriverDetail] = useCreateDriverDetailMutation();
-	const [updateDriverDetail, { isLoading: isUpdatingStatus }] = useUpdateDriverDetailMutation();
+	const [updateDriverDetail, { isLoading: isUpdatingDriver }] = useUpdateDriverDetailMutation();
+	const [updateDriverDetailStatus, { isLoading: isUpdatingDriverStatus }] =
+		useUpdateDriverDetailStatusMutation();
+	const isUpdatingStatus = isUpdatingDriver || isUpdatingDriverStatus;
 	const [deleteDriverDetail] = useDeleteDriverDetailMutation();
 	const [getDriverDetailById] = useLazyGetDriverDetailByIdQuery();
 	const [uploadedRows, setUploadedRows] = useState<DriverRecord[]>([]);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -245,6 +253,7 @@ export default function DriverDetails() {
 				...driver,
 				id: `upload-${Date.now()}-${index}`,
 				transporter: values.transporter,
+				reason: "",
 			})),
 		]);
 		setSearch("");
@@ -292,18 +301,54 @@ export default function DriverDetails() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
+		const reason = selectedStatus === Status.INACTIVE ? statusReason.trim() : "";
+		const source = driverDetails.find((item) => item.externalId === pendingStatusDriver.id);
 		try {
-			await updateDriverDetail({
-				externalId: pendingStatusDriver.id,
-				body: {
+			if (source) {
+				await updateDriverDetail({
+					externalId: pendingStatusDriver.id,
+					body: {
+						client: source.client,
+						transporter: source.transporter,
+						firstName: source.firstName,
+						lastName: source.lastName,
+						deviceId: source.deviceId,
+						dateOfJoining: source.dateOfJoining,
+						dateOfBirth: source.dateOfBirth,
+						experience: source.experience,
+						salary: source.salary,
+						phoneNumber: source.phoneNumber,
+						licenseNumber: source.licenseNumber,
+						licenseToDrive: source.licenseToDrive,
+						licenseIssueDate: source.licenseIssueDate,
+						licenseExpiryDate: source.licenseExpiryDate,
+						lifeInsuranceNumber: source.lifeInsuranceNumber,
+						lifeInsuranceExpiryDate: source.lifeInsuranceExpiryDate,
+						mediclaimNumber: source.mediclaimNumber,
+						mediclaimExpiryDate: source.mediclaimExpiryDate,
+						bloodGroup: source.bloodGroup,
+						supervisorName: source.supervisorName,
+						supervisorPhoneNumber: source.supervisorPhoneNumber,
+						address: source.address,
+						licenseAvailable: source.licenseAvailable,
+						licenseVerified: source.licenseVerified,
+						enableGeoVerifiedAttendance: source.enableGeoVerifiedAttendance,
+						geofences: source.geofences,
+						status: selectedStatus,
+						reason,
+					},
+				}).unwrap();
+			} else {
+				await updateDriverDetailStatus({
+					externalId: pendingStatusDriver.id,
 					status: selectedStatus,
-					reason: statusReason.trim(),
-				},
-			}).unwrap();
+					reason,
+				}).unwrap();
+			}
 			toast.success(`${pendingStatusDriver.name} is now ${statusLabel(selectedStatus).toLowerCase()}.`);
 			closeStatusDialog();
 			void refetch();
@@ -336,31 +381,36 @@ export default function DriverDetails() {
 		</span>
 	);
 
+	const statusBadge = (row: DriverRecord) => (
+		<span
+			className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
+				row.active
+					? isDark
+						? "bg-emerald-400/15 text-emerald-300"
+						: "bg-emerald-100 text-emerald-700"
+					: isDark
+						? "bg-rose-400/15 text-rose-200"
+						: "bg-rose-50 text-rose-700"
+			}`}
+		>
+			{row.active ? "Active" : "Inactive"}
+		</span>
+	);
+
 	const cell = (key: ColumnKey, row: DriverRecord) => {
-		if (key === "active") {
-			return (
-				<button
-					type="button"
-					onClick={() => openStatusChange(row)}
-					disabled={isUpdatingStatus}
-					aria-label={`Change status of ${row.name}`}
-					title="Change status"
-					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
-						row.active
-							? isDark
-								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
-								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-							: isDark
-								? "bg-slate-500/15 text-slate-300 hover:bg-slate-500/25"
-								: "bg-slate-100 text-slate-600 hover:bg-slate-200"
-					}`}
-				>
-					{row.active ? "Active" : "Inactive"}
-				</button>
-			);
-		}
+		if (key === "active") return statusBadge(row);
 		if (key === "assigned") return chip(row.assigned, "Yes", "No");
 		if (key === "licenseAvailable") return chip(row.licenseAvailable, "Yes", "No");
+		if (key === "reason") {
+			return (
+				<span
+					className={`block max-w-[220px] truncate ${isDark ? "text-slate-400" : "text-slate-600"}`}
+					title={row.reason || undefined}
+				>
+					{row.reason || "—"}
+				</span>
+			);
+		}
 		if (dateColumns.has(key)) return formatDate(String(row[key]));
 		if (key === "name" || key === "vehicle") {
 			const value = textValue(row[key]);
@@ -409,7 +459,7 @@ export default function DriverDetails() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Columns
@@ -440,7 +490,9 @@ export default function DriverDetails() {
 									{visibleColumns.map((column) => (
 										<th key={column.key} scope="col" className="whitespace-nowrap px-3 py-3 font-medium first:px-4">{column.label}</th>
 									))}
-									<th scope="col" className="w-24 px-3 py-3"><span className="sr-only">Actions</span></th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Status</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Reason</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-3 font-medium">Action</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -449,6 +501,8 @@ export default function DriverDetails() {
 										{visibleColumns.map((column) => (
 											<td key={column.key} className="whitespace-nowrap px-3 py-3 first:px-4">{cell(column.key, row)}</td>
 										))}
+										<td className="whitespace-nowrap px-3 py-3">{statusBadge(row)}</td>
+										<td className="whitespace-nowrap px-3 py-3">{cell("reason", row)}</td>
 										<td className="px-3 py-3">
 											<div className="flex items-center gap-1">
 												{!row.id.startsWith("upload-") && (
@@ -493,21 +547,21 @@ export default function DriverDetails() {
 								))}
 								{isError && (
 									<tr>
-										<td colSpan={visibleColumns.length + 1} role="alert" className="px-6 py-16 text-center text-sm text-rose-500">
+										<td colSpan={visibleColumns.length + 3} role="alert" className="px-6 py-16 text-center text-sm text-rose-500">
 											Could not load driver details. Refresh to try again.
 										</td>
 									</tr>
 								)}
 								{isLoading && pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length + 1} role="status" className="px-6 py-16 text-center">
+										<td colSpan={visibleColumns.length + 3} role="status" className="px-6 py-16 text-center">
 											<LoaderCircle className="mx-auto h-5 w-5 animate-spin text-cyan-500" />
 										</td>
 									</tr>
 								)}
 								{!isLoading && !isError && pageRows.length === 0 && (
 									<tr>
-										<td colSpan={visibleColumns.length + 1} className="px-6 py-16 text-center">
+										<td colSpan={visibleColumns.length + 3} className="px-6 py-16 text-center">
 											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No drivers match this search</p>
 											<p className="mt-1 text-xs text-slate-500">Try another name, vehicle, or phone number.</p>
 										</td>
@@ -568,7 +622,7 @@ export default function DriverDetails() {
 						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
 							Current status of <span className="font-medium">{pendingStatusDriver.name}</span> is{" "}
 							<span className="font-medium">{pendingStatusDriver.active ? "Active" : "Inactive"}</span>. Choose
-							Active or Inactive, then enter a reason.
+							Active or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -583,18 +637,20 @@ export default function DriverDetails() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this driver being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`${inputClass(isDark)} h-auto resize-none py-2`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this driver being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

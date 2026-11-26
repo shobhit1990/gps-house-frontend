@@ -1,5 +1,7 @@
 import { api } from "../api";
+import { Status } from "@/enums/Status";
 import type { DriverDetail, CreateDriverDetailRequest, UpdateDriverDetailRequest } from "@/interfaces/DriverDetail";
+import { normalizeReason, statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
 type NestedParty =
@@ -8,10 +10,16 @@ type NestedParty =
 	| null
 	| undefined;
 
-type DriverDetailApiRecord = Omit<DriverDetail, "externalId" | "client" | "transporter" | "clientName" | "transporterName"> & {
+type DriverDetailApiRecord = Omit<
+	DriverDetail,
+	"externalId" | "client" | "transporter" | "clientName" | "transporterName" | "status" | "reason"
+> & {
 	externalId?: string;
 	client?: NestedParty;
 	transporter?: NestedParty;
+	status?: Status | string;
+	reason?: string | null;
+	active?: boolean;
 };
 
 const asId = (value: NestedParty): string => {
@@ -26,6 +34,14 @@ const asPartyName = (value: NestedParty): string => {
 	return (value.name ?? value.companyName ?? "").trim();
 };
 
+const normalizeStatus = (status?: string, active?: boolean): Status => {
+	const value = String(status ?? "").trim().toLowerCase();
+	if (value === Status.INACTIVE || value === "inactive") return Status.INACTIVE;
+	if (value === Status.ACTIVE || value === "active") return Status.ACTIVE;
+	if (typeof active === "boolean") return active ? Status.ACTIVE : Status.INACTIVE;
+	return Status.ACTIVE;
+};
+
 const normalizeDriverDetail = (record: DriverDetailApiRecord): DriverDetail => ({
 	...record,
 	externalId: String(record?.externalId ?? record?.id ?? ""),
@@ -35,11 +51,15 @@ const normalizeDriverDetail = (record: DriverDetailApiRecord): DriverDetail => (
 	transporterName: asPartyName(record.transporter),
 	licenseToDrive: Array.isArray(record.licenseToDrive) ? record.licenseToDrive : [],
 	geofences: Array.isArray(record.geofences) ? record.geofences : [],
+	status: normalizeStatus(record.status, record.active),
+	reason: normalizeReason(record.reason),
 });
 
 const normalizeDriverDetailResponse = (response: ApiEnvelope<DriverDetailApiRecord>): DriverDetail => {
 	const record = unwrapResponse(response);
-	if (!record) throw new Error("Driver detail response did not contain a record.");
+	if (!record || typeof record !== "object") {
+		throw new Error("Driver detail response did not contain a record.");
+	}
 	return normalizeDriverDetail(record);
 };
 
@@ -84,6 +104,24 @@ export const driverDetailsApi = api.injectEndpoints({
 			],
 		}),
 
+		updateDriverDetailStatus: builder.mutation<
+			void,
+			{ externalId: string; status: Status; reason?: string }
+		>({
+			query: ({ externalId, status, reason }) => ({
+				url: `/driverDetail/update/${encodeURIComponent(externalId)}`,
+				method: "PUT",
+				body: statusChangeBody(status, reason, {
+					active: status === Status.ACTIVE,
+					...(reason?.trim() ? { reason: reason.trim() } : {}),
+				}),
+			}),
+			invalidatesTags: (_result, _error, { externalId }) => [
+				{ type: "DriverDetails", id: externalId },
+				{ type: "DriverDetails", id: "LIST" },
+			],
+		}),
+
 		deleteDriverDetail: builder.mutation<void, string>({
 			query: (externalId) => ({
 				url: `/driverDetail/delete/${encodeURIComponent(externalId)}`,
@@ -104,5 +142,6 @@ export const {
 	useLazyGetDriverDetailByIdQuery,
 	useCreateDriverDetailMutation,
 	useUpdateDriverDetailMutation,
+	useUpdateDriverDetailStatusMutation,
 	useDeleteDriverDetailMutation,
 } = driverDetailsApi;

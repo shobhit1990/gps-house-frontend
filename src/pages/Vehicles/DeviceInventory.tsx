@@ -1,12 +1,15 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Pencil, Plus, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Download, Pencil, Plus, Power, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
 import { UploadInventory, type UploadInventoryValues } from "@/components/DeviceInventory/UploadInventory";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { AssignType } from "@/enums/AssignType";
+import { Status, statusLabel } from "@/enums/Status";
 import { useGetClientMasterQuery, useGetDeviceTypeMasterQuery, useGetTechnicianMasterQuery } from "@/store/services/api/Master";
 import {
 	useBulkUploadInventoryMutation,
@@ -16,7 +19,7 @@ import {
 	useGetInventoryQuery,
 	useUpdateInventoryMutation,
 } from "@/store/services/api/Inventory";
-import type { CreateInventoryRequest, Inventory } from "@/interfaces/Inventory";
+import type { CreateInventoryRequest, Inventory, InventoryStatus } from "@/interfaces/Inventory";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type InventoryRecord = InventoryFormValues & {
@@ -32,6 +35,7 @@ type InventoryRecord = InventoryFormValues & {
 	packet: string;
 	prt: string;
 	transfer: string;
+	reason: string;
 };
 
 type ColumnKey =
@@ -49,6 +53,7 @@ type ColumnKey =
 	| "transferTime"
 	| "password"
 	| "status"
+	| "reason"
 	| "wirePlus"
 	| "assigned"
 	| "added"
@@ -77,13 +82,14 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "transferBy", label: "Transfer By" },
 	{ key: "transferTime", label: "Transfer Time" },
 	{ key: "password", label: "Password" },
-	{ key: "status", label: "Status" },
 	{ key: "wirePlus", label: "Wire+" },
 	{ key: "assigned", label: "Assigned" },
 	{ key: "added", label: "Added" },
 	{ key: "packet", label: "Packet" },
 	{ key: "prt", label: "PRT" },
 	{ key: "transfer", label: "Transfer" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 const statusOptions = ["All", "In Stock", "Used"];
@@ -132,6 +138,8 @@ export default function DeviceInventory() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const [tab, setTab] = useState<"Details" | "Summary">("Details");
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [search, setSearch] = useState("");
 	const [summarySearch, setSummarySearch] = useState("");
 	const [clientFilter, setClientFilter] = useState("");
@@ -146,6 +154,10 @@ export default function DeviceInventory() {
 	const [editingInventory, setEditingInventory] = useState<InventoryRecord | null>(null);
 	const [uploadError, setUploadError] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
+	const [pendingStatusInventory, setPendingStatusInventory] = useState<InventoryRecord | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
+	const [statusReason, setStatusReason] = useState("");
+	const isUpdatingStatus = isUpdatingInventory && Boolean(pendingStatusInventory);
 
 	const deviceTypeNames = useMemo(
 		() =>
@@ -199,6 +211,7 @@ export default function DeviceInventory() {
 			packet: "",
 			prt: "",
 			transfer: "",
+			reason: item.status === "active" ? "" : text(item.reason).trim(),
 		};
 	}), [clientMaster, deviceTypeNames, inventoryData, technicianMaster]);
 	const rows = apiRows;
@@ -330,11 +343,114 @@ export default function DeviceInventory() {
 		setPage(0);
 	};
 
+	const closeStatusDialog = () => {
+		setPendingStatusInventory(null);
+		setStatusReason("");
+	};
+
+	const openStatusChange = (row: InventoryRecord) => {
+		const currentStatus = row.active ? Status.ACTIVE : Status.INACTIVE;
+		setSelectedStatus(currentStatus === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+		setStatusReason("");
+		setPendingStatusInventory(row);
+	};
+
+	const confirmInventoryStatusChange = async () => {
+		if (!pendingStatusInventory?.externalId) return;
+		const currentStatus = pendingStatusInventory.active ? Status.ACTIVE : Status.INACTIVE;
+		if (selectedStatus === currentStatus) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
+		const reason = selectedStatus === Status.INACTIVE ? statusReason.trim() : "";
+		const nextStatus: InventoryStatus =
+			selectedStatus === Status.ACTIVE ? "active" : "inactive";
+		const source = inventoryData.find(
+			(item) =>
+				item.externalId === pendingStatusInventory.externalId ||
+				String(item.id) === String(pendingStatusInventory.id),
+		);
+		try {
+			if (source) {
+				const secondarySim = String(source.secondarySimNumber ?? "").trim();
+				await updateInventory({
+					externalId: pendingStatusInventory.externalId,
+					body: {
+						inventoryType: source.inventoryType,
+						imei: source.imei,
+						simNumber: source.simNumber,
+						simOperator: source.simOperator,
+						...(secondarySim
+							? {
+									secondarySimNumber: secondarySim,
+									secondarySimOperator: source.secondarySimOperator || undefined,
+								}
+							: {}),
+						deviceType: source.deviceType,
+						assignType: source.assignType,
+						client: source.client,
+						...(source.technician ? { technician: source.technician } : {}),
+						password: source.password,
+						ignitionWireConnected: Boolean(source.ignitionWireConnected),
+						airConditionWireConnected: Boolean(source.airConditionWireConnected),
+						analogSensor: Boolean(source.analogSensor),
+						status: nextStatus,
+						reason,
+					},
+				}).unwrap();
+			} else {
+				await updateInventory({
+					externalId: pendingStatusInventory.externalId,
+					body: {
+						status: nextStatus,
+						reason,
+					},
+				}).unwrap();
+			}
+			toast.success(
+				`${pendingStatusInventory.imei || "Inventory"} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
+			);
+			closeStatusDialog();
+		} catch (error) {
+			console.error("Failed to update inventory status.", error);
+			toast.error(apiErrorMessage(error, "Could not update the inventory status."));
+		}
+	};
+
 	const cell = (key: ColumnKey, row: InventoryRecord) => {
 		if (key === "imei") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row.imei)}</span>;
 		if (key === "status") {
 			const active = row.active;
-			return <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${active ? (isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (isDark ? "bg-white/[0.06] text-slate-400" : "bg-slate-100 text-slate-600")}`}>{active ? "Active" : "Inactive"}</span>;
+			return (
+				<span
+					className={`inline-flex rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
+						active
+							? isDark
+								? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200"
+								: "border-emerald-200 bg-emerald-50 text-emerald-700"
+							: isDark
+								? "border-rose-300/25 bg-rose-500/20 text-rose-200"
+								: "border-rose-200 bg-rose-100 text-rose-700"
+					}`}
+				>
+					{active ? "Active" : "Inactive"}
+				</span>
+			);
+		}
+		if (key === "reason") {
+			const reason = row.reason.trim();
+			return (
+				<span
+					className={`block max-w-[220px] truncate ${isDark ? "text-slate-400" : "text-slate-600"}`}
+					title={reason || undefined}
+				>
+					{reason || "—"}
+				</span>
+			);
 		}
 		if (key === "wirePlus") return row.ignitionWire ? "Yes" : "No";
 		if (key === "assigned") return textValue(assignTypeLabel(row.assignType) || row.assignType);
@@ -437,7 +553,7 @@ export default function DeviceInventory() {
 										</select>
 										<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 									</div>
-									<details className="relative">
+									<details ref={columnVisibilityRef} className="relative">
 										<summary className={quietButton}><Columns3 className="h-3.5 w-3.5" /> Column Visibility <ChevronDown className="h-3 w-3 text-slate-500" /></summary>
 										<div className={`absolute right-0 top-11 z-30 max-h-52 w-56 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
 											{columns.map((column) => (
@@ -487,20 +603,39 @@ export default function DeviceInventory() {
 																<Pencil className="h-3.5 w-3.5" />
 															</button>
 														) : null}
+														{row.externalId ? (
+															<button
+																type="button"
+																onClick={() => openStatusChange(row)}
+																disabled={isUpdatingStatus}
+																aria-label={`Change status of ${row.imei || row.inventoryType || "inventory"}`}
+																title="Change status"
+																className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]" : "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+															>
+																<Power className="h-3.5 w-3.5" />
+															</button>
+														) : null}
 														<button
 															type="button"
-															disabled={isDeletingInventory}
+															disabled={isDeletingInventory || !row.externalId}
 															aria-label={`Delete ${row.imei || row.inventoryType || "inventory"}`}
 															title="Delete"
 															onClick={() => {
 																if (!row.externalId) {
-																	setUploadedRows((current) => current.filter((item) => item.id !== row.id));
+																	toast.error("This inventory item cannot be deleted.");
 																	return;
 																}
 																void deleteInventory(row.externalId)
 																	.unwrap()
-																	.then(() => setInventoryError(""))
-																	.catch((error: unknown) => setInventoryError(apiErrorMessage(error, "Could not delete inventory.")));
+																	.then(() => {
+																		setInventoryError("");
+																		toast.success("Inventory deleted.");
+																	})
+																	.catch((error: unknown) => {
+																		const message = apiErrorMessage(error, "Could not delete inventory.");
+																		setInventoryError(message);
+																		toast.error(message);
+																	});
 															}}
 															className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 														>
@@ -625,6 +760,23 @@ export default function DeviceInventory() {
 					isSaving={isUploadingInventory}
 				/>
 			)}
+
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatusInventory)}
+				title="Change inventory status"
+				entityName={pendingStatusInventory?.imei || "this inventory item"}
+				entityNoun="inventory item"
+				currentStatus={pendingStatusInventory?.active ? Status.ACTIVE : Status.INACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmInventoryStatusChange()}
+				titleId="inventory-status-title"
+			/>
 		</div>
 	);
 }

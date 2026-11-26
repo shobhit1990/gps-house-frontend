@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import {
 	Activity,
@@ -50,6 +51,8 @@ type ColumnKey =
 	| "technicianName"
 	| "rental"
 	| "remark"
+	| "status"
+	| "reason"
 	| "actions";
 
 const columns: { key: ColumnKey; label: string }[] = [
@@ -63,6 +66,8 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "technicianName", label: "Technician Name" },
 	{ key: "rental", label: "Rental" },
 	{ key: "remark", label: "Remark" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "actions", label: "Actions" },
 ];
 
@@ -87,6 +92,8 @@ export default function Payment() {
 	const [transporterOpen, setTransporterOpen] = useState(false);
 	const [transporterQuery, setTransporterQuery] = useState("");
 	const transporterRef = useRef<HTMLDivElement>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -238,8 +245,8 @@ export default function Payment() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		try {
@@ -247,7 +254,7 @@ export default function Payment() {
 				externalId: pendingStatusPayment.externalId,
 				body: {
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 				},
 			}).unwrap();
 			toast.success(
@@ -272,6 +279,34 @@ export default function Payment() {
 		if (key === "installationDate" || key === "rentalDueDate") return toDateDisplay(row[key]);
 		if (key === "sellingPrice" || key === "rental") return displayText(row[key]);
 		if (key === "paymentTerm") return displayText(paymentTermLabel[row.paymentTerm] ?? row.paymentTerm);
+		if (key === "status") {
+			const active = currentStatus(row.status) === Status.ACTIVE;
+			return (
+				<button
+					type="button"
+					onClick={() => openStatusChange(row)}
+					disabled={isUpdatingStatus || !row.externalId}
+					aria-label="Change status"
+					title="Change status"
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+						active
+							? isDark
+								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
+								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+							: isDark
+								? "bg-rose-400/15 text-rose-200 hover:bg-rose-400/25"
+								: "bg-rose-50 text-rose-700 hover:bg-rose-100"
+					}`}
+				>
+					{active ? "Active" : "Inactive"}
+				</button>
+			);
+		}
+		if (key === "reason") {
+			return currentStatus(row.status) === Status.INACTIVE
+				? displayText(row.reason?.trim() || "")
+				: "—";
+		}
 		if (key === "actions") {
 			return (
 				<div className="flex items-center gap-1">
@@ -504,7 +539,7 @@ export default function Payment() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-white/[0.15]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
 									<Columns3 className={`h-3.5 w-3.5 ${isDark ? "text-cyan-200/70" : "text-cyan-600"}`} />
 									Columns
@@ -721,7 +756,7 @@ export default function Payment() {
 							</span>{" "}
 							is{" "}
 							<span className="font-medium">{statusLabel(currentStatus(pendingStatusPayment.status))}</span>.
-							Choose Active or Inactive, then enter a reason.
+							Choose Active or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -736,18 +771,20 @@ export default function Payment() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-3 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this payment being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`w-full resize-none rounded-md border px-3 py-2 text-[12px] outline-none ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-3 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this payment being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`w-full resize-none rounded-md border px-3 py-2 text-[12px] outline-none ${isDark ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"

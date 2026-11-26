@@ -48,6 +48,7 @@ type AnnouncementRow = {
 	messageType: string;
 	messageTitle: string;
 	status: string;
+	reason: string;
 	validFor: string;
 	validityHours: string;
 	validityDays: string;
@@ -63,6 +64,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "messageType", label: "Message Type" },
 	{ key: "messageTitle", label: "Message Title" },
 	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 	{ key: "validFor", label: "Announcement Valid For" },
 	{ key: "validityHours", label: "Validity Hours" },
 	{ key: "validityDays", label: "Validity Days" },
@@ -166,6 +168,10 @@ export default function Announcement() {
 			messageType: record.messageType ?? "",
 			messageTitle: record.title ?? "",
 			status: record.status === Status.ACTIVE ? "Active" : "Inactive",
+			reason:
+				record.status === Status.ACTIVE
+					? ""
+					: (record.reason?.trim() ?? ""),
 			validFor: record.validityTime && record.validityDuration ? `${record.validityDuration} ${record.validityTime}` : "",
 			validityHours: record.validityTime === "hours" ? String(record.validityDuration ?? "") : "—",
 			validityDays: record.validityTime === "days" ? String(record.validityDuration ?? "") : "—",
@@ -312,7 +318,7 @@ export default function Announcement() {
 		<span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
 			status === "Active"
 				? isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"
-				: isDark ? "bg-slate-500/15 text-slate-300" : "bg-slate-100 text-slate-600"
+				: isDark ? "bg-rose-400/15 text-rose-200" : "bg-rose-50 text-rose-700"
 		}`}>
 			{status}
 		</span>

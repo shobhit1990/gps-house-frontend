@@ -4,15 +4,34 @@ import { Status } from "@/enums/Status";
 import { statusChangeBody } from "@/lib/statusPayload";
 import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapResponse";
 
-type TransporterApiRecord = Omit<Transporter, "externalId"> & { externalId?: string };
+type TransporterApiRecord = Omit<Transporter, "externalId" | "active" | "status" | "reason"> & {
+  externalId?: string;
+  active?: boolean | string | number;
+  status?: Status | string;
+  reason?: string | null;
+};
 
 const asOptionalText = (value: unknown): string | undefined => {
   if (value == null || value === "") return undefined;
   return String(value).trim() || undefined;
 };
 
+/** API may send active as boolean, "true"/"false", or only a status string. */
+const isTransporterActive = (record: { active?: unknown; status?: unknown }): boolean => {
+  const active = record.active;
+  if (typeof active === "boolean") return active;
+  if (typeof active === "number") return active !== 0;
+  if (typeof active === "string") {
+    const value = active.trim().toLowerCase();
+    if (["false", "0", "inactive", "no"].includes(value)) return false;
+    if (["true", "1", "active", "yes"].includes(value)) return true;
+  }
+  return String(record.status ?? "").trim().toLowerCase() !== Status.INACTIVE;
+};
+
 const normalizeTransporter = (record?: TransporterApiRecord | null): Transporter => {
   const safeRecord = record && typeof record === "object" ? record : ({} as TransporterApiRecord);
+  const active = isTransporterActive(safeRecord);
   return {
     ...safeRecord,
     id: safeRecord.id ?? "",
@@ -22,6 +41,9 @@ const normalizeTransporter = (record?: TransporterApiRecord | null): Transporter
     name: asOptionalText(safeRecord.name),
     email: asOptionalText(safeRecord.email),
     address: asOptionalText(safeRecord.address),
+    active,
+    status: active ? Status.ACTIVE : Status.INACTIVE,
+    reason: asOptionalText(safeRecord.reason),
   };
 };
 
@@ -60,7 +82,7 @@ export const transporterApi = api.injectEndpoints({
 
     updateTransporter: builder.mutation<Transporter, { externalId: string; body: UpdateTransporterRequest }>({
       query: ({ externalId, body }) => ({
-        url: `/transporter/update/${externalId}`,
+        url: `/transporter/update/${encodeURIComponent(externalId)}`,
         method: "PUT",
         body,
       }),
@@ -68,6 +90,7 @@ export const transporterApi = api.injectEndpoints({
       invalidatesTags: (_result, _error, { externalId }) => [
         { type: "Transporters", id: externalId },
         { type: "Transporters", id: "LIST" },
+        { type: "Master", id: "TRANSPORTER" },
       ],
     }),
 
@@ -78,13 +101,18 @@ export const transporterApi = api.injectEndpoints({
       query: ({ externalId, status, reason }) => ({
         url: `/transporter/update/${encodeURIComponent(externalId)}`,
         method: "PUT",
-        body: statusChangeBody(status, reason, { active: status === Status.ACTIVE }),
+        body: statusChangeBody(status, reason, {
+          active: status === Status.ACTIVE,
+          // Clear stale inactive reason when reactivating.
+          reason: status === Status.INACTIVE ? reason?.trim() || undefined : "",
+        }),
       }),
       transformResponse: (response: ApiEnvelope<TransporterApiRecord>) =>
         normalizeTransporter(unwrapResponse(response)),
       invalidatesTags: (_result, _error, { externalId }) => [
         { type: "Transporters", id: externalId },
         { type: "Transporters", id: "LIST" },
+        { type: "Master", id: "TRANSPORTER" },
       ],
     }),
 

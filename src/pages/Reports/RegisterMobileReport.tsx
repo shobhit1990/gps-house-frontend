@@ -4,10 +4,12 @@ import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
+import { MobileReportType } from "@/enums/MobileReportType";
 import type { RegisterMobileRow } from "@/interfaces/RegisterMobileReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import { useLazyGetRegisterMobileReportQuery } from "@/store/services/api/RegisterMobileReport";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import { useGetUsersQuery } from "@/store/services/api/User";
 
 type ColumnKey = "sn" | "username" | "activeCount";
 
@@ -18,9 +20,8 @@ const columns: { key: ColumnKey; label: string }[] = [
 ];
 
 const userTypes = [
-	{ id: "client", name: "Client" },
-	{ id: "transporter", name: "Transporter" },
-	{ id: "user", name: "User" },
+	{ id: MobileReportType.USER, name: "User" },
+	{ id: MobileReportType.TRANSPORTER, name: "Transporter" },
 ];
 
 const textValue = (value: string) => (value.trim() ? value : "—");
@@ -30,6 +31,7 @@ const notice =
 
 export default function RegisterMobileReport() {
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const { data: allUsers = [], isLoading: usersLoading } = useGetUsersQuery();
 	const [fetchRegisterMobile, { isFetching }] = useLazyGetRegisterMobileReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
@@ -41,20 +43,43 @@ export default function RegisterMobileReport() {
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [client, setClient] = useState("");
-	const [userType, setUserType] = useState("");
-	const [transporter, setTransporter] = useState("");
+	const [userType, setUserType] = useState<MobileReportType | "">("");
+	const [entityId, setEntityId] = useState("");
+
+	const isUserType = userType === MobileReportType.USER;
+	const isTransporterType = userType === MobileReportType.TRANSPORTER;
 
 	const {
 		data: transporters = [],
 		isLoading: transportersLoading,
 		isFetching: transportersFetching,
-	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, {
+		skip: !client || !isTransporterType,
+	});
+
+	const userOptions = useMemo(
+		() =>
+			allUsers
+				.map((item) => ({
+					id: item.externalId || String(item.id ?? ""),
+					name: item.userName?.trim() || item.companyName?.trim() || item.externalId || "",
+				}))
+				.filter((item) => item.id && item.name),
+		[allUsers],
+	);
+
+	const entityOptions = isUserType ? userOptions : isTransporterType ? transporters : [];
+	const entityLoading = isUserType
+		? usersLoading
+		: isTransporterType
+			? transportersLoading || transportersFetching
+			: false;
 
 	useEffect(() => {
-		if (!transporter) return;
-		if (transporters.some((item) => item.id === transporter)) return;
-		setTransporter("");
-	}, [transporter, transporters]);
+		if (!entityId) return;
+		if (entityOptions.some((item) => item.id === entityId)) return;
+		setEntityId("");
+	}, [entityId, entityOptions]);
 
 	const filteredRows = useMemo(() => {
 		if (!searched) return [];
@@ -77,7 +102,12 @@ export default function RegisterMobileReport() {
 
 	const onClientChange = (next: string) => {
 		setClient(next);
-		setTransporter("");
+		setEntityId("");
+	};
+
+	const onUserTypeChange = (next: MobileReportType | "") => {
+		setUserType(next);
+		setEntityId("");
 	};
 
 	const applyFilters = async () => {
@@ -89,7 +119,11 @@ export default function RegisterMobileReport() {
 			toast.error("Select user type.");
 			return;
 		}
-		if (userType === "transporter" && !transporter) {
+		if (isUserType && !entityId) {
+			toast.error("Select user.");
+			return;
+		}
+		if (isTransporterType && !entityId) {
 			toast.error("Select transporter.");
 			return;
 		}
@@ -98,7 +132,8 @@ export default function RegisterMobileReport() {
 			const data = await fetchRegisterMobile({
 				client,
 				type: userType,
-				...(transporter ? { transporter } : {}),
+				...(isUserType ? { user: entityId } : {}),
+				...(isTransporterType ? { transporter: entityId } : {}),
 			}).unwrap();
 			setRows(data);
 			setSearched(true);
@@ -119,10 +154,24 @@ export default function RegisterMobileReport() {
 		setSearch("");
 		setClient("");
 		setUserType("");
-		setTransporter("");
+		setEntityId("");
 		setPage(0);
 		setPageSize(10);
 	};
+
+	const entityPlaceholder = !userType
+		? "Select User Type"
+		: entityLoading
+			? isUserType
+				? "Loading users…"
+				: "Loading transporters…"
+			: entityOptions.length === 0
+				? isUserType
+					? "No users"
+					: "No transporters"
+				: isUserType
+					? "Select User"
+					: "Select Transporter";
 
 	return (
 		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -192,7 +241,7 @@ export default function RegisterMobileReport() {
 								id="register-mobile-type"
 								aria-label="Select User Type"
 								value={userType}
-								onChange={(event) => setUserType(event.target.value)}
+								onChange={(event) => onUserTypeChange(event.target.value as MobileReportType | "")}
 								className={selectClass}
 							>
 								<option value="">Select User Type</option>
@@ -205,25 +254,17 @@ export default function RegisterMobileReport() {
 							<ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 						</label>
 						<label className="relative block min-w-0 flex-1 sm:max-w-[200px]">
-							<span className="sr-only">Transporter</span>
+							<span className="sr-only">{isUserType ? "User" : "Transporter"}</span>
 							<select
-								id="register-mobile-transporter"
-								aria-label="Select Transporter"
-								value={transporter}
-								disabled={!client || transportersLoading || transportersFetching}
-								onChange={(event) => setTransporter(event.target.value)}
+								id="register-mobile-entity"
+								aria-label={isUserType ? "Select User" : "Select Transporter"}
+								value={entityId}
+								disabled={!userType || entityLoading}
+								onChange={(event) => setEntityId(event.target.value)}
 								className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-55`}
 							>
-								<option value="">
-									{!client
-										? "Select client first"
-										: transportersLoading || transportersFetching
-											? "Loading transporters…"
-											: transporters.length === 0
-												? "No transporters"
-												: "Select Transporter"}
-								</option>
-								{transporters.map((option) => (
+								<option value="">{entityPlaceholder}</option>
+								{entityOptions.map((option) => (
 									<option key={option.id} value={option.id}>
 										{option.name}
 									</option>

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import {useMemo, useState, useRef} from "react";
+import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
@@ -41,6 +42,7 @@ type UserRecord = {
 	active: boolean;
 	added: string;
 	password: string;
+	reason: string;
 };
 
 type ColumnKey =
@@ -52,9 +54,10 @@ type ColumnKey =
 	| "phone"
 	| "address"
 	| "timezone"
-	| "status"
 	| "added"
-	| "action";
+	| "action"
+	| "status"
+	| "reason";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "username", label: "Username" },
@@ -65,11 +68,12 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "phone", label: "Phone No." },
 	{ key: "address", label: "Address" },
 	{ key: "timezone", label: "Timezone" },
-	{ key: "status", label: "Status" },
 	{ key: "added", label: "Added" },
 	// { key: "password", label: "Password" },
 	// { key: "resetPassword", label: "Reset Password" },
 	{ key: "action", label: "Action" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 const inputClass = (isDark: boolean) =>
@@ -100,6 +104,8 @@ export default function User() {
 	const [deleteUser, { isLoading: isDeleting }] = useDeleteUserMutation();
 	const [updateUser, { isLoading: isUpdatingStatus }] = useUpdateUserMutation();
 	const [editingUser, setEditingUser] = useState<UserEntity | null>(null);
+	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
+	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [pendingDelete, setPendingDelete] = useState<UserRecord | null>(null);
 	const [pendingStatusUser, setPendingStatusUser] = useState<UserRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
@@ -133,6 +139,7 @@ export default function User() {
 				active: user.status !== Status.INACTIVE,
 				added: dateLabel(user.createdAt),
 				password: user.password ?? "",
+				reason: user.reason?.trim() ?? "",
 			};
 		});
 	}, [users, groups, timezones]);
@@ -148,7 +155,7 @@ export default function User() {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
 		return rows.filter((row) =>
-			[row.username, row.group, row.userType, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone]
+			[row.username, row.group, row.userType, row.company, row.contactPerson, row.phone, row.companyAddress, row.timezone, row.reason]
 				.join(" ")
 				.toLowerCase()
 				.includes(query),
@@ -195,8 +202,8 @@ export default function User() {
 			toast.error("Select a different status to change.");
 			return;
 		}
-		if (!statusReason.trim()) {
-			toast.error("Please enter a reason for the status change.");
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
 			return;
 		}
 		const userType =
@@ -206,7 +213,7 @@ export default function User() {
 				externalId: pendingStatusUser.id,
 				body: {
 					status: selectedStatus,
-					reason: statusReason.trim(),
+					reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
 					userType,
 				},
 			}).unwrap();
@@ -240,24 +247,29 @@ export default function User() {
 		if (key === "address") return textValue(row.companyAddress);
 		if (key === "status") {
 			return (
-				<button
-					type="button"
-					onClick={() => openStatusChange(row)}
-					disabled={isUpdatingStatus}
-					aria-label={`Change status of ${row.username}`}
-					title="Change status"
-					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold transition disabled:opacity-50 ${
+				<span
+					className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
 						row.active
 							? isDark
-								? "bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25"
-								: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+								? "bg-emerald-400/15 text-emerald-300"
+								: "bg-emerald-100 text-emerald-700"
 							: isDark
-								? "bg-white/[0.06] text-slate-400 hover:bg-white/[0.10]"
-								: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+								? "bg-rose-400/15 text-rose-200"
+								: "bg-rose-50 text-rose-700"
 					}`}
 				>
 					{row.active ? "Active" : "Inactive"}
-				</button>
+				</span>
+			);
+		}
+		if (key === "reason") {
+			return (
+				<span
+					className={`block max-w-[220px] truncate ${isDark ? "text-slate-400" : "text-slate-600"}`}
+					title={row.reason || undefined}
+				>
+					{row.reason || "—"}
+				</span>
 			);
 		}
 		// if (key === "password") {
@@ -459,7 +471,7 @@ export default function User() {
 								</select>
 								<ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
 							</div>
-							<details className="relative">
+							<details ref={columnVisibilityRef} className="relative">
 								<summary
 									className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border px-3 text-[11px] transition ${
 										isDark
@@ -646,7 +658,7 @@ export default function User() {
 						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
 							Current status of <span className="font-medium">{pendingStatusUser.username}</span> is{" "}
 							<span className="font-medium">{pendingStatusUser.active ? "Active" : "Inactive"}</span>. Choose Active
-							or Inactive, then enter a reason.
+							or Inactive. Reason is required only when setting Inactive.
 						</p>
 						<label className="mt-4 block">
 							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
@@ -661,18 +673,20 @@ export default function User() {
 								<option value={Status.INACTIVE}>Inactive</option>
 							</select>
 						</label>
-						<label className="mt-4 block">
-							<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-								Reason <span className="text-rose-400">*</span>
-							</span>
-							<textarea
-								value={statusReason}
-								onChange={(event) => setStatusReason(event.target.value)}
-								rows={3}
-								placeholder={`Why is this user being set ${statusLabel(selectedStatus).toLowerCase()}?`}
-								className={`${inputClass(isDark)} h-auto resize-none py-2`}
-							/>
-						</label>
+						{selectedStatus === Status.INACTIVE ? (
+							<label className="mt-4 block">
+								<span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+									Reason <span className="text-rose-400">*</span>
+								</span>
+								<textarea
+									value={statusReason}
+									onChange={(event) => setStatusReason(event.target.value)}
+									rows={3}
+									placeholder={`Why is this user being set ${statusLabel(selectedStatus).toLowerCase()}?`}
+									className={`${inputClass(isDark)} h-auto resize-none py-2`}
+								/>
+							</label>
+						) : null}
 						<div className="mt-5 flex justify-end gap-2">
 							<button
 								type="button"
