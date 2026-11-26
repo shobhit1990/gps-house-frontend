@@ -19,7 +19,7 @@ import {
 	useGetInventoryQuery,
 	useUpdateInventoryMutation,
 } from "@/store/services/api/Inventory";
-import type { CreateInventoryRequest, Inventory } from "@/interfaces/Inventory";
+import type { CreateInventoryRequest, Inventory, InventoryStatus } from "@/interfaces/Inventory";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 
 type InventoryRecord = InventoryFormValues & {
@@ -367,6 +367,8 @@ export default function DeviceInventory() {
 			return;
 		}
 		const reason = selectedStatus === Status.INACTIVE ? statusReason.trim() : "";
+		const nextStatus: InventoryStatus =
+			selectedStatus === Status.ACTIVE ? "active" : "inactive";
 		const source = inventoryData.find(
 			(item) =>
 				item.externalId === pendingStatusInventory.externalId ||
@@ -396,7 +398,7 @@ export default function DeviceInventory() {
 						ignitionWireConnected: Boolean(source.ignitionWireConnected),
 						airConditionWireConnected: Boolean(source.airConditionWireConnected),
 						analogSensor: Boolean(source.analogSensor),
-						status: selectedStatus,
+						status: nextStatus,
 						reason,
 					},
 				}).unwrap();
@@ -404,7 +406,7 @@ export default function DeviceInventory() {
 				await updateInventory({
 					externalId: pendingStatusInventory.externalId,
 					body: {
-						status: selectedStatus,
+						status: nextStatus,
 						reason,
 					},
 				}).unwrap();
