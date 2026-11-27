@@ -99,10 +99,8 @@ function entityMasterLabel(
   const company = asTrimmedText(primaryName ?? item.companyName ?? item.company);
   const identity = asTrimmedText(
     item.userName ??
-    item.username ??
     item.name ??
-    item.owner_name ??
-    item.ownerName,
+    item.owner_name 
   );
   if (company && identity && company !== identity) return `${company} (${identity})`;
   return company || identity || undefined;
@@ -112,12 +110,8 @@ function entityMasterLabel(
 function clientMasterLabel(item: ClientMaster): string | undefined {
   return asTrimmedText(
     item.userName ??
-    item.username ??
     item.name ??
-    item.owner_name ??
-    item.ownerName ??
-    item.clientName ??
-    item.companyName,
+    item.owner_name
   );
 }
 
@@ -127,13 +121,8 @@ function clientMasterExtra(item: ClientMaster): Partial<MasterOption> | undefine
     item.externalId,
     item.id != null ? String(item.id) : undefined,
     item.userName,
-    item.username,
     item.name,
-    item.clientName,
-    item.companyName,
-    item.company,
     item.owner_name,
-    item.ownerName,
   ]
     .map((value) => asTrimmedText(value))
     .filter((value): value is string => Boolean(value));

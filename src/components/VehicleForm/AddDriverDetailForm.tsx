@@ -444,7 +444,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 		/>
 	);
 
-	const check = (name: "active" | "licenseAvailable" | "licenseVerified" | "geoAttendance", label: string) => (
+	const check = (name: "licenseAvailable" | "licenseVerified" | "geoAttendance", label: string) => (
 		<label className={`flex items-center gap-2 ${labelClass}`}>
 			<input type="checkbox" checked={values[name]} onChange={(event) => update(name, event.target.checked)} className="h-4 w-4 accent-cyan-500" />
 			{label}
@@ -552,7 +552,6 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							{field("Geofence IDs (comma-separated)", text("geofences", "Geofence IDs"), false, "xl:col-span-2")}
 							{field("Reason", text("reason", "Reason"), false, "xl:col-span-2")}
 							<div className="flex flex-col gap-3 sm:col-span-2 xl:col-span-4">
-								{check("active", "Active")}
 								{check("licenseAvailable", "License available")}
 								{check("licenseVerified", "License verified")}
 								{check("geoAttendance", "Enable Geo-verified Attendance")}

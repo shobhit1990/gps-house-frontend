@@ -165,7 +165,7 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 		}
 	};
 
-	const check = (key: "active" | "ignitionWire" | "airConditionWire" | "analogSensor", label: string) => (
+	const check = (key: "ignitionWire" | "airConditionWire" | "analogSensor", label: string) => (
 		<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
 			<input type="checkbox" checked={values[key]} onChange={(event) => update(key, event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
 			{label}
@@ -226,7 +226,6 @@ export function AddInventory({ onClose, onSubmit, isSaving = false, initialValue
 						{field("Password", <input type="password" value={values.password ?? ""} placeholder="Password" onChange={(event) => update("password", event.target.value)} className={inputClass} />, false, undefined, true)}
 					</div>
 					<div className="mt-5 flex flex-col gap-2.5">
-						{check("active", "Active")}
 						{check("ignitionWire", "Ignition wire connected in power(+)")}
 						{check("airConditionWire", "Air condition wire connected in power(+)")}
 						{check("analogSensor", "Analog Sensor")}

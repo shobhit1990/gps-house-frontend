@@ -102,16 +102,16 @@ function localDate(yearsAhead = 0) {
     return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function createEmptyForm(timezone: string, language: string): FormState {
+function createEmptyForm(): FormState {
     return {
         userName: "",
         password: "",
         confirmPassword: "",
         companyName: "",
         client: "",
-        timezone,
-        inactiveTime: "12",
-        language,
+        timezone: "",
+        inactiveTime: "",
+        language: "",
         name: "",
         email: "",
         phone: "",
@@ -150,14 +150,14 @@ const clientRefId = (client: unknown): string => {
 };
 
 const transporterToFormState = (transporter: Transporter, timezone: string, language: string): FormState => ({
-    ...createEmptyForm(timezone, language),
+    ...createEmptyForm(),
     userName: transporter.userName ?? "",
     password: "",
     confirmPassword: "",
     companyName: transporter.companyName ?? "",
     client: clientRefId(transporter.client),
     timezone: transporter.timezone || timezone,
-    inactiveTime: String(transporter.inactiveTime ?? "12"),
+    inactiveTime: transporter.inactiveTime != null ? String(transporter.inactiveTime) : "",
     language: transporter.language || language,
     name: transporter.name ?? "",
     email: transporter.email ?? "",
@@ -246,13 +246,9 @@ export function AddTransporterDialog({
         [timezones],
     );
     const resolveLanguageValue = (value?: string) =>
-        languageOptions.find((option) => option.value === value || option.label === value)?.value
-        ?? languageOptions[0]?.value
-        ?? "";
+        languageOptions.find((option) => option.value === value || option.label === value)?.value ?? "";
     const resolveTimezoneValue = (value?: string) =>
-        timezoneOptions.find((option) => option.value === value || option.label === value)?.value
-        ?? timezoneOptions[0]?.value
-        ?? "";
+        timezoneOptions.find((option) => option.value === value || option.label === value)?.value ?? "";
     const [activeTab, setActiveTab] = useState<TransporterTab>("Add Transporter");
     const [savedTransporterId, setSavedTransporterId] = useState(transporterId ?? "");
     const [formError, setFormError] = useState("");
@@ -263,13 +259,13 @@ export function AddTransporterDialog({
     const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>(() =>
         Object.fromEntries(transporterRoles.map((role) => [role, defaultRolePermissions[role] ?? false])),
     );
-    const [values, setValues] = useState<FormState>(() => createEmptyForm(fallbackTimezones[0], fallbackLanguages[0]));
+    const [values, setValues] = useState<FormState>(() => createEmptyForm());
 
     useEffect(() => {
         setValues((current) => ({
             ...current,
-            timezone: resolveTimezoneValue(current.timezone),
-            language: resolveLanguageValue(current.language),
+            timezone: current.timezone ? resolveTimezoneValue(current.timezone) : "",
+            language: current.language ? resolveLanguageValue(current.language) : "",
         }));
     }, [languageOptions, timezoneOptions]);
 
@@ -341,7 +337,7 @@ export function AddTransporterDialog({
             setFormError("");
             return;
         }
-        setValues(createEmptyForm(resolveTimezoneValue(), resolveLanguageValue()));
+        setValues(createEmptyForm());
         setShowPassword(false);
         setShowConfirmPassword(false);
         setFormError("");
@@ -605,6 +601,7 @@ export function AddTransporterDialog({
                                         <FieldLabel label="Timezone" required isDark={isDark} />
                                         <span className="relative block">
                                             <select value={values.timezone} disabled={timezonesLoading} onChange={(event) => update("timezone", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                <option value="">{timezonesLoading ? "Loading timezones…" : "Select Timezone"}</option>
                                                 {timezoneOptions.map((timezone) => (
                                                     <option key={timezone.value} value={timezone.value}>
                                                         {timezone.label}
@@ -620,6 +617,7 @@ export function AddTransporterDialog({
                                         <FieldLabel label="Inactive Time" required isDark={isDark} />
                                         <span className="relative block">
                                             <select value={values.inactiveTime} onChange={(event) => update("inactiveTime", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                <option value="">Select Inactive Time</option>
                                                 {inactiveTimes.map((hours) => <option key={hours} value={hours}>{hours}</option>)}
                                             </select>
                                             <span className={`pointer-events-none absolute inset-y-0 right-3 flex items-center ${isDark ? "text-slate-500" : "text-slate-400"}`}>⌄</span>
@@ -631,6 +629,7 @@ export function AddTransporterDialog({
                                         <FieldLabel label="Language" required isDark={isDark} />
                                         <span className="relative block">
                                             <select value={values.language} disabled={languagesLoading} onChange={(event) => update("language", event.target.value)} className={`${inputClass} appearance-none pr-9`}>
+                                                <option value="">{languagesLoading ? "Loading languages…" : "Select Language"}</option>
                                                 {languageOptions.map((language) => (
                                                     <option key={language.value} value={language.value}>
                                                         {language.label}

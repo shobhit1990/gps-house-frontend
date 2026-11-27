@@ -13,12 +13,12 @@ import {
   LogOut,
   MoonStar,
   MoreHorizontal,
-  Navigation,
   Settings,
   SunMedium,
   Video,
   type LucideIcon,
 } from "lucide-react";
+import logoGpsHouse from "@/assets/logo-gpshouse.png";
 import { useSelector } from "@/store/hooks";
 import { selectMenus } from "@/store/slices/authSlice";
 import { filterNavMenusByPermissions } from "@/lib/menuNav";
@@ -193,9 +193,11 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
     <header className="sticky top-0 z-[600] border-b border-slate-200/80 bg-white/80 px-4 shadow-[0_2px_18px_rgba(15,23,42,0.06)] backdrop-blur-2xl dark:border-white/[0.08] dark:bg-[#050d22]/95 dark:shadow-none sm:px-6 lg:px-7">
       <div className="mx-auto flex min-h-[76px] max-w-[1900px] items-center gap-4">
         <a href="#overview" className="flex shrink-0 items-center gap-2.5" aria-label="GPS Fleet home">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-400/20 bg-gradient-to-br from-cyan-500/10 to-violet-500/10 text-cyan-700 dark:border-cyan-300/20 dark:bg-gradient-to-br dark:from-cyan-300/15 dark:to-violet-400/15 dark:text-cyan-100">
-            <Navigation className="h-4 w-4" />
-          </span>
+          <img
+            src={logoGpsHouse}
+            alt="GPS House"
+            className="h-9 w-9 rounded-xl object-contain"
+          />
           <span className="hidden items-center gap-2.5 lg:flex">
             <span className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white">GPS</span>
           </span>

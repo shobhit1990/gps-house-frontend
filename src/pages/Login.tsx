@@ -25,6 +25,7 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
+import logoGpsHouse from "@/assets/logo-gpshouse.png";
 
 const Login = () => {
   const { theme, setTheme } = useTheme();
@@ -199,15 +200,11 @@ const Login = () => {
 
             <div className="relative z-20">
               <div className="flex items-center gap-4">
-                <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 via-blue-500 to-violet-600 shadow-[0_0_35px_rgba(34,211,238,0.35)]">
-                  <MapPin
-                    size={27}
-                    strokeWidth={2.4}
-                    className="text-white"
-                  />
-
-                  <div className="absolute inset-0 rounded-2xl bg-white/10" />
-                </div>
+                <img
+                  src={logoGpsHouse}
+                  alt="GPS House"
+                  className="h-12 w-12 rounded-2xl object-contain"
+                />
 
                 <div>
                   <h1 className={`text-3xl font-black tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>

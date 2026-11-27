@@ -23,7 +23,6 @@ import {
     vehicleToFormValues,
 } from "@/components/VehicleForm/vehiclePayloads";
 import { useLazyGetDeviceByIdQuery } from "@/store/services/api/AddDevice";
-import { SimOperator } from "@/enums/SimOperator";
 import { VehicleStatus } from "@/enums/VehicleStatus";
 import { DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 import { digitsOnly, PHONE_MAX_LENGTH } from "@/lib/formValidation";
@@ -212,7 +211,6 @@ const fieldsByTab: Record<string, FieldConfig[]> = {
         { name: "maxPoiRadius", label: "Maximum Radius For Nearest POI (in Km)", type: "number", info: true },
         { name: "minAddressDistance", label: "Minimum Distance For Address (in Km)", type: "number", info: true },
         { name: "dataRestriction", label: "Data Restriction (in Days)", type: "number", optional: true, info: true },
-        { name: "active", label: "Active", type: "checkbox" },
         { name: "overwriteSubscription", label: "Overwrite Subscription for all vehicles", type: "checkbox" },
         { name: "inactiveAfterExpiry", label: "Should vehicle inactive after subscription expire", type: "checkbox" },
     ],
@@ -470,8 +468,8 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: A
                 subscriptionExpiryCount: "10",
                 active: "true",
                 status: VehicleStatus.ACTIVE,
-                simOperator: SimOperator.AIRTEL_GPRS,
-                secondarySimOperator: SimOperator.AIRTEL_GPRS,
+                simOperator: "",
+                secondarySimOperator: "",
                 deviceType: "",
                 sellingPrice: "0",
                 installationDate: "2026-05-10",
@@ -645,11 +643,13 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: A
                                 ? "0"
                                 : field.name === "installationDate" || field.name === "rentalDueDate"
                                     ? "2026-05-10"
-                                    : field.type === "select"
-                                        ? field.options?.[0]?.startsWith("Select ")
-                                            ? ""
-                                            : field.options?.[0] ?? ""
-                                        : "";
+                                    : field.name === "simOperator" || field.name === "secondarySimOperator"
+                                        ? ""
+                                        : field.type === "select"
+                                            ? field.options?.[0]?.startsWith("Select ")
+                                                ? ""
+                                                : field.options?.[0] ?? ""
+                                            : "";
             });
             return nextValues;
         });
@@ -692,7 +692,6 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: A
                         : String((device.client as { externalId?: string; id?: string | number } | undefined)?.externalId
                             ?? (device.client as { id?: string | number } | undefined)?.id
                             ?? ""),
-                devicePassword: device.password ?? "",
                 ignitionPositive: String(device.ignitionWireConnected ?? false),
                 ignitionDisconnected: String(device.ignitionWireNotConnected ?? false),
                 airConditionPositive: String(device.airConditionWireConnected ?? false),
@@ -895,8 +894,8 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: A
                         : `${saveLabels[target]} linked to vehicle.`
                     : `${saveLabels[target]} ${isUpdate ? "updated" : "saved"}.`,
             );
-            // Edit mode: close after a successful vehicle update.
-            if (isEditMode && target === "vehicle") {
+            // Close after payment details save (last step), or after vehicle update in edit mode.
+            if (target === "paymentDetails" || (isEditMode && target === "vehicle")) {
                 onClose();
                 return;
             }

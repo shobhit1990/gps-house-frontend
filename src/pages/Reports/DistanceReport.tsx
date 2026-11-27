@@ -175,13 +175,13 @@ export default function DistanceReport() {
 		data: transporters = [],
 		isLoading: transportersLoading,
 		isFetching: transportersFetching,
-	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+	} = useGetTransporterMasterQuery(client ? { client } : undefined);
 
 	const vehicles = useMemo(() => {
-		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
-			const clientOk = !item.clientId || item.clientId === client;
-			return clientOk && item.transporterId === transporter;
+			const clientOk = !client || !item.clientId || item.clientId === client;
+			const transporterOk = !transporter || item.transporterId === transporter;
+			return clientOk && transporterOk;
 		});
 	}, [allVehicles, client, transporter]);
 
@@ -429,15 +429,13 @@ export default function DistanceReport() {
 							label="Transporter"
 							value={transporter}
 							onChange={onTransporterChange}
-							disabled={!client || transportersLoading || transportersFetching}
+							disabled={transportersLoading || transportersFetching}
 							placeholder={
-								!client
-									? "Select client first"
-									: transportersLoading || transportersFetching
-										? "Loading transporters…"
-										: transporters.length === 0
-											? "No transporters"
-											: "Select Transporter"
+								transportersLoading || transportersFetching
+									? "Loading transporters…"
+									: transporters.length === 0
+										? "No transporters"
+										: "Select Transporter"
 							}
 							options={transporters}
 						/>
@@ -446,15 +444,13 @@ export default function DistanceReport() {
 							label="Vehicle"
 							value={vehicle}
 							onChange={setVehicle}
-							disabled={!transporter || vehiclesLoading}
+							disabled={vehiclesLoading}
 							placeholder={
-								!transporter
-									? "Select transporter first"
-									: vehiclesLoading
-										? "Loading vehicles…"
-										: vehicles.length === 0
-											? "No vehicles"
-											: "Select Vehicle"
+								vehiclesLoading
+									? "Loading vehicles…"
+									: vehicles.length === 0
+										? "No vehicles"
+										: "Select Vehicle"
 							}
 							options={vehicles}
 						/>

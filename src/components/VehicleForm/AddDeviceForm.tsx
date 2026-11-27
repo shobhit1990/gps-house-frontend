@@ -1,6 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Eye, EyeOff, Loader2, Plus } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { addDeviceFields, DEVICE_TYPE_ID } from "@/interfaces/AddDeviceFields";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import type { Device } from "@/interfaces/AddDevice";
@@ -68,7 +68,6 @@ export function AddDevice({
 	const [selectedInventoryId, setSelectedInventoryId] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
 	const [deviceError, setDeviceError] = useState("");
-	const [passwordVisible, setPasswordVisible] = useState(false);
 	const [getDevice, { isFetching: isLoadingDevice }] = useLazyGetDeviceByIdQuery();
 	const [getAvailableInventory, { data: availableInventory = [], isFetching: isLoadingInventory }] =
 		useLazyGetAvailableDeviceInventoryQuery();
@@ -100,7 +99,6 @@ export function AddDevice({
 				secondarySimOperator: device.secondarySimOperator ?? "",
 				deviceType: referenceValue(device.deviceType) || DEVICE_TYPE_ID,
 				deviceClient: referenceValue(device.client),
-				devicePassword: device.password ?? "",
 				ignitionPositive: String(device.ignitionWireConnected ?? false),
 				ignitionDisconnected: String(device.ignitionWireNotConnected ?? false),
 				airConditionPositive: String(device.airConditionWireConnected ?? false),
@@ -157,7 +155,6 @@ export function AddDevice({
 				secondarySimOperator: inventory.secondarySimOperator ?? "",
 				deviceType: String(deviceType ?? DEVICE_TYPE_ID),
 				deviceClient: String(client ?? ""),
-				devicePassword: inventory.password ?? "",
 				ignitionPositive: String(inventory.ignitionWireConnected ?? false),
 				ignitionDisconnected: String(inventory.ignitionWireNotConnected ?? false),
 				airConditionPositive: String(inventory.airConditionWireConnected ?? false),
@@ -233,6 +230,9 @@ export function AddDevice({
 							className={`${inputClass} appearance-none pr-9 disabled:cursor-not-allowed disabled:opacity-70`}
 						>
 							{field.name === "deviceType" && <option value="">Select Device Type</option>}
+							{(field.name === "simOperator" || field.name === "secondarySimOperator") && (
+								<option value="">Select Sim Operator</option>
+							)}
 							{(field.name === "deviceClient"
 								? ["Select Client", ...clients.map((client) => client.id)]
 								: field.name === "deviceType"
@@ -258,7 +258,7 @@ export function AddDevice({
 				) : (
 					<span className="relative flex">
 						<input
-							type={field.type === "password" && passwordVisible ? "text" : field.type ?? "text"}
+							type={field.type ?? "text"}
 							value={value}
 							required={field.required}
 							disabled={readOnly}
@@ -274,20 +274,8 @@ export function AddDevice({
 									: event.target.value;
 								onChange(field.name, nextValue);
 							}}
-							className={`${inputClass} min-w-0 disabled:cursor-not-allowed disabled:opacity-70 ${field.type === "password" ? "pr-11" : ""}`}
+							className={`${inputClass} min-w-0 disabled:cursor-not-allowed disabled:opacity-70`}
 						/>
-						{field.type === "password" && !readOnly && (
-							<button
-								type="button"
-								onClick={() => setPasswordVisible((visible) => !visible)}
-								aria-label={passwordVisible ? "Hide password" : "Show password"}
-								className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md ${
-									isDark ? "text-slate-400 hover:text-cyan-100" : "text-slate-500 hover:text-cyan-700"
-								}`}
-							>
-								{passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-							</button>
-						)}
 					</span>
 				)}
 				{field.name === "deviceType" && deviceTypesError && (

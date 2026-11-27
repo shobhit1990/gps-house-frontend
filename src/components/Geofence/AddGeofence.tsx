@@ -42,8 +42,6 @@ type AddGeofenceProps = {
 const assignTypeOptions = Object.values(GeofAssignType);
 const shapeOptions = Object.values(Shapes);
 const geoTypeOptions = Object.values(GeoType);
-const statusOptions = ["active", "inactive"] as const;
-
 const assignTypeLabel = (value: GeofAssignType) =>
 	value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -110,9 +108,8 @@ export function AddGeofence({
 	const [latitude, setLatitude] = useState(() => initialCoordText(initialValues?.latitude, DEFAULT_CENTER.lat));
 	const [longitude, setLongitude] = useState(() => initialCoordText(initialValues?.longitude, DEFAULT_CENTER.lng));
 	const [radius, setRadius] = useState(() => initialRadiusText(initialValues) || String(DEFAULT_RADIUS_M));
-	const [status, setStatus] = useState(
-		(initialValues?.status ?? "").toLowerCase() === "inactive" ? "inactive" : "active",
-	);
+	const status =
+		(initialValues?.status ?? "").toLowerCase() === "inactive" ? "inactive" : "active";
 	const [reason, setReason] = useState(initialValues?.reason ?? "");
 	const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
 	const [expanded, setExpanded] = useState(false);
@@ -589,17 +586,6 @@ export function AddGeofence({
 									onChange={(event) => updateCoordField("lng", event.target.value)}
 									className={inputClass}
 								/>,
-							)}
-
-							{field(
-								requiredLabel("Status"),
-								<select required value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}>
-									{statusOptions.map((option) => (
-										<option key={option} value={option}>
-											{option[0].toUpperCase() + option.slice(1)}
-										</option>
-									))}
-								</select>,
 							)}
 
 							{field(
