@@ -26,6 +26,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import { addAlertTypeOptions } from "@/enums/AddAlertType";
 import { Status } from "@/enums/Status";
+import { TripRestrictionType, tripRestrictionTypeOptions } from "@/enums/TripRestrictions";
 import type { Alert, AlertAssignee } from "@/interfaces/Alert";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -108,6 +109,7 @@ export default function AddAlert() {
   const [conditionValue, setConditionValue] = useState("");
   const [geofenceRestriction, setGeofenceRestriction] = useState(false);
   const [tripRestriction, setTripRestriction] = useState(false);
+  const [tripRestrictionType, setTripRestrictionType] = useState<TripRestrictionType | "">("");
   const [subject, setSubject] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [customMobile, setCustomMobile] = useState(true);
@@ -181,6 +183,7 @@ export default function AddAlert() {
     setConditionValue("");
     setGeofenceRestriction(false);
     setTripRestriction(false);
+    setTripRestrictionType("");
     setSubject("");
     setMessageBody("");
     setCustomMobile(true);
@@ -600,9 +603,38 @@ export default function AddAlert() {
                   Enable Geofence Restrictions
                 </label>
                 <label className={checkboxLabelClass(isDark)}>
-                  <input type="checkbox" checked={tripRestriction} onChange={(event) => setTripRestriction(event.target.checked)} className={checkboxClass} />
+                  <input
+                    type="checkbox"
+                    checked={tripRestriction}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setTripRestriction(enabled);
+                      if (!enabled) setTripRestrictionType("");
+                    }}
+                    className={checkboxClass}
+                  />
                   Enable Trip Restrictions
                 </label>
+                {tripRestriction && (
+                  <div>
+                    <label className={labelClass(isDark)} htmlFor="custom-trip-restriction-type">
+                      Trip Restriction Type {required}
+                    </label>
+                    <select
+                      id="custom-trip-restriction-type"
+                      className={inputClass(isDark)}
+                      value={tripRestrictionType}
+                      onChange={(event) => setTripRestrictionType(event.target.value as TripRestrictionType | "")}
+                    >
+                      <option value="">Select</option>
+                      {tripRestrictionTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             </section>
 

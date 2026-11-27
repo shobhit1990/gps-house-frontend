@@ -12,7 +12,11 @@ import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDia
 import { useAuth } from "@/contexts/AuthContext";
 import { Status, statusLabel } from "@/enums/Status";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
-import { useGetClientMasterQuery, useGetLanguagesQuery } from "@/store/services/api/Master";
+import {
+	useGetClientMasterQuery,
+	useGetLanguagesQuery,
+	useGetTransporterMasterQuery,
+} from "@/store/services/api/Master";
 import {
 	useDeleteTransporterMutation,
 	useGetTransportersQuery,
@@ -130,6 +134,15 @@ const formatDate = (value?: string) => {
 
 const yesNo = (value?: boolean) => (value ? "Yes" : "No");
 
+const clientRefText = (client: unknown): string => {
+	if (typeof client === "string" || typeof client === "number") return String(client).trim();
+	if (client && typeof client === "object") {
+		const record = client as { externalId?: string | number; id?: string | number; name?: string; userName?: string };
+		return String(record.externalId ?? record.id ?? record.userName ?? record.name ?? "").trim();
+	}
+	return "";
+};
+
 export default function Transporter() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
@@ -145,10 +158,29 @@ export default function Transporter() {
 	const [pendingStatusTransporter, setPendingStatusTransporter] = useState<TransporterRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
+	const [clientFilter, setClientFilter] = useState("");
+	const [transporterFilter, setTransporterFilter] = useState("");
+	const [activeFilters, setActiveFilters] = useState({ client: "", transporter: "" });
+	const { data: allTransporterMaster = [] } = useGetTransporterMasterQuery();
+	const { data: transporterMaster = [], isFetching: transportersLoading } = useGetTransporterMasterQuery(
+		clientFilter ? { client: clientFilter } : undefined,
+	);
 	const rows = useMemo<TransporterRecord[]>(() => {
-		const clientNames = new Map(clientMaster.map((client) => [client.id, client.name]));
-		const languageNames = new Map(
-			languages.map((language) => [
+		const resolveClientLabel = (clientRef: unknown): string => {
+			const raw = clientRefText(clientRef);
+			if (!raw) return "";
+			const key = raw.toLowerCase();
+			const match = clientMaster.find(
+				(client) =>
+					client.id === raw ||
+					String(client.externalId ?? "") === raw ||
+					client.name === raw ||
+					(client.aliases ?? []).includes(key),
+			);
+			return match?.name ?? raw;
+		};
+		const languageNames = new Map<string, string>(
+			languages.map((language): [string, string] => [
 				String(language.externalId ?? language.id ?? language.language),
 				language.language,
 			]),
@@ -162,7 +194,7 @@ export default function Transporter() {
 				id: transporter.externalId || String(transporter.id || index),
 				sn: index + 1,
 				username: transporter.userName ?? "",
-				client: clientNames.get(transporter.client) ?? transporter.client ?? "",
+				client: resolveClientLabel(transporter.client),
 				vehicleCount: 0,
 				payment: "",
 				contactPerson: transporter.name ?? "",
@@ -185,9 +217,6 @@ export default function Transporter() {
 			};
 		});
 	}, [transporterList, clientMaster, languages]);
-	const [clientFilter, setClientFilter] = useState("");
-	const [transporterFilter, setTransporterFilter] = useState("");
-	const [activeFilters, setActiveFilters] = useState({ client: "", transporter: "" });
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
@@ -198,18 +227,52 @@ export default function Transporter() {
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingTransporterId, setEditingTransporterId] = useState<string | undefined>();
 
-	const clients = [...new Set(rows.map((row) => row.client).filter(Boolean))];
-	const transporters = [...new Set(rows.map((row) => row.username).filter(Boolean))];
+	const clients = clientMaster;
+	const transporters = transporterMaster;
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
+		const selectedClient = clientMaster.find((client) => client.id === activeFilters.client);
+		const clientKeys = new Set(
+			[
+				activeFilters.client,
+				selectedClient?.id,
+				selectedClient?.externalId,
+				selectedClient?.name,
+				...(selectedClient?.aliases ?? []),
+			]
+				.map((value) => String(value ?? "").trim().toLowerCase())
+				.filter(Boolean),
+		);
+		const selectedTransporter = allTransporterMaster.find(
+			(item) => item.id === activeFilters.transporter,
+		);
+		const transporterKeys = new Set(
+			[
+				activeFilters.transporter,
+				selectedTransporter?.id,
+				selectedTransporter?.externalId,
+				selectedTransporter?.name,
+				// entityMasterLabel is often "company (userName)" — also match bare username from table rows
+				selectedTransporter?.name?.match(/\(([^)]+)\)\s*$/)?.[1],
+			]
+				.map((value) => String(value ?? "").trim().toLowerCase())
+				.filter(Boolean),
+		);
 		return rows.filter((row) => {
 			const matchesSearch = !query || Object.values(row).join(" ").toLowerCase().includes(query);
-			return matchesSearch &&
-				(!activeFilters.client || row.client === activeFilters.client) &&
-				(!activeFilters.transporter || row.username === activeFilters.transporter);
+			const matchesClient =
+				!activeFilters.client ||
+				clientKeys.has(row.client.trim().toLowerCase()) ||
+				row.client === selectedClient?.name;
+			const matchesTransporter =
+				!activeFilters.transporter ||
+				transporterKeys.has(row.username.trim().toLowerCase()) ||
+				row.id === activeFilters.transporter ||
+				row.username === selectedTransporter?.name;
+			return matchesSearch && matchesClient && matchesTransporter;
 		});
-	}, [rows, search, activeFilters]);
+	}, [rows, search, activeFilters, clientMaster, allTransporterMaster]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const pageRows = filteredRows.slice(page * pageSize, (page + 1) * pageSize);
 
@@ -445,14 +508,31 @@ export default function Transporter() {
 				<section aria-label="Transporter filters" className={`mb-4 rounded-xl border p-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/65" : "border-slate-200 bg-white/90 shadow-sm"}`}>
 					<div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
 						<label className="sr-only" htmlFor="transporter-client-filter">Client</label>
-						<select id="transporter-client-filter" value={clientFilter} onChange={(event) => setClientFilter(event.target.value)} className={inputClass(isDark)}>
+						<select
+							id="transporter-client-filter"
+							value={clientFilter}
+							onChange={(event) => {
+								setClientFilter(event.target.value);
+								setTransporterFilter("");
+							}}
+							className={inputClass(isDark)}
+						>
 							<option value="">Select Client</option>
-							{clients.map((client) => <option key={client}>{client}</option>)}
+							{clients.map((client) => (
+								<option key={client.id} value={client.id}>{client.name}</option>
+							))}
 						</select>
 						<label className="sr-only" htmlFor="transporter-name-filter">Transporter</label>
-						<select id="transporter-name-filter" value={transporterFilter} onChange={(event) => setTransporterFilter(event.target.value)} className={inputClass(isDark)}>
-							<option value="">Select Transporter</option>
-							{transporters.map((name) => <option key={name}>{name}</option>)}
+						<select
+							id="transporter-name-filter"
+							value={transporterFilter}
+							onChange={(event) => setTransporterFilter(event.target.value)}
+							className={inputClass(isDark)}
+						>
+							<option value="">{transportersLoading ? "Loading…" : "Select Transporter"}</option>
+							{transporters.map((transporter) => (
+								<option key={transporter.id} value={transporter.id}>{transporter.name}</option>
+							))}
 						</select>
 						<button type="button" onClick={() => { setActiveFilters({ client: clientFilter, transporter: transporterFilter }); setPage(0); }} className={actionButtonClass(isDark)}>
 							<Search className="h-3.5 w-3.5" /> Search

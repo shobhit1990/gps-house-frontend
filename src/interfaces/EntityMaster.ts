@@ -77,4 +77,9 @@ export interface MasterOption {
   transporterId?: string;
   /** Transporter master: raw `client` field (often client name, sometimes UUID). */
   clientRef?: string;
+  /**
+   * Alternate strings the API may use for this record (e.g. client `name` / `userName` /
+   * `companyName`). Used to match transporter.client when it is not a UUID.
+   */
+  aliases?: string[];
 }

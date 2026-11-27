@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { ArrowUpDown, Plus, RefreshCw, Search } from "lucide-react";
+import { ArrowUpDown, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import JoditEditor from "jodit-react";
 import "jodit/es2021/jodit.min.css";
+import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
@@ -14,7 +15,6 @@ import {
 	labelClass,
 	primaryButtonClass,
 	refreshButtonClass,
-	rowActionClass,
 	searchIconClass,
 	searchInputClass,
 	secondaryButtonClass,
@@ -30,8 +30,10 @@ import {
 	useCreateAnnouncementMutation,
 	useDeleteAnnouncementMutation,
 	useGetAnnouncementsQuery,
+	useUpdateAnnouncementMutation,
+	useUpdateAnnouncementStatusMutation,
 } from "@/store/services/api/Announcement";
-import { Status } from "@/enums/Status";
+import { Status, statusLabel } from "@/enums/Status";
 import type {
 	Announcement as AnnouncementRecord,
 	AnnouncementAudience,
@@ -47,12 +49,12 @@ type AnnouncementRow = {
 	transporterList: string;
 	messageType: string;
 	messageTitle: string;
-	status: string;
-	reason: string;
 	validFor: string;
 	validityHours: string;
 	validityDays: string;
 	added: string;
+	status: Status;
+	reason: string;
 };
 
 type ColumnKey = keyof Omit<AnnouncementRow, "id">;
@@ -63,12 +65,12 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "transporterList", label: "Transporter List" },
 	{ key: "messageType", label: "Message Type" },
 	{ key: "messageTitle", label: "Message Title" },
-	{ key: "status", label: "Status" },
-	{ key: "reason", label: "Reason" },
 	{ key: "validFor", label: "Announcement Valid For" },
 	{ key: "validityHours", label: "Validity Hours" },
 	{ key: "validityDays", label: "Validity Days" },
 	{ key: "added", label: "Added" },
+	{ key: "status", label: "Status" },
+	{ key: "reason", label: "Reason" },
 ];
 
 const audiences: { value: AnnouncementAudience; label: string }[] = [
@@ -81,7 +83,15 @@ const validityOptions: { value: AnnouncementValidity; label: string }[] = [
 	{ value: "hours", label: "HOURS" },
 	{ value: "days", label: "DAYS" },
 ];
-const messageTypes: AnnouncementMessageType[] = ["TEXT", "IMAGE"];
+const messageTypes: { value: AnnouncementMessageType; label: string }[] = [
+	{ value: "text", label: "TEXT" },
+	{ value: "image", label: "IMAGE" },
+];
+
+const normalizeMessageType = (value?: string): AnnouncementMessageType | "" => {
+	const normalized = String(value ?? "").trim().toLowerCase();
+	return normalized === "text" || normalized === "image" ? normalized : "";
+};
 
 type AnnouncementForm = {
 	announcement: string;
@@ -93,7 +103,6 @@ type AnnouncementForm = {
 	messageTitle: string;
 	messageBody: string;
 	messageImage: File | null;
-	active: boolean;
 	dontShowAgain: boolean;
 	profileUpdate: boolean;
 };
@@ -108,7 +117,6 @@ const emptyForm: AnnouncementForm = {
 	messageType: "",
 	messageBody: "",
 	messageImage: null,
-	active: true,
 	dontShowAgain: false,
 	profileUpdate: false,
 };
@@ -120,18 +128,51 @@ const dateLabel = (value?: string) => {
 	return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
-/** Pre-fills the form from a saved announcement so it can be recreated; an image has to be picked again. */
+const currentStatus = (value?: string) =>
+	String(value ?? "").trim().toLowerCase() === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
+
+const refId = (value: unknown): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as { id?: string | number; externalId?: string };
+		return String(record.externalId ?? record.id ?? "");
+	}
+	return "";
+};
+
+const refLabel = (value: unknown, ...keys: string[]): string => {
+	if (typeof value === "string" || typeof value === "number") return String(value);
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		for (const key of keys) {
+			const label = record[key];
+			if (typeof label === "string" || typeof label === "number") {
+				const text = String(label).trim();
+				if (text) return text;
+			}
+		}
+	}
+	return "";
+};
+
+const cellText = (value: unknown) => {
+	if (value == null || value === "") return "—";
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+	if (typeof value === "object") return refLabel(value, "name", "title", "label") || refId(value) || "—";
+	return "—";
+};
+
+/** Pre-fills the form from a saved announcement so it can be edited; an image has to be picked again only when replaced. */
 const formFromRecord = (record: AnnouncementRecord): AnnouncementForm => ({
 	announcement: record.announcement ?? "",
-	client: record.client ?? "",
-	transporter: record.transporter ?? "",
+	client: refId(record.client),
+	transporter: refId(record.transporter),
 	validity: record.validityTime ?? "",
 	duration: record.validityDuration === undefined || record.validityDuration === null ? "" : String(record.validityDuration),
-	messageType: record.messageType ?? "",
-	messageTitle: record.title ?? "",
+	messageType: normalizeMessageType(record.messageType),
+	messageTitle: (record.title ?? "").slice(0, 255),
 	messageBody: record.body ?? "",
 	messageImage: null,
-	active: true,
 	dontShowAgain: Boolean(record.requestForDontShowAgainOption),
 	profileUpdate: Boolean(record.requestForProfileUpdate),
 });
@@ -153,40 +194,52 @@ export default function Announcement() {
 	const { data: clients = [] } = useGetClientMasterQuery();
 	const { data: transporters = [] } = useGetTransporterMasterQuery();
 	const { data: announcements = [], isFetching, refetch } = useGetAnnouncementsQuery();
-	const [createAnnouncement, { isLoading: isSaving }] = useCreateAnnouncementMutation();
-	const [deleteAnnouncement] = useDeleteAnnouncementMutation();
+	const [createAnnouncement, { isLoading: isCreating }] = useCreateAnnouncementMutation();
+	const [updateAnnouncement, { isLoading: isUpdating }] = useUpdateAnnouncementMutation();
+	const [updateAnnouncementStatus, { isLoading: isUpdatingStatus }] = useUpdateAnnouncementStatusMutation();
+	const [deleteAnnouncement, { isLoading: isDeleting }] = useDeleteAnnouncementMutation();
+	const isSaving = isCreating || isUpdating;
 	const rows = useMemo<AnnouncementRow[]>(() => {
 		const clientNames = new Map(clients.map((client) => [client.id, client.name]));
 		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
-		return announcements.map((record) => ({
-			id: record.externalId,
-			allocatedTo: audienceLabels.get(record.announcement) ?? record.announcement ?? "",
-			clientList: record.client ? clientNames.get(record.client) ?? record.client : record.announcement === "all" ? "All clients" : "—",
-			transporterList: record.transporter
-				? transporterNames.get(record.transporter) ?? record.transporter
-				: record.announcement === "all" ? "All transporters" : "—",
-			messageType: record.messageType ?? "",
-			messageTitle: record.title ?? "",
-			status: record.status === Status.ACTIVE ? "Active" : "Inactive",
-			reason:
-				record.status === Status.ACTIVE
-					? ""
-					: (record.reason?.trim() ?? ""),
-			validFor: record.validityTime && record.validityDuration ? `${record.validityDuration} ${record.validityTime}` : "",
-			validityHours: record.validityTime === "hours" ? String(record.validityDuration ?? "") : "—",
-			validityDays: record.validityTime === "days" ? String(record.validityDuration ?? "") : "—",
-			added: dateLabel(record.createdAt),
-		}));
+		return announcements.map((record) => {
+			const status = currentStatus(record.status);
+			const clientId = refId(record.client);
+			const transporterId = refId(record.transporter);
+			return {
+				id: record.externalId,
+				allocatedTo: audienceLabels.get(record.announcement) ?? record.announcement ?? "",
+				clientList: clientId
+					? clientNames.get(clientId) || refLabel(record.client, "name") || clientId
+					: record.announcement === "all" ? "All clients" : "—",
+				transporterList: transporterId
+					? transporterNames.get(transporterId) || refLabel(record.transporter, "name") || transporterId
+					: record.announcement === "all" ? "All transporters" : "—",
+				messageType: normalizeMessageType(record.messageType).toUpperCase(),
+				messageTitle: record.title ?? "",
+				validFor: record.validityTime && record.validityDuration ? `${record.validityDuration} ${record.validityTime}` : "",
+				validityHours: record.validityTime === "hours" ? String(record.validityDuration ?? "") : "—",
+				validityDays: record.validityTime === "days" ? String(record.validityDuration ?? "") : "—",
+				added: dateLabel(record.createdAt),
+				status,
+				reason: status === Status.INACTIVE ? (record.reason?.trim() ?? "") : "",
+			};
+		});
 	}, [announcements, clients, transporters]);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(0);
 	const [sortKey, setSortKey] = useState<ColumnKey>("allocatedTo");
 	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 	const [formOpen, setFormOpen] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const [editorResetKey, setEditorResetKey] = useState(0);
 	const [form, setForm] = useState<AnnouncementForm>(emptyForm);
 	const [previewImageUrl, setPreviewImageUrl] = useState("");
+	const [pendingStatus, setPendingStatus] = useState<AnnouncementRow | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<AnnouncementRow | null>(null);
+	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
+	const [statusReason, setStatusReason] = useState("");
 
 	useEffect(() => {
 		if (!previewOpen || !form.messageImage) {
@@ -203,7 +256,7 @@ export default function Announcement() {
 		const query = search.trim().toLowerCase();
 		const matched = rows.filter((row) => !query || Object.values(row).join(" ").toLowerCase().includes(query));
 		return [...matched].sort((left, right) => {
-			const result = left[sortKey].localeCompare(right[sortKey], undefined, { numeric: true });
+			const result = String(left[sortKey]).localeCompare(String(right[sortKey]), undefined, { numeric: true });
 			return sortDir === "asc" ? result : -result;
 		});
 	}, [rows, search, sortKey, sortDir]);
@@ -216,6 +269,29 @@ export default function Announcement() {
 			setSortKey(key);
 			setSortDir("asc");
 		}
+	};
+
+	const closeForm = () => {
+		setFormOpen(false);
+		setEditingId(null);
+		setForm({ ...emptyForm });
+		setPreviewOpen(false);
+	};
+
+	const openCreate = () => {
+		setEditingId(null);
+		setForm({ ...emptyForm });
+		setEditorResetKey((current) => current + 1);
+		setFormOpen(true);
+	};
+
+	const openEdit = (externalId: string) => {
+		const record = announcements.find((item) => item.externalId === externalId);
+		if (!record) return;
+		setEditingId(externalId);
+		setForm(formFromRecord(record));
+		setEditorResetKey((current) => current + 1);
+		setFormOpen(true);
 	};
 
 	const saveAnnouncement = async () => {
@@ -231,49 +307,89 @@ export default function Announcement() {
 			toast.error("Please complete the announcement audience, validity, duration, and message type.");
 			return;
 		}
-		if (form.messageType === "IMAGE" && !form.messageImage) {
+		const messageType = normalizeMessageType(form.messageType);
+		if (!messageType) {
+			toast.error("Please select a valid message type.");
+			return;
+		}
+		const title = form.messageTitle.trim().slice(0, 255);
+		const existing = editingId ? announcements.find((item) => item.externalId === editingId) : undefined;
+		const needsNewImage = messageType === "image" && !form.messageImage && !existing?.messageImage;
+		if (needsNewImage) {
 			toast.error("Please choose a message image.");
 			return;
 		}
 		if (isSaving) return;
 		try {
 			const usesClient = form.announcement === "client" || form.announcement === "transporter";
-			await createAnnouncement({
+			const body = {
 				announcement: form.announcement as AnnouncementAudience,
 				client: usesClient ? form.client : undefined,
 				transporter: form.announcement === "transporter" ? form.transporter : undefined,
 				validityTime: form.validity as AnnouncementValidity,
 				validityDuration: Number(form.duration),
-				messageType: form.messageType as AnnouncementMessageType,
-				title: form.messageTitle.trim() || undefined,
-				body: form.messageType === "TEXT" ? form.messageBody || undefined : undefined,
-				messageImage: form.messageType === "IMAGE" ? form.messageImage ?? undefined : undefined,
+				messageType,
+				title: title || undefined,
+				body: messageType === "text" ? form.messageBody || undefined : undefined,
+				messageImage: messageType === "image" ? form.messageImage ?? undefined : undefined,
 				requestForDontShowAgainOption: form.dontShowAgain,
 				requestForProfileUpdate: form.profileUpdate,
-				status: form.active ? Status.ACTIVE : Status.INACTIVE,
-				reason: "New announcement created",
-			}).unwrap();
-			setForm({ ...emptyForm });
-			setFormOpen(false);
+				...(editingId
+					? {}
+					: {
+							status: Status.ACTIVE,
+						}),
+			};
+			if (editingId) {
+				await updateAnnouncement({ externalId: editingId, body }).unwrap();
+				toast.success("Announcement updated.");
+			} else {
+				await createAnnouncement(body).unwrap();
+				toast.success("Announcement saved.");
+			}
+			closeForm();
 			setPage(0);
-			toast.success("Announcement saved.");
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not save the announcement."));
 		}
 	};
 
-	const recreateAnnouncement = (externalId: string) => {
-		const record = announcements.find((item) => item.externalId === externalId);
-		if (!record) return;
-		setForm(formFromRecord(record));
-		setEditorResetKey((current) => current + 1);
-		setFormOpen(true);
+	const closeStatusDialog = () => {
+		setPendingStatus(null);
+		setStatusReason("");
 	};
 
-	const removeAnnouncement = async (externalId: string) => {
+	const confirmStatusChange = async () => {
+		if (!pendingStatus?.id) return;
+		if (selectedStatus === pendingStatus.status) {
+			toast.error("Select a different status to change.");
+			return;
+		}
+		if (selectedStatus === Status.INACTIVE && !statusReason.trim()) {
+			toast.error("Please enter a reason when setting Inactive.");
+			return;
+		}
 		try {
-			await deleteAnnouncement(externalId).unwrap();
+			await updateAnnouncementStatus({
+				externalId: pendingStatus.id,
+				status: selectedStatus,
+				reason: selectedStatus === Status.INACTIVE ? statusReason.trim() : "",
+			}).unwrap();
+			toast.success(
+				`${pendingStatus.messageTitle || "Announcement"} is now ${statusLabel(selectedStatus).toLowerCase()}.`,
+			);
+			closeStatusDialog();
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not update the announcement status."));
+		}
+	};
+
+	const confirmDelete = async () => {
+		if (!pendingDelete?.id) return;
+		try {
+			await deleteAnnouncement(pendingDelete.id).unwrap();
 			toast.success("Announcement deleted.");
+			setPendingDelete(null);
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not delete the announcement."));
 		}
@@ -288,7 +404,7 @@ export default function Announcement() {
 		</div>
 	);
 
-	const updateAnnouncement = (announcement: string) => {
+	const updateAudience = (announcement: string) => {
 		setForm((current) => ({
 			...current,
 			announcement,
@@ -314,13 +430,35 @@ export default function Announcement() {
 		setEditorResetKey((current) => current + 1);
 	};
 
-	const statusBadge = (status: string) => (
-		<span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${
-			status === "Active"
-				? isDark ? "bg-emerald-400/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"
-				: isDark ? "bg-rose-400/15 text-rose-200" : "bg-rose-50 text-rose-700"
-		}`}>
-			{status}
+	const iconButtonClass = (tone: "cyan" | "violet" | "rose") => {
+		const tones = {
+			cyan: isDark
+				? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.14]"
+				: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100",
+			violet: isDark
+				? "border-violet-300/20 bg-violet-300/[0.08] text-violet-100 hover:bg-violet-300/[0.14]"
+				: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100",
+			rose: isDark
+				? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]"
+				: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+		};
+		return `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${tones[tone]}`;
+	};
+
+	const statusBadge = (status: Status) => (
+		<span
+			className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
+				status === Status.ACTIVE
+					? isDark
+						? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-200"
+						: "border-emerald-200 bg-emerald-50 text-emerald-700"
+					: isDark
+						? "border-rose-300/25 bg-rose-300/[0.08] text-rose-200"
+						: "border-rose-200 bg-rose-50 text-rose-700"
+			}`}
+		>
+			<span className={`h-1.5 w-1.5 rounded-full ${status === Status.ACTIVE ? "bg-emerald-400" : "bg-rose-400"}`} />
+			{statusLabel(status)}
 		</span>
 	);
 
@@ -359,7 +497,7 @@ export default function Announcement() {
 								className={searchInputClass(isDark)}
 							/>
 						</label>
-						<button type="button" onClick={() => { setForm({ ...emptyForm }); setEditorResetKey((current) => current + 1); setFormOpen(true); }} className={primaryButtonClass(isDark)}>
+						<button type="button" onClick={openCreate} className={primaryButtonClass(isDark)}>
 							<Plus className="h-3.5 w-3.5" /> Add Announcement
 						</button>
 					</div>
@@ -391,24 +529,41 @@ export default function Announcement() {
 										<tr key={row.id} className={tableRowClass(isDark)}>
 											{columns.map((column) => (
 												<td key={column.key} className="whitespace-nowrap px-4 py-3">
-													{column.key === "status" ? statusBadge(row.status) : row[column.key] || "—"}
+													{column.key === "status" ? statusBadge(row.status) : cellText(row[column.key])}
 												</td>
 											))}
 											<td className="px-4 py-2.5">
-												<div className="flex items-center justify-center gap-2">
+												<div className="flex items-center justify-center gap-1.5">
 													<button
 														type="button"
-														onClick={() => recreateAnnouncement(row.id)}
-														className={rowActionClass(isDark, "cyan")}
+														title="Edit announcement"
+														aria-label={`Edit ${row.messageTitle || row.id}`}
+														onClick={() => openEdit(row.id)}
+														className={iconButtonClass("cyan")}
 													>
-														Recreate
+														<Pencil className="h-3.5 w-3.5" />
 													</button>
 													<button
 														type="button"
-														onClick={() => removeAnnouncement(row.id)}
-														className={rowActionClass(isDark, "rose")}
+														title="Change status"
+														aria-label={`Change status of ${row.messageTitle || row.id}`}
+														onClick={() => {
+															setSelectedStatus(row.status === Status.ACTIVE ? Status.INACTIVE : Status.ACTIVE);
+															setStatusReason("");
+															setPendingStatus(row);
+														}}
+														className={iconButtonClass("violet")}
 													>
-														Delete
+														<Power className="h-3.5 w-3.5" />
+													</button>
+													<button
+														type="button"
+														title="Delete announcement"
+														aria-label={`Delete ${row.messageTitle || row.id}`}
+														onClick={() => setPendingDelete(row)}
+														className={iconButtonClass("rose")}
+													>
+														<Trash2 className="h-3.5 w-3.5" />
 													</button>
 												</div>
 											</td>
@@ -426,8 +581,8 @@ export default function Announcement() {
 			{formOpen && (
 				<AlertModal
 					isDark={isDark}
-					title="Add Announcement"
-					onClose={() => setFormOpen(false)}
+					title={editingId ? "Edit Announcement" : "Add Announcement"}
+					onClose={closeForm}
 					onSubmit={saveAnnouncement}
 					widthClass="max-w-6xl"
 					footer={
@@ -435,6 +590,10 @@ export default function Announcement() {
 							<button
 								type="button"
 								onClick={() => {
+									if (editingId) {
+										openEdit(editingId);
+										return;
+									}
 									setForm({ ...emptyForm });
 									setEditorResetKey((current) => current + 1);
 									setPreviewOpen(false);
@@ -443,13 +602,15 @@ export default function Announcement() {
 							>
 								Reset
 							</button>
-							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>{isSaving ? "Saving..." : "Save"}</button>
+							<button type="submit" disabled={isSaving} className={primaryButtonClass(isDark)}>
+								{isSaving ? "Saving..." : editingId ? "Update" : "Save"}
+							</button>
 						</>
 					}
 				>
 					<div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
 						{field("announcement-audience", "Announcement", (
-							<select id="announcement-audience" value={form.announcement} onChange={(event) => updateAnnouncement(event.target.value)} className={inputClass(isDark)}>
+							<select id="announcement-audience" value={form.announcement} onChange={(event) => updateAudience(event.target.value)} className={inputClass(isDark)}>
 								<option value="">Select</option>
 								{audiences.map((audience) => <option key={audience.value} value={audience.value}>{audience.label}</option>)}
 							</select>
@@ -486,7 +647,7 @@ export default function Announcement() {
 						{field("announcement-type", "MESSAGE TYPE", (
 							<select id="announcement-type" value={form.messageType} onChange={(event) => updateMessageType(event.target.value)} className={inputClass(isDark)}>
 								<option value="">Select</option>
-								{messageTypes.map((name) => <option key={name} value={name}>{name}</option>)}
+								{messageTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
 							</select>
 						))}
 						{form.messageType && field("announcement-title", "Message Title", (
@@ -494,11 +655,12 @@ export default function Announcement() {
 								id="announcement-title"
 								value={form.messageTitle}
 								placeholder="Message Title"
-								onChange={(event) => setForm({ ...form, messageTitle: event.target.value })}
+								maxLength={255}
+								onChange={(event) => setForm({ ...form, messageTitle: event.target.value.slice(0, 255) })}
 								className={inputClass(isDark)}
 							/>
 						), false)}
-						{form.messageType === "IMAGE" && field("announcement-image", "Message Image", (
+						{form.messageType === "image" && field("announcement-image", "Message Image", (
 							<input
 								id="announcement-image"
 								type="file"
@@ -506,9 +668,9 @@ export default function Announcement() {
 								onChange={(event) => setForm({ ...form, messageImage: event.target.files?.[0] ?? null })}
 								className={`h-10 w-full rounded-lg border px-2 py-1 text-xs ${isDark ? "border-white/[0.08] bg-[#03091c]/70 text-slate-300 file:mr-2 file:rounded-md file:border-0 file:bg-white/[0.08] file:px-2 file:py-1 file:text-xs file:text-slate-200" : "border-slate-200 bg-white text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:text-slate-700"}`}
 							/>
-						))}
+						), !editingId)}
 					</div>
-					{form.messageType === "TEXT" && (
+					{form.messageType === "text" && (
 						<div className="mt-4">
 							{field("announcement-body", "Body", (
 								<div className={`overflow-hidden rounded-lg border ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}>
@@ -524,10 +686,6 @@ export default function Announcement() {
 						</div>
 					)}
 					<div className="mt-6 flex flex-col items-start gap-3">
-						<label className={checkboxLabelClass(isDark)}>
-							<input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} className={checkboxClass} />
-							Active
-						</label>
 						<label className={checkboxLabelClass(isDark)}>
 							<input type="checkbox" checked={form.dontShowAgain} onChange={(event) => setForm({ ...form, dontShowAgain: event.target.checked })} className={checkboxClass} />
 							Request For Don't Show Again
@@ -553,20 +711,97 @@ export default function Announcement() {
 				>
 					<div className={`rounded-xl border p-5 ${isDark ? "border-white/[0.08] bg-[#03091c]/50" : "border-slate-200 bg-slate-50"}`}>
 						{form.messageTitle && <h3 className="mb-3 text-lg font-semibold">{form.messageTitle}</h3>}
-						{form.messageType === "TEXT" && (
+						{form.messageType === "text" && (
 							<p className="whitespace-pre-wrap text-sm leading-6">
 								{new DOMParser().parseFromString(form.messageBody, "text/html").body.textContent}
 							</p>
 						)}
-						{form.messageType === "IMAGE" && previewImageUrl && (
+						{form.messageType === "image" && previewImageUrl && (
 							<img src={previewImageUrl} alt={form.messageTitle || "Announcement"} className="max-h-[60vh] max-w-medium rounded-lg object-contain" />
 						)}
-						{form.messageType === "IMAGE" && !previewImageUrl && (
-							<p className="text-sm text-slate-100">Choose an image to preview.</p>
+						{form.messageType === "image" && !previewImageUrl && (
+							<p className="text-sm text-slate-100">
+								{editingId ? "Existing image will be kept unless you choose a new one." : "Choose an image to preview."}
+							</p>
 						)}
 					</div>
 				</AlertModal>
 			)}
+
+			<ChangeStatusDialog
+				isDark={isDark}
+				open={Boolean(pendingStatus)}
+				title="Change announcement status"
+				entityName={pendingStatus?.messageTitle || "this announcement"}
+				entityNoun="announcement"
+				currentStatus={pendingStatus?.status ?? Status.ACTIVE}
+				selectedStatus={selectedStatus}
+				onSelectedStatusChange={setSelectedStatus}
+				reason={statusReason}
+				onReasonChange={setStatusReason}
+				isSubmitting={isUpdatingStatus}
+				onCancel={closeStatusDialog}
+				onConfirm={() => void confirmStatusChange()}
+				titleId="announcement-status-title"
+				zIndexClassName="z-[810]"
+			/>
+
+			{pendingDelete ? (
+				<div
+					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
+					onMouseDown={(event) => {
+						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
+					}}
+				>
+					<section
+						role="alertdialog"
+						aria-modal="true"
+						aria-labelledby="announcement-delete-title"
+						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
+							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
+						}`}
+					>
+						<h3
+							id="announcement-delete-title"
+							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
+						>
+							Delete announcement?
+						</h3>
+						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+							This will permanently remove{" "}
+							<strong className={isDark ? "text-white" : "text-slate-900"}>
+								{pendingDelete.messageTitle || "this announcement"}
+							</strong>
+							.
+						</p>
+						<div className="mt-5 flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setPendingDelete(null)}
+								disabled={isDeleting}
+								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
+									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
+								}`}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onClick={() => void confirmDelete()}
+								disabled={isDeleting}
+								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
+									isDark
+										? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
+										: "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+								}`}
+							>
+								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+								Delete
+							</button>
+						</div>
+					</section>
+				</div>
+			) : null}
 		</div>
 	);
 }

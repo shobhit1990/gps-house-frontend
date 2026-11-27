@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import {
   ArrowLeft,
   Gauge,
@@ -24,7 +25,18 @@ import type {
   VehicleHistoryPoint,
   VehicleHistoryResult,
 } from "@/interfaces/VehicleHistoryTracking";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useLazyGetVehicleHistoryTrackingQuery } from "@/store/services/api/VehicleHistoryTracking";
 import { useGetVehicleLiveTrackingQuery } from "@/store/services/api/VehicleLiveTracking";
+
+export type HistoryTrackingNavState = {
+  vehicleId?: string;
+  from?: string;
+  to?: string;
+  minStopMinutes?: number;
+  autoLoad?: boolean;
+  returnTo?: string;
+};
 
 type PlaybackSpeed = 1 | 2 | 4 | 8 | 16;
 
@@ -129,12 +141,16 @@ const uniqueAddresses = (points: VehicleHistoryPoint[], limit = 8) => {
 
 export default function HistoryTrackingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout } = useAuth();
   const { theme } = useTheme();
   const isDark = theme !== "light";
   const { data: vehicles = [] } = useGetVehicleLiveTrackingQuery();
+  const [fetchHistory] = useLazyGetVehicleHistoryTrackingQuery();
+  const navState = (location.state as HistoryTrackingNavState | null) ?? null;
+  const autoLoadHandled = useRef(false);
 
-  const [modalOpen, setModalOpen] = useState(true);
+  const [modalOpen, setModalOpen] = useState(() => !navState?.autoLoad);
   const [history, setHistory] = useState<
     (VehicleHistoryResult & { vehicleId: string; vehicleKind?: "car" | "bike" }) | null
   >(null);
@@ -144,7 +160,54 @@ export default function HistoryTrackingPage() {
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>("street");
   const [showTraffic, setShowTraffic] = useState(false);
-  const [minStopMinutes, setMinStopMinutes] = useState(15);
+  const [minStopMinutes, setMinStopMinutes] = useState(
+    () => (navState?.minStopMinutes && navState.minStopMinutes > 0 ? navState.minStopMinutes : 15),
+  );
+  const [returnTo] = useState(() => navState?.returnTo || "/dashboard");
+
+  useEffect(() => {
+    if (!navState?.autoLoad || autoLoadHandled.current) return;
+    const vehicleId = navState.vehicleId?.trim();
+    const from = navState.from?.trim();
+    const to = navState.to?.trim();
+    if (!vehicleId || !from || !to) {
+      setModalOpen(true);
+      return;
+    }
+
+    autoLoadHandled.current = true;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const result = await fetchHistory({ vehicleId, from, to, limit: 5000 }).unwrap();
+        if (cancelled) return;
+        if (result.route.length === 0) {
+          toast.error("No tracking points found for this range.");
+          setModalOpen(true);
+          return;
+        }
+        setHistory({
+          ...result,
+          from: result.from || from,
+          to: result.to || to,
+          vehicleId,
+        });
+        setModalOpen(false);
+        toast.success(`Route loaded · ${result.route.length} points`);
+        navigate(location.pathname, { replace: true, state: null });
+      } catch (error) {
+        if (cancelled) return;
+        toast.error(apiErrorMessage(error, "Could not load route. Please try again."));
+        setModalOpen(true);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchHistory, location.pathname, navState, navigate]);
 
   const routeLength = history?.route.length ?? 0;
   const hasRoute = routeLength > 1;
@@ -284,7 +347,7 @@ export default function HistoryTrackingPage() {
             <div className="pointer-events-auto flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => navigate("/dashboard")}
+                onClick={() => navigate(returnTo)}
                 className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-[11px] font-semibold shadow-lg backdrop-blur-md ${
                   isDark
                     ? "border-white/15 bg-[#07142f]/92 text-slate-200"
@@ -329,7 +392,7 @@ export default function HistoryTrackingPage() {
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
                   <button
                     type="button"
-                    onClick={() => navigate("/dashboard")}
+                    onClick={() => navigate(returnTo)}
                     className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold transition ${
                       isDark
                         ? "border-white/12 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08]"

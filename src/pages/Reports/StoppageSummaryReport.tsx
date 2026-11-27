@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useNavigate } from "react-router-dom";
 import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -6,6 +7,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Play, Refre
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import type { StoppageSummary } from "@/interfaces/StoppageSummaryReport";
+import type { HistoryTrackingNavState } from "@/pages/HistoryTracking/HistoryTrackingPage";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
 	useGetClientMasterQuery,
@@ -53,6 +55,25 @@ const toApiDateTime = (value: string) => {
 	return `${day}/${month}/${year} ${timePart}`;
 };
 
+/** datetime-local (YYYY-MM-DDTHH:mm) → ISO UTC for history tracking */
+const toIsoDateTime = (value: string, endOfMinute = false) => {
+	const [datePart, timePart = "00:00"] = value.split("T");
+	const [year, month, day] = datePart.split("-").map(Number);
+	const [hours, minutes] = timePart.split(":").map(Number);
+	if (!year || !month || !day || Number.isNaN(hours) || Number.isNaN(minutes)) return "";
+	const local = new Date(
+		year,
+		month - 1,
+		day,
+		hours,
+		minutes,
+		endOfMinute ? 59 : 0,
+		endOfMinute ? 999 : 0,
+	);
+	if (Number.isNaN(local.getTime())) return "";
+	return local.toISOString();
+};
+
 const optionLabel = (id: string, options: { id: string; name: string }[]) => {
 	const match = options.find((option) => option.id === id)?.name;
 	return typeof match === "string" && match.trim() ? match : typeof id === "string" ? id : "";
@@ -89,6 +110,7 @@ const formatMinutes = (minutes: number) => {
 const formatDistance = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
 
 export default function StoppageSummaryReport() {
+	const navigate = useNavigate();
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
@@ -168,6 +190,38 @@ export default function StoppageSummaryReport() {
 		};
 	}, [openMenu]);
 
+	const openPlaybackMap = () => {
+		if (!vehicle) {
+			toast.error("Select vehicle for playback.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date for playback.");
+			return;
+		}
+
+		const isoFrom = toIsoDateTime(from, false);
+		const isoTo = toIsoDateTime(to, true);
+		if (!isoFrom || !isoTo) {
+			toast.error("Invalid from or to date.");
+			return;
+		}
+		if (new Date(isoFrom).getTime() > new Date(isoTo).getTime()) {
+			toast.error("From date must be before to date.");
+			return;
+		}
+
+		const state: HistoryTrackingNavState = {
+			vehicleId: vehicle,
+			from: isoFrom,
+			to: isoTo,
+			minStopMinutes: duration ? durationMinutes(duration) : 15,
+			autoLoad: true,
+			returnTo: "/stoppage-summary-report",
+		};
+		navigate("/history-tracking", { state });
+	};
+
 	const applyFilters = async () => {
 		if (!client || !vehicle) {
 			toast.error("Select client and vehicle.");
@@ -208,6 +262,7 @@ export default function StoppageSummaryReport() {
 			setSearched(true);
 			setOpenMenu(null);
 			setPage(0);
+			openPlaybackMap();
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not load stoppage summary report."));
 		}
@@ -319,8 +374,10 @@ export default function StoppageSummaryReport() {
 		return (
 			<button
 				type="button"
+				onClick={openPlaybackMap}
 				aria-label={`Play ${displayText(row.vehicle)}`}
-				className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#3ddc97] text-black"
+				title="Open playback map"
+				className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#3ddc97] text-black transition hover:brightness-110"
 			>
 				<Play className="h-3.5 w-3.5 fill-current" />
 			</button>
@@ -384,6 +441,17 @@ export default function StoppageSummaryReport() {
 						</div>
 						<button type="button" onClick={() => void applyFilters()} disabled={isFetching} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
 							{isFetching ? "Searching..." : "Search"}
+						</button>
+						<button
+							type="button"
+							onClick={openPlaybackMap}
+							disabled={!vehicle || !from || !to}
+							aria-label="Open playback map"
+							title="Open playback map"
+							className={`flex h-10 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${isDark ? "border-[#3ddc97]/35 bg-[#3ddc97]/15 text-[#3ddc97] hover:bg-[#3ddc97]/25" : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
+						>
+							<Play className="h-3.5 w-3.5 fill-current" />
+							Playback
 						</button>
 					</div>
 				</section>

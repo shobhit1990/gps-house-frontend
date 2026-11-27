@@ -4,6 +4,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { VehicleKind, VehicleStatus } from "@/components/data/vehicles";
 import { getVehicleStatusImage } from "@/lib/vehicleStatusImage";
+import startGreenFlag from "@/assets/start_greenflag.png";
+import completeRedFlag from "@/assets/complete_Red.png";
+import carRunningPlayback from "@/assets/car_running_topdown.png";
 
 type RoutePoint = [number, number];
 type BaseLayer = "street" | "satellite";
@@ -81,9 +84,9 @@ const bearingDegrees = (from: RoutePoint, to: RoutePoint) => {
 
 /**
  * Default nose direction in the asset (degrees from image-up / north).
- * Car faces bottom-left (~225°); bike faces left (~270°).
+ * Top-down car sprite faces up (~0°); bike sprites face left (~270°).
  */
-const iconNoseBearing = (kind: VehicleKind) => (kind === "bike" ? 270 : 225);
+const iconNoseBearing = (kind: VehicleKind) => (kind === "bike" ? 270 : 0);
 
 const buildCumulative = (path: RoutePoint[]) => {
   const cum = [0];
@@ -183,13 +186,15 @@ function FollowPlayback({
 }
 
 function endpointIcon(kind: "start" | "end") {
-  const color = kind === "start" ? "#34d399" : "#fb7185";
-  const label = kind === "start" ? "S" : "E";
+  const src = kind === "start" ? startGreenFlag : completeRedFlag;
+  const size = 36;
   return L.divIcon({
-    className: "",
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-    html: `<div style="width:22px;height:22px;border-radius:999px;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font:700 9px/1 sans-serif;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,.35)">${label}</div>`,
+    className: "history-endpoint-marker",
+    iconSize: [size, size],
+    iconAnchor: [8, size - 2],
+    html: `<div style="width:${size}px;height:${size}px;filter:drop-shadow(0 4px 10px rgba(0,0,0,.45));display:flex;align-items:flex-end;justify-content:flex-start">
+      <img src="${src}" alt="${kind === "start" ? "Start" : "End"}" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:contain;display:block;pointer-events:none;background:transparent" draggable="false" />
+    </div>`,
   });
 }
 
@@ -198,7 +203,7 @@ function playbackIcon(
   status: VehicleStatus = "running",
   headingDeg = 0,
 ) {
-  const img = getVehicleStatusImage(kind, status);
+  const img = kind === "car" ? carRunningPlayback : getVehicleStatusImage(kind, status);
   const size = 48;
   const rotate = headingDeg - iconNoseBearing(kind);
   return L.divIcon({

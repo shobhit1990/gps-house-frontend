@@ -681,30 +681,6 @@ export function AddTransporterDialog({
                                 <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                                     <input
                                         type="checkbox"
-                                        checked={values.active === "true"}
-                                        onChange={(event) => {
-                                            update("active", String(event.target.checked));
-                                            if (event.target.checked) update("reason", "");
-                                        }}
-                                        className="h-4 w-4 accent-cyan-500"
-                                    />
-                                    Active
-                                </label>
-                                {values.active !== "true" ? (
-                                    <label className="w-full max-w-xl">
-                                        <FieldLabel label="Reason" optional isDark={isDark} />
-                                        <textarea
-                                            value={values.reason}
-                                            onChange={(event) => update("reason", event.target.value)}
-                                            rows={3}
-                                            placeholder="Why is this transporter inactive?"
-                                            className={`${inputClass} h-auto resize-none py-2`}
-                                        />
-                                    </label>
-                                ) : null}
-                                <label className={`flex cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                    <input
-                                        type="checkbox"
                                         checked={values.overwriteSubscription === "true"}
                                         onChange={(event) => {
                                             if (event.target.checked) {
