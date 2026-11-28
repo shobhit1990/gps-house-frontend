@@ -448,7 +448,7 @@ export default function SubscriptionExpiredDate() {
 								disabled={!selectedClient || transportersLoading}
 								className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
 							>
-								<option value="">{!selectedClient ? "Select Client first" : transportersLoading ? "Loading…" : "Select Transporter"}</option>
+								<option value="">Select Transporter</option>
 								{transporters.map((transporter) => <option key={transporter.id} value={transporter.id}>{transporter.name}</option>)}
 							</select>
 							<ChevronDown className="pointer-events-none absolute bottom-3 right-3 h-3.5 w-3.5 text-slate-500" />

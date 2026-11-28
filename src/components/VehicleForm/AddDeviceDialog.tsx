@@ -3,7 +3,6 @@ import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { addDeviceFields } from "@/interfaces/AddDeviceFields";
 import type { Device } from "@/interfaces/AddDevice";
-import { SimOperator } from "@/enums/SimOperator";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
 import {
     useCreateDeviceMutation,
@@ -25,11 +24,7 @@ const emptyValues = (): Record<string, string> => ({
     ...Object.fromEntries(
         addDeviceFields.map((field) => [
             field.name,
-            field.name === "simOperator" || field.name === "secondarySimOperator"
-                ? SimOperator.AIRTEL_GPRS
-                : field.type === "checkbox"
-                    ? "false"
-                    : "",
+            field.type === "checkbox" ? "false" : "",
         ]),
     ),
     active: "true",
@@ -50,12 +45,11 @@ const deviceToFormValues = (device: Device): Record<string, string> => ({
     ...emptyValues(),
     imei: device.imei ?? "",
     sim: device.simNumber ?? "",
-    simOperator: device.simOperator || SimOperator.AIRTEL_GPRS,
+    simOperator: device.simOperator ?? "",
     secondarySim: device.secondarySimNumber ?? "",
-    secondarySimOperator: device.secondarySimOperator || SimOperator.AIRTEL_GPRS,
+    secondarySimOperator: device.secondarySimOperator ?? "",
     deviceType: refId(device.deviceType),
     deviceClient: refId(device.client),
-    devicePassword: device.password ?? "",
     active: String(device.active !== false),
     reason: device.reason ?? "",
     ignitionPositive: String(device.ignitionWireConnected ?? false),
@@ -202,6 +196,9 @@ export function AddDeviceDialog({ isDark, onClose, onSaved, deviceId }: AddDevic
                                             <option value="">{deviceTypesLoading ? "Loading..." : "Select Device Type"}</option>
                                         )}
                                         {field.name === "deviceClient" && <option value="">Select Client</option>}
+                                        {(field.name === "simOperator" || field.name === "secondarySimOperator") && (
+                                            <option value="">Select Sim Operator</option>
+                                        )}
                                         {(field.name === "deviceClient"
                                             ? clients.map((client) => ({ id: client.id, name: client.name }))
                                             : field.name === "deviceType"
@@ -228,38 +225,6 @@ export function AddDeviceDialog({ isDark, onClose, onSaved, deviceId }: AddDevic
                         ))}
                     </div>
                     <div className="mt-5 flex flex-col gap-3">
-                        <label className={`flex items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                            <input
-                                type="checkbox"
-                                checked={values.active !== "false"}
-                                onChange={(event) =>
-                                    setValues((current) => ({
-                                        ...current,
-                                        active: String(event.target.checked),
-                                        ...(event.target.checked ? { reason: "" } : {}),
-                                    }))
-                                }
-                                className="h-4 w-4 accent-cyan-500"
-                            />
-                            <span className="font-semibold">Active</span>
-                        </label>
-                        {values.active === "false" ? (
-                            <label className="block max-w-xl">
-                                <span className={`mb-1.5 block text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-                                    Reason <span className="font-normal text-slate-500">(Optional)</span>
-                                </span>
-                                <textarea
-                                    value={values.reason ?? ""}
-                                    onChange={(event) => {
-                                        setValues((current) => ({ ...current, reason: event.target.value }));
-                                        setFormError("");
-                                    }}
-                                    rows={3}
-                                    placeholder="Why is this device inactive?"
-                                    className={`${inputClass} h-auto resize-none py-2`}
-                                />
-                            </label>
-                        ) : null}
                         {addDeviceFields.filter((field) => field.type === "checkbox").map((field) => (
                             <label key={field.name} className={`flex items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                                 <input

@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useState, useRef} from "react";
+import { useNavigate } from "react-router-dom";
 import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -7,6 +8,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import type { RideReportRow } from "@/interfaces/RideReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import type { HistoryTrackingNavState } from "@/pages/HistoryTracking/HistoryTrackingPage";
 import { useLazyGetRideReportQuery } from "@/store/services/api/RideReport";
 import {
 	useGetClientMasterQuery,
@@ -65,9 +67,45 @@ const toApiDateTime = (value: string) => {
 	return `${day}/${month}/${year} ${timePart}`;
 };
 
+/** Ride row datetime → ISO UTC for history tracking API. */
+const toHistoryIso = (value: string, endOfRange = false) => {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed === "—") return "";
+
+	const dayFirst = trimmed.match(
+		/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
+	);
+	if (dayFirst) {
+		const day = Number(dayFirst[1]);
+		const month = Number(dayFirst[2]);
+		const year = Number(dayFirst[3]);
+		const hours = Number(dayFirst[4] ?? 0);
+		const minutes = Number(dayFirst[5] ?? 0);
+		const seconds = Number(dayFirst[6] ?? (endOfRange ? 59 : 0));
+		const local = new Date(
+			year,
+			month - 1,
+			day,
+			hours,
+			minutes,
+			seconds,
+			endOfRange && !dayFirst[6] ? 999 : 0,
+		);
+		return Number.isNaN(local.getTime()) ? "" : local.toISOString();
+	}
+
+	const parsed = new Date(trimmed);
+	if (Number.isNaN(parsed.getTime())) return "";
+	if (endOfRange && /^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+		parsed.setHours(23, 59, 59, 999);
+	}
+	return parsed.toISOString();
+};
+
 const textValue = (value: string) => (value.trim() ? value : "—");
 
 export default function RideReport() {
+	const navigate = useNavigate();
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
 	const { data: allVehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
 	const [fetchRideReport, { isFetching }] = useLazyGetRideReportQuery();
@@ -224,6 +262,33 @@ export default function RideReport() {
 		setPageSize(10);
 	};
 
+	const openRidePlayback = (row: RideReportRow) => {
+		if (!vehicle) {
+			toast.error("Select vehicle for playback.");
+			return;
+		}
+
+		const isoFrom = toHistoryIso(row.startDateTime, false);
+		const isoTo = toHistoryIso(row.endDateTime, true);
+		if (!isoFrom || !isoTo) {
+			toast.error("This ride does not have a valid start/end time.");
+			return;
+		}
+		if (new Date(isoFrom).getTime() > new Date(isoTo).getTime()) {
+			toast.error("Ride start time must be before end time.");
+			return;
+		}
+
+		const state: HistoryTrackingNavState = {
+			vehicleId: vehicle,
+			from: isoFrom,
+			to: isoTo,
+			autoLoad: true,
+			returnTo: "/ride-report",
+		};
+		navigate("/history-tracking", { state });
+	};
+
 	const SelectField = ({
 		id,
 		label,
@@ -267,10 +332,11 @@ export default function RideReport() {
 			return (
 				<button
 					type="button"
+					onClick={() => openRidePlayback(row)}
 					aria-label={`Play ride ${row.vehicleNo || serial}`}
 					className={`flex h-7 w-7 items-center justify-center rounded-full border ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100" : "border-cyan-200 bg-cyan-50 text-cyan-700"}`}
 				>
-					<Play className="h-3.5 w-3.5" />
+					<Play className="h-3.5 w-3.5 fill-current" />
 				</button>
 			);
 		}

@@ -86,28 +86,28 @@ export default function JobSheet() {
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const rows = useMemo<JobSheetRecord[]>(() => {
-		const vehicleNames = new Map(
+		const vehicleNames = new Map<string, string>(
 			vehicleOptions.flatMap((vehicle) => {
 				const entries: [string, string][] = [[vehicle.id, vehicle.name]];
 				if (vehicle.externalId) entries.push([vehicle.externalId, vehicle.name]);
 				return entries;
 			}),
 		);
-		const technicianNames = new Map(
+		const technicianNames = new Map<string, string>(
 			technicians.flatMap((technician) => {
 				const entries: [string, string][] = [[technician.id, technician.name]];
 				if (technician.externalId) entries.push([technician.externalId, technician.name]);
 				return entries;
 			}),
 		);
-		const transporterNames = new Map(
+		const transporterNames = new Map<string, string>(
 			transporters.flatMap((transporter) => {
 				const entries: [string, string][] = [[transporter.id, transporter.name]];
 				if (transporter.externalId) entries.push([transporter.externalId, transporter.name]);
 				return entries;
 			}),
 		);
-		const vehicleTransporterIds = new Map(
+		const vehicleTransporterIds = new Map<string, string>(
 			vehicles.flatMap((vehicle) => {
 				const vehicleId = String(vehicle.externalId || vehicle.id || "");
 				const transporterRef = vehicle.transporter as unknown;
@@ -138,7 +138,7 @@ export default function JobSheet() {
 			const transporterId = vehicleTransporterIds.get(job.vehicle) ?? "";
 			const transporter =
 				job.transporterName?.trim() ||
-				(transporterId ? transporterNames.get(transporterId) : "") ||
+				(transporterId ? transporterNames.get(transporterId) ?? "" : "") ||
 				"";
 			const reason = String(job.reason ?? "").trim();
 			const systemReasons = new Set(["New jobsheet created", "Job completed", "Jobsheet updated"]);

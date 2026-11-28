@@ -26,12 +26,11 @@ const simOperators = Object.values(SimOperator);
 const initialDevice = {
 	imei: "",
 	simNumber: "",
-	simOperator: SimOperator.AIRTEL_GPRS,
+	simOperator: "",
 	secondarySimNumber: "",
-	secondarySimOperator: SimOperator.AIRTEL_GPRS,
+	secondarySimOperator: "",
 	deviceType: "",
 	client: "",
-	password: "",
 	active: true,
 	reason: "",
 	ignitionPositive: false,
@@ -124,13 +123,11 @@ function SelectField({
 const deviceToFormState = (record: Device) => ({
 	imei: record.imei ?? "",
 	simNumber: record.simNumber ?? "",
-	simOperator: (record.simOperator as SimOperator) || SimOperator.AIRTEL_GPRS,
+	simOperator: (record.simOperator as SimOperator) || "",
 	secondarySimNumber: record.secondarySimNumber ?? "",
-	secondarySimOperator:
-		(record.secondarySimOperator as SimOperator) || SimOperator.AIRTEL_GPRS,
+	secondarySimOperator: (record.secondarySimOperator as SimOperator) || "",
 	deviceType: refId(record.deviceType),
 	client: refId(record.client),
-	password: record.password ?? "",
 	active: record.active !== false,
 	reason: record.reason ?? "",
 	ignitionPositive: Boolean(record.ignitionWireConnected),
@@ -272,13 +269,11 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 				...prev,
 				imei: inventory.imei ?? selected?.imei ?? prev.imei,
 				simNumber: inventory.simNumber ?? "",
-				simOperator: (inventory.simOperator as SimOperator) || prev.simOperator,
+				simOperator: (inventory.simOperator as SimOperator) || "",
 				secondarySimNumber: inventory.secondarySimNumber ?? "",
-				secondarySimOperator:
-					(inventory.secondarySimOperator as SimOperator) || prev.secondarySimOperator,
+				secondarySimOperator: (inventory.secondarySimOperator as SimOperator) || "",
 				deviceType: refId(inventory.deviceType) || prev.deviceType,
 				client: refId(inventory.client) || prev.client,
-				password: inventory.password ?? "",
 				ignitionPositive: Boolean(inventory.ignitionWireConnected),
 				ignitionNotConnected: Boolean(inventory.ignitionWireNotConnected),
 				acPositive: Boolean(inventory.airConditionWireConnected),
@@ -330,12 +325,13 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 			...(secondarySim
 				? {
 						secondarySimNumber: secondarySim,
-						secondarySimOperator: device.secondarySimOperator,
+						...(device.secondarySimOperator
+							? { secondarySimOperator: device.secondarySimOperator }
+							: {}),
 					}
 				: {}),
 			deviceType: device.deviceType,
 			client: device.client,
-			password: device.password,
 			status: "active",
 			ignitionWireConnected: device.ignitionPositive,
 			ignitionWireNotConnected: device.ignitionNotConnected,
@@ -377,6 +373,7 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 	return (
 		<form
 			onSubmit={handleSubmit}
+			autoComplete="off"
 			noValidate
 			className={`flex max-h-[96vh] w-full flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(0,0,0,0.5)] ${
 				isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
@@ -492,6 +489,7 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 								value={device.simOperator}
 								onChange={(value) => updateDevice("simOperator", value)}
 								options={simOperators.map((operator) => ({ value: operator, label: operator }))}
+								placeholder="Select Sim Operator"
 								required
 								inputClass={inputClass}
 								disabled={isSaving}
@@ -520,6 +518,7 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 								value={device.secondarySimOperator}
 								onChange={(value) => updateDevice("secondarySimOperator", value)}
 								options={simOperators.map((operator) => ({ value: operator, label: operator }))}
+								placeholder="Select Sim Operator"
 								inputClass={inputClass}
 								disabled={isSaving}
 							/>
@@ -546,17 +545,6 @@ export default function AddDeviceForm({ isDark, onClose, onSaved, deviceId }: Ad
 								required
 								inputClass={inputClass}
 								disabled={isSaving || clientsLoading}
-							/>
-						</Field>
-
-						<Field label="Password (Optional)" isDark={isDark}>
-							<input
-								className={inputClass}
-								type="password"
-								placeholder="Password"
-								value={device.password}
-								onChange={(event) => updateDevice("password", event.target.value)}
-								disabled={isSaving}
 							/>
 						</Field>
 					</div>

@@ -14,7 +14,7 @@ type AddRaisedTicketProps = {
 };
 
 export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketProps) {
-  const { data: clients = [], isLoading: clientsLoading, isError: clientsError } = useGetClientMasterQuery();
+  const { data: clients = [], isLoading: clientsLoading, isError: clientsError } = useGetClientMasterQuery();   
   const { data: transporters = [], isLoading: transportersLoading, isError: transportersError } = useGetTransporterMasterQuery();
   const { data: vehicles = [], isLoading: vehiclesLoading, isError: vehiclesError } = useGetVehicleMasterQuery();
   const [createTicket, { isLoading: isSaving }] = useCreateRaiseTicketMutation();

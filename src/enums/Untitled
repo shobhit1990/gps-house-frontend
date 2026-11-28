@@ -1,0 +1,4 @@
+const { data: clientMaster = [] } = useGetClientMasterQuery();
+	const clients = clientMaster;
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
+	const transporters = transporterMaster;

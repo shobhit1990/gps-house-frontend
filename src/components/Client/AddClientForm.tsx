@@ -477,10 +477,6 @@ export function AddClientForm({ client, onClose }: AddClientFormProps) {
 						</label>
 					</div>
 
-					<label className={`mt-6 flex w-fit cursor-pointer items-center gap-2.5 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-						<input type="checkbox" checked={values.active} onChange={(event) => update("active", event.target.checked)} className="h-4 w-4 rounded border-slate-400 accent-cyan-500" />
-						Active
-					</label>
 				</div>
 
 				<footer className={`flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3 ${isDark ? "border-white/[0.08] bg-[#08142e]/70" : "border-slate-200 bg-white"}`}>

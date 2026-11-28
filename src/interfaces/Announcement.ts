@@ -2,7 +2,7 @@ import type { Status } from "@/enums/Status";
 
 export type AnnouncementAudience = "all" | "client" | "transporter";
 export type AnnouncementValidity = "hours" | "days";
-export type AnnouncementMessageType = "TEXT" | "IMAGE";
+export type AnnouncementMessageType = "text" | "image";
 
 export interface CreateAnnouncementRequest {
   announcement: AnnouncementAudience;

@@ -10,13 +10,19 @@ export const apiErrorMessage = (error: unknown, fallback: string) => {
 		message?: unknown;
 		errors?: Array<{ field?: string; message?: string }>;
 	};
-	if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
-	if (Array.isArray(payload.message)) return payload.message.filter((message): message is string => typeof message === "string").join(" ");
-	if (Array.isArray(payload.errors)) {
-		const details = payload.errors
-			.map(({ field, message }) => (message ? `${field ? `${field}: ` : ""}${message}` : ""))
-			.filter(Boolean);
-		if (details.length > 0) return details.join(" ");
+	const fieldErrors = Array.isArray(payload.errors)
+		? payload.errors
+				.map(({ field, message }) => (message ? `${field ? `${field}: ` : ""}${message}` : ""))
+				.filter(Boolean)
+		: [];
+	const fieldSummary = fieldErrors.join(" ");
+	if (typeof payload.message === "string" && payload.message.trim()) {
+		return fieldSummary ? `${payload.message} ${fieldSummary}` : payload.message;
 	}
+	if (Array.isArray(payload.message)) {
+		const summary = payload.message.filter((message): message is string => typeof message === "string").join(" ");
+		if (summary) return fieldSummary ? `${summary} ${fieldSummary}` : summary;
+	}
+	if (fieldSummary) return fieldSummary;
 	return fallback;
 };

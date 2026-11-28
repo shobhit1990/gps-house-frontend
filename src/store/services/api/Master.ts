@@ -99,10 +99,8 @@ function entityMasterLabel(
   const company = asTrimmedText(primaryName ?? item.companyName ?? item.company);
   const identity = asTrimmedText(
     item.userName ??
-    item.username ??
     item.name ??
-    item.owner_name ??
-    item.ownerName,
+    item.owner_name 
   );
   if (company && identity && company !== identity) return `${company} (${identity})`;
   return company || identity || undefined;
@@ -110,7 +108,73 @@ function entityMasterLabel(
 
 /** Client dropdowns show only login `userName` (e.g. ravi / roshni). */
 function clientMasterLabel(item: ClientMaster): string | undefined {
-  return asTrimmedText(item.userName ?? item.username);
+  return asTrimmedText(
+    item.userName ??
+    item.name ??
+    item.owner_name
+  );
+}
+
+/** Extra match keys — QA often stores transporter.client as name/username, not UUID. */
+function clientMasterExtra(item: ClientMaster): Partial<MasterOption> | undefined {
+  const aliases = [
+    item.externalId,
+    item.id != null ? String(item.id) : undefined,
+    item.userName,
+    item.name,
+    item.owner_name,
+  ]
+    .map((value) => asTrimmedText(value))
+    .filter((value): value is string => Boolean(value));
+  const unique = Array.from(new Set(aliases.map((value) => value.toLowerCase())));
+  return unique.length > 0 ? { aliases: unique } : undefined;
+}
+
+function mapTransporterMaster(response: MasterListResponse<TransporterMaster>): MasterOption[] {
+  return toMasterOptions(
+    response,
+    (item) => entityMasterLabel(item, item.transporterName),
+    (item) => {
+      const clientRef = masterRefId(item.client) ?? asTrimmedText(item.client);
+      return clientRef && clientRef !== "[object Object]" ? { clientRef } : undefined;
+    },
+    { includeInactive: true },
+  );
+}
+
+function mapClientMaster(response: MasterListResponse<ClientMaster>): MasterOption[] {
+  return toMasterOptions(response, clientMasterLabel, clientMasterExtra, { includeInactive: true });
+}
+
+/** Match transporters to a selected client id using aliases (name / username / uuid). */
+function filterTransportersByClient(
+  transporters: MasterOption[],
+  clientId: string,
+  clients: MasterOption[],
+): MasterOption[] {
+  const selected = clients.find(
+    (client) =>
+      client.id === clientId ||
+      String(client.externalId ?? "") === clientId ||
+      client.name === clientId,
+  );
+  const keys = new Set(
+    [
+      clientId,
+      selected?.id,
+      selected?.externalId,
+      selected?.name,
+      ...(selected?.aliases ?? []),
+    ]
+      .map((value) => asTrimmedText(value)?.toLowerCase())
+      .filter((value): value is string => Boolean(value)),
+  );
+  const matched = transporters.filter((item) => {
+    const ref = asTrimmedText(item.clientRef)?.toLowerCase();
+    return Boolean(ref && keys.has(ref));
+  });
+  // If aliases cannot resolve (legacy data), keep the full list so the dropdown is never empty.
+  return matched.length > 0 ? matched : transporters;
 }
 
 export const masterApi = api.injectEndpoints({
@@ -146,28 +210,41 @@ export const masterApi = api.injectEndpoints({
     getClientMaster: builder.query<MasterOption[], void>({
       query: () => "/master/client",
       // Include inactive too — API returns them and dropdowns need every client username.
-      transformResponse: (response: MasterListResponse<ClientMaster>) =>
-        toMasterOptions(response, clientMasterLabel, undefined, { includeInactive: true }),
+      transformResponse: (response: MasterListResponse<ClientMaster>) => mapClientMaster(response),
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
     getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({
-      query: (arg) => {
-        const client = typeof arg === "object" && arg?.client ? arg.client : undefined;
+      // QA `/master/transporter?client=<uuid>` returns [] — always fetch the full list and
+      // filter client-side using client aliases (name / username), not the broken query param.
+      async queryFn(arg, { getState }, _extraOptions, baseQuery) {
+        const transporterResult = await baseQuery({ url: "/master/transporter" });
+        if (transporterResult.error) {
+          return { error: transporterResult.error };
+        }
+        const transporters = mapTransporterMaster(
+          transporterResult.data as MasterListResponse<TransporterMaster>,
+        );
+        const clientId =
+          typeof arg === "object" && arg?.client ? String(arg.client).trim() : "";
+        if (!clientId) {
+          return { data: transporters };
+        }
+
+        // Prefer cached client master (void query → select(undefined)); otherwise fetch.
+        let clients =
+          masterApi.endpoints.getClientMaster.select(undefined)(getState() as never).data ??
+          undefined;
+        if (!clients) {
+          const clientResult = await baseQuery({ url: "/master/client" });
+          if (!clientResult.error) {
+            clients = mapClientMaster(clientResult.data as MasterListResponse<ClientMaster>);
+          }
+        }
+
         return {
-          url: "/master/transporter",
-          params: client ? { client } : undefined,
+          data: filterTransportersByClient(transporters, clientId, clients ?? []),
         };
       },
-      transformResponse: (response: MasterListResponse<TransporterMaster>) =>
-        toMasterOptions(
-          response,
-          (item) => entityMasterLabel(item, item.transporterName),
-          (item) => {
-            const clientRef = masterRefId(item.client) ?? asTrimmedText(item.client);
-            return clientRef && clientRef !== "[object Object]" ? { clientRef } : undefined;
-          },
-          { includeInactive: true },
-        ),
       providesTags: (_result, _error, arg) => [
         {
           type: "Master",
@@ -268,19 +345,63 @@ export const masterApi = api.injectEndpoints({
   overrideExisting: false,
 });
 
-export const {
-  useGetOwnerMasterQuery,
-  useGetLanguagesQuery,
-  useGetTimezonesQuery,
-  useGetClientMasterQuery,
-  useGetTransporterMasterQuery,
-  useGetTechnicianMasterQuery,
-  useGetVehicleMasterQuery,
-  useGetDeviceTypeMasterQuery,
-  useGetDeviceMasterQuery,
-  useGetRoleMasterQuery,
-  useGetStateMasterQuery,
-  useGetAlertTypeMasterQuery,
-  useGetExpenseTypeMasterQuery,
-  useGetGeofTypeMasterQuery,
-} = masterApi;
+/**
+ * RTK void hooks need `undefined` as first arg for TypeScript.
+ * These thin wrappers keep normal `useX()` calls and preserve `data` types.
+ */
+export const useGetOwnerMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetOwnerMasterQuery>[1],
+) => masterApi.useGetOwnerMasterQuery(undefined, options);
+
+export const useGetLanguagesQuery = (
+  options?: Parameters<typeof masterApi.useGetLanguagesQuery>[1],
+) => masterApi.useGetLanguagesQuery(undefined, options);
+
+export const useGetTimezonesQuery = (
+  options?: Parameters<typeof masterApi.useGetTimezonesQuery>[1],
+) => masterApi.useGetTimezonesQuery(undefined, options);
+
+export const useGetClientMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetClientMasterQuery>[1],
+) => masterApi.useGetClientMasterQuery(undefined, options);
+
+export const useGetTransporterMasterQuery = (
+  arg?: { client?: string },
+  options?: Parameters<typeof masterApi.useGetTransporterMasterQuery>[1],
+) => masterApi.useGetTransporterMasterQuery(arg, options);
+
+export const useGetTechnicianMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetTechnicianMasterQuery>[1],
+) => masterApi.useGetTechnicianMasterQuery(undefined, options);
+
+export const useGetVehicleMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetVehicleMasterQuery>[1],
+) => masterApi.useGetVehicleMasterQuery(undefined, options);
+
+export const useGetDeviceTypeMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetDeviceTypeMasterQuery>[1],
+) => masterApi.useGetDeviceTypeMasterQuery(undefined, options);
+
+export const useGetDeviceMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetDeviceMasterQuery>[1],
+) => masterApi.useGetDeviceMasterQuery(undefined, options);
+
+export const useGetRoleMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetRoleMasterQuery>[1],
+) => masterApi.useGetRoleMasterQuery(undefined, options);
+
+export const useGetStateMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetStateMasterQuery>[1],
+) => masterApi.useGetStateMasterQuery(undefined, options);
+
+export const useGetAlertTypeMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetAlertTypeMasterQuery>[1],
+) => masterApi.useGetAlertTypeMasterQuery(undefined, options);
+
+export const useGetExpenseTypeMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetExpenseTypeMasterQuery>[1],
+) => masterApi.useGetExpenseTypeMasterQuery(undefined, options);
+
+export const useGetGeofTypeMasterQuery = (
+  options?: Parameters<typeof masterApi.useGetGeofTypeMasterQuery>[1],
+) => masterApi.useGetGeofTypeMasterQuery(undefined, options);

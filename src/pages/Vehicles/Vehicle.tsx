@@ -132,7 +132,7 @@ const chartOptions = [
   "Added",
   "Subscription Start",
   "Subscription Due",
-  "Inactive Date",
+  // "Inactive Date",
   "Modified Date",
   "Device Type",
   "Vehicle Status",
@@ -146,7 +146,7 @@ const chartDateFields: Record<string, string> = {
   Added: "added",
   "Subscription Start": "subscriptionStart",
   "Subscription Due": "subscriptionDue",
-  "Inactive Date": "inactiveDate",
+  // "Inactive Date": "inactiveDate",
   "Modified Date": "modifiedDate",
 };
 
@@ -420,7 +420,7 @@ export default function Vehicle() {
     refetch: refetchVehicles,
   } = useGetVehiclesQuery();
   const [localEdits, setLocalEdits] = useState<Record<string, Partial<Record<EditableVehicleField, string>>>>({});
-  const rows = useMemo(
+  const rows = useMemo<VehicleRecord[]>(
     () => vehicleData.map(toVehicleRow).map((row) => ({ ...row, ...localEdits[row.vehicleId] })),
     [vehicleData, localEdits],
   );
@@ -1960,33 +1960,18 @@ export default function Vehicle() {
             <div className="space-y-4 px-5 py-5">
               <label className={`block text-xs font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                 <span className="mb-1.5 block">{editableFields[editTarget.field].label}</span>
-                {editTarget.field === "address" ? (
-                  <textarea
-                    autoFocus
-                    rows={4}
-                    value={editValue}
-                    placeholder={editableFields[editTarget.field].placeholder}
-                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
-                    className={`w-full resize-y rounded-lg border px-3 py-2 text-xs outline-none focus:ring-2 ${
-                      isDark
-                        ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
-                        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
-                    }`}
-                  />
-                ) : (
-                  <input
-                    autoFocus
-                    required
-                    value={editValue}
-                    placeholder={editableFields[editTarget.field].placeholder}
-                    onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
-                    className={`h-10 w-full rounded-lg border px-3 text-xs outline-none focus:ring-2 ${
-                      isDark
-                        ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
-                        : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
-                    }`}
-                  />
-                )}
+                <textarea
+                  autoFocus
+                  rows={4}
+                  value={editValue}
+                  placeholder={editableFields[editTarget.field].placeholder}
+                  onChange={(event) => { setEditValue(event.target.value); setEditError(""); }}
+                  className={`w-full resize-y rounded-lg border px-3 py-2 text-xs outline-none focus:ring-2 ${
+                    isDark
+                      ? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
+                      : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400 focus:border-cyan-400 focus:ring-cyan-100"
+                  }`}
+                />
               </label>
               {editTarget.field === "address" ? (
                 <p className={`text-[11px] ${isDark ? "text-amber-200/80" : "text-amber-700"}`}>

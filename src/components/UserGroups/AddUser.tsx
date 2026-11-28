@@ -494,10 +494,6 @@ export function AddUser({ onClose, onSubmit, user }: AddUserProps) {
 							</div>
 							<div className="mt-5 flex flex-col gap-2.5">
 								<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
-									<input type="checkbox" checked={values.active} onChange={(event) => update("active", event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
-									Active
-								</label>
-								<label className={`flex cursor-pointer items-center gap-2.5 text-[12px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
 									<input type="checkbox" checked={values.schoolUser} onChange={(event) => update("schoolUser", event.target.checked)} className="h-3.5 w-3.5 accent-cyan-300" />
 									Is school user
 								</label>

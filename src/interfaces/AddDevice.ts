@@ -7,7 +7,7 @@ export interface CreateDeviceRequest {
 	secondarySimOperator?: string;
 	deviceType: string;
 	client: string;
-	password: string;
+	password?: string;
 	status?: string;
 	reason?: string;
 	ignitionWireConnected: boolean;

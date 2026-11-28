@@ -42,7 +42,7 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "phone", label: "Phone No" },
 	{ key: "vehicleCount", label: "No. of vehicles" },
 	{ key: "added", label: "Added" },
-	{ key: "inactiveDate", label: "Inactive Date" },
+	// { key: "inactiveDate", label: "Inactive Date" },
 	{ key: "email", label: "Email" },
 	{ key: "company", label: "Company" },
 	{ key: "language", label: "Language" },

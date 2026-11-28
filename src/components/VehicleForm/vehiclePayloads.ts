@@ -1,7 +1,7 @@
-import type { PaymentTerm } from "@/interfaces/PaymentDetails";
 import type { CreateTransporterRequest } from "@/interfaces/Transporter";
 import type { CreateVehicleRequest, UpdateVehicleRequest, Vehicle, VehicleSaveType } from "@/interfaces/Vehicle";
 import type { CreateDeviceRequest } from "@/interfaces/AddDevice";
+import { toPaymentTerm } from "@/enums/PaymentTerm";
 import { Status } from "@/enums/Status";
 import { VehicleStatus } from "@/enums/VehicleStatus";
 
@@ -10,14 +10,8 @@ type FormValues = Record<string, string>;
 /** Trimmed text, or undefined when the field was left empty. Coerces numbers (e.g. phone). */
 const text = (value?: string | number | null) => {
     if (value == null || value === "") return undefined;
-    const trimmed = String(value).trim();
-    // Avoid sending the literal strings "null" / "undefined" to the API.
-    if (!trimmed || /^null$/i.test(trimmed) || /^undefined$/i.test(trimmed)) return undefined;
-    return trimmed;
+    return String(value).trim() || undefined;
 };
-
-/** Same as text(), but empty optional fields become JSON `null` (SQL NULL), not omitted. */
-const textOrNull = (value?: string | number | null): string | null => text(value) ?? null;
 const number = (value?: string | number | null) => {
     if (value == null || value === "") return undefined;
     const trimmed = String(value).trim();
@@ -28,11 +22,6 @@ const flag = (value?: string) => value === "true";
 const asRecord = (value: unknown): Record<string, unknown> | null =>
     value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 
-const stringOrEmpty = (value: unknown): string => {
-    if (value == null) return "";
-    return String(value);
-};
-
 const refId = (value: unknown): string => {
     if (typeof value === "string" || typeof value === "number") return String(value);
     const record = asRecord(value);
@@ -41,33 +30,14 @@ const refId = (value: unknown): string => {
     return typeof id === "string" || typeof id === "number" ? String(id) : "";
 };
 
-const refLabel = (value: unknown): string => {
-    if (typeof value === "string" || typeof value === "number") return String(value).trim();
-    const record = asRecord(value);
-    if (!record) return "";
-    const owner = asRecord(record.owner);
-    return (
-        stringOrEmpty(record.owner_name).trim() ||
-        stringOrEmpty(owner?.ownerName).trim() ||
-        stringOrEmpty(record.userName).trim() ||
-        stringOrEmpty(record.username).trim() ||
-        stringOrEmpty(record.name).trim() ||
-        stringOrEmpty(record.companyName).trim() ||
-        stringOrEmpty(record.company).trim() ||
-        refId(value)
-    );
+const dateInput = (value: unknown): string => {
+    if (typeof value !== "string" || !value.trim()) return "";
+    return value.slice(0, 10);
 };
 
-const dateInput = (value: unknown): string => {
-    if (value == null || value === "") return "";
-    const text = String(value).trim();
-    if (!text) return "";
-    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-    const date = new Date(text);
-    if (Number.isNaN(date.getTime())) return "";
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${date.getFullYear()}-${month}-${day}`;
+const stringOrEmpty = (value: unknown): string => {
+    if (value == null) return "";
+    return String(value);
 };
 
 const boolFlag = (value: unknown): string => (value === true ? "true" : "false");
@@ -86,11 +56,8 @@ export function vehicleToFormValues(vehicle: Vehicle): FormValues {
         idleTimeHour: stringOrEmpty(record.hours),
         idleTimeMinute: stringOrEmpty(record.minutes),
         vehicleClient: refId(record.client),
-        vehicleClientLabel: refLabel(record.client),
         vehicleDevice: refId(record.device),
-        vehicleDeviceLabel: refLabel(record.device) || stringOrEmpty(device?.imei),
         vehicleTransporter: refId(record.transporter),
-        vehicleTransporterLabel: refLabel(record.transporter),
         subscriptionStart: dateInput(record.subscriptionStartDate),
         subscriptionDue: dateInput(record.subscriptionDueDate),
         fuelType: stringOrEmpty(record.fuelType),
@@ -163,10 +130,10 @@ export function buildTransporterPayload(
         timezone: values.timezone,
         inactiveTime: Number(values.inactiveTime),
         language: values.language,
-        name: textOrNull(values.name),
-        email: textOrNull(values.email),
-        phone: textOrNull(values.phone),
-        address: textOrNull(values.address),
+        name: text(values.name),
+        email: text(values.email),
+        phone: text(values.phone),
+        address: text(values.address),
         subscriptionStartDate: values.subscriptionStartDate ?? values.subscriptionStart,
         subscriptionDueDate: values.subscriptionDueDate ?? values.subscriptionDue,
         subscriptionExtendDate:
@@ -180,7 +147,6 @@ export function buildTransporterPayload(
         active: flag(values.active),
         overwriteSubscription: flag(values.overwriteSubscription),
         inactiveAfterExpiry: flag(values.inactiveAfterExpiry),
-        ...(flag(values.active) ? {} : { reason: text(values.reason) }),
         ...(includeRoles ? { roles } : {}),
     };
 }
@@ -237,23 +203,21 @@ export function buildVehicleLinkPayload(
 }
 
 export function buildDevicePayload(values: FormValues): CreateDeviceRequest {
-    const active = values.active == null ? true : flag(values.active);
     const secondarySim = values.secondarySim?.trim() ?? "";
+    const secondarySimOperator = values.secondarySimOperator?.trim() ?? "";
+
     return {
         imei: values.imei.trim(),
         simNumber: values.sim.trim(),
         simOperator: values.simOperator,
         ...(secondarySim
             ? {
-                    secondarySimNumber: secondarySim,
-                    secondarySimOperator: values.secondarySimOperator || undefined,
-                }
+                  secondarySimNumber: secondarySim,
+                  ...(secondarySimOperator ? { secondarySimOperator } : {}),
+              }
             : {}),
         deviceType: values.deviceType,
         client: values.deviceClient,
-        password: values.devicePassword ?? "",
-        status: active ? Status.ACTIVE : Status.INACTIVE,
-        ...(active ? {} : { reason: text(values.reason) }),
         ignitionWireConnected: flag(values.ignitionPositive),
         ignitionWireNotConnected: flag(values.ignitionDisconnected),
         airConditionWireConnected: flag(values.airConditionPositive),
@@ -269,22 +233,10 @@ export function buildPaymentDetailsPayload(values: FormValues): UpdateVehicleReq
         throw new Error("A transporter must be selected for payment details.");
     }
 
-    const paymentTerms: Record<string, PaymentTerm> = {
-        Monthly: "monthly",
-        monthly: "monthly",
-        monthely: "monthly",
-        Yearly: "yearly",
-        yearly: "yearly",
-        "Half Yearly": "halfYearly",
-        halfYearly: "halfYearly",
-        Quarterly: "quarterly",
-        quarterly: "quarterly",
-        quaterly: "quarterly",
-    };
-    const paymentTerm = paymentTerms[values.paymentTerm];
-    if (!paymentTerm) {
+    if (!values.paymentTerm?.trim()) {
         throw new Error("A valid payment term must be selected.");
     }
+    const paymentTerm = toPaymentTerm(values.paymentTerm);
 
     return {
         type: "payment",
