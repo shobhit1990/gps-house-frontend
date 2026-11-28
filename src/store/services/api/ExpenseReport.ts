@@ -94,7 +94,11 @@ const normalizeExpense = (record: ExpenseApiRecord): Expense => {
 
 export type ExpenseListParams = {
   client?: string;
+  transporter?: string;
+  expenseFor?: string;
   vehicle?: string;
+  driver?: string;
+  trip?: string;
   /** ISO datetime preferred, e.g. 2026-11-25T00:00:00.000Z */
   from?: string;
   to?: string;
@@ -108,7 +112,11 @@ export const expenseApi = api.injectEndpoints({
           arg && typeof arg === "object"
             ? {
                 ...(arg.client ? { client: arg.client } : {}),
+                ...(arg.transporter ? { transporter: arg.transporter } : {}),
+                ...(arg.expenseFor ? { expenseFor: arg.expenseFor } : {}),
                 ...(arg.vehicle ? { vehicle: arg.vehicle } : {}),
+                ...(arg.driver ? { driver: arg.driver } : {}),
+                ...(arg.trip ? { trip: arg.trip } : {}),
                 ...(arg.from ? { from: arg.from } : {}),
                 ...(arg.to ? { to: arg.to } : {}),
               }

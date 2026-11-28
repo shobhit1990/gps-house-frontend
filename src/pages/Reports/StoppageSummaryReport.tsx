@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Play, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { StoppageSummary } from "@/interfaces/StoppageSummaryReport";
 import type { HistoryTrackingNavState } from "@/pages/HistoryTracking/HistoryTrackingPage";
@@ -18,7 +19,7 @@ import { useLazyGetStoppageSummaryReportQuery } from "@/store/services/api/Stopp
 
 type ColumnKey = "sn" | "vehicle" | "totalDistance" | "running" | "idle" | "stop" | "stops" | "avgSpeed" | "maxSpeed" | "playback";
 
-type MenuKind = "client" | "transporter" | "vehicle" | "duration";
+type MenuKind = "client" | "transporter" | "duration";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -112,8 +113,7 @@ const formatDistance = (value: number) => (Number.isInteger(value) ? String(valu
 export default function StoppageSummaryReport() {
 	const navigate = useNavigate();
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const [fetchStoppageSummary, { isFetching }] = useLazyGetStoppageSummaryReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
@@ -121,7 +121,6 @@ export default function StoppageSummaryReport() {
 	const initialRange = todayRange();
 	const clientRef = useRef<HTMLDivElement>(null);
 	const transporterRef = useRef<HTMLDivElement>(null);
-	const vehicleRef = useRef<HTMLDivElement>(null);
 	const durationRef = useRef<HTMLDivElement>(null);
 	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
 	useCloseDetailsOnOutsideClick(columnVisibilityRef);
@@ -133,15 +132,42 @@ export default function StoppageSummaryReport() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [duration, setDuration] = useState("");
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
-	const [vehicleQuery, setVehicleQuery] = useState("");
 	const [durationQuery, setDurationQuery] = useState("");
+
+	const {
+		data: transporterMaster = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+
+	const vehicleOptions = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
+		});
+	}, [allVehicles, client, transporter]);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporterMaster.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicles([]);
+	}, [transporter, transporterMaster]);
+
+	useEffect(() => {
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -169,14 +195,25 @@ export default function StoppageSummaryReport() {
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 	const visibleClients = clientMaster.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
 	const visibleTransporters = transporterMaster.filter((option) => option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleMaster.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
 	const visibleDurations = durations.filter((name) => name.toLowerCase().includes(durationQuery.trim().toLowerCase()));
+
+	const onClientChange = (next: string) => {
+		setClient(next);
+		setTransporter("");
+		setVehicles([]);
+		setTransporterQuery("");
+	};
+
+	const onTransporterChange = (next: string) => {
+		setTransporter(next);
+		setVehicles([]);
+	};
 
 	useEffect(() => {
 		if (!openMenu) return;
 		const onPointer = (event: MouseEvent) => {
 			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : openMenu === "transporter" ? transporterRef : openMenu === "vehicle" ? vehicleRef : durationRef;
+			const menuRef = openMenu === "client" ? clientRef : openMenu === "transporter" ? transporterRef : durationRef;
 			if (!menuRef.current?.contains(target)) setOpenMenu(null);
 		};
 		const onKey = (event: KeyboardEvent) => {
@@ -191,7 +228,8 @@ export default function StoppageSummaryReport() {
 	}, [openMenu]);
 
 	const openPlaybackMap = () => {
-		if (!vehicle) {
+		const playbackVehicle = vehicles[0];
+		if (!playbackVehicle) {
 			toast.error("Select vehicle for playback.");
 			return;
 		}
@@ -212,7 +250,7 @@ export default function StoppageSummaryReport() {
 		}
 
 		const state: HistoryTrackingNavState = {
-			vehicleId: vehicle,
+			vehicleId: playbackVehicle,
 			from: isoFrom,
 			to: isoTo,
 			minStopMinutes: duration ? durationMinutes(duration) : 15,
@@ -223,8 +261,8 @@ export default function StoppageSummaryReport() {
 	};
 
 	const applyFilters = async () => {
-		if (!client || !vehicle) {
-			toast.error("Select client and vehicle.");
+		if (!client || vehicles.length === 0) {
+			toast.error("Select client and at least one vehicle.");
 			return;
 		}
 		if (!duration) {
@@ -239,22 +277,23 @@ export default function StoppageSummaryReport() {
 		const durationValue = durationMinutes(duration);
 		const startDate = toApiDateTime(from);
 		const endDate = toApiDateTime(to);
+		const vehicleParam = vehicles.join(",");
 
 		try {
 			const data = await fetchStoppageSummary({
 				client,
-				vehicle,
+				vehicle: vehicleParam,
 				duration: durationValue,
 				startDate,
 				endDate,
 			}).unwrap();
-			const vehicleName = vehicleMaster.find((option) => option.id === vehicle)?.name ?? "";
+			const vehicleName = vehicleOptions.find((option) => option.id === vehicles[0])?.name ?? "";
 			setRows(
 				data.map((row, index) => {
 					const vehicleText = displayText(row.vehicle);
 					return {
 						...row,
-						id: row.id || `${vehicle}-${index}`,
+						id: row.id || `${vehicleParam}-${index}`,
 						vehicle: vehicleText === "—" ? vehicleName : vehicleText,
 					};
 				}),
@@ -275,13 +314,12 @@ export default function StoppageSummaryReport() {
 		setSearch("");
 		setClient("");
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 		setDuration("");
 		setFrom(range.from);
 		setTo(range.to);
 		setClientQuery("");
 		setTransporterQuery("");
-		setVehicleQuery("");
 		setDurationQuery("");
 		setHiddenColumns([]);
 		setOpenMenu(null);
@@ -303,6 +341,7 @@ export default function StoppageSummaryReport() {
 		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
+		disabled = false,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
 			<button
@@ -310,15 +349,19 @@ export default function StoppageSummaryReport() {
 				aria-expanded={openMenu === kind}
 				aria-haspopup="listbox"
 				aria-label={emptyLabel}
-				onClick={() => setOpenMenu((current) => (current === kind ? null : kind))}
-				className={controlClass}
+				disabled={disabled}
+				onClick={() => {
+					if (disabled) return;
+					setOpenMenu((current) => (current === kind ? null : kind));
+				}}
+				className={`${controlClass} disabled:cursor-not-allowed disabled:opacity-50`}
 			>
 				<span className={`truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
 					{value ? optionLabel(value, options) : emptyLabel}
 				</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
-			{openMenu === kind && (
+			{openMenu === kind && !disabled && (
 				<div className={menuClass}>
 					<div className="p-2">
 						<input
@@ -408,9 +451,35 @@ export default function StoppageSummaryReport() {
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{singleSelect("client", clientRef, "Select Client", client, setClient, visibleClients, clientQuery, setClientQuery)}
-						{singleSelect("transporter", transporterRef, "Select Transporter", transporter, setTransporter, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{singleSelect("vehicle", vehicleRef, "Select Vehicle", vehicle, setVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", client, onClientChange, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect(
+							"transporter",
+							transporterRef,
+							!client
+								? "Select Transporter"
+								: transportersLoading || transportersFetching
+									? "Loading transporters…"
+									: visibleTransporters.length === 0 && !transporterQuery
+										? "No transporters"
+										: "Select Transporter",
+							transporter,
+							onTransporterChange,
+							visibleTransporters,
+							transporterQuery,
+							setTransporterQuery,
+							!client || transportersLoading || transportersFetching,
+						)}
+						<VehicleMultiSelect
+							id="stoppage-summary-vehicle"
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
+							disabled={!transporter}
+							placeholder={!transporter ? "Select Vehicle" : vehicleOptions.length === 0 ? "No vehicles" : "Select Vehicle"}
+							emptyText="No vehicles"
+							isDark={isDark}
+							compact
+						/>
 						<div ref={durationRef} className="relative min-w-0 flex-1 sm:max-w-[210px]">
 							<button type="button" aria-expanded={openMenu === "duration"} aria-haspopup="listbox" aria-label="Select Duration (minutes)" onClick={() => setOpenMenu((current) => (current === "duration" ? null : "duration"))} className={controlClass}>
 								<span className={`truncate ${duration ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{duration || "Select Duration (minutes)"}</span>
@@ -445,7 +514,7 @@ export default function StoppageSummaryReport() {
 						<button
 							type="button"
 							onClick={openPlaybackMap}
-							disabled={!vehicle || !from || !to}
+							disabled={vehicles.length === 0 || !from || !to}
 							aria-label="Open playback map"
 							title="Open playback map"
 							className={`flex h-10 items-center gap-2 rounded-lg border px-4 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${isDark ? "border-[#3ddc97]/35 bg-[#3ddc97]/15 text-[#3ddc97] hover:bg-[#3ddc97]/25" : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}

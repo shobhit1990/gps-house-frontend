@@ -3,6 +3,7 @@ import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddTechnicianList } from "@/components/ManageTechnician/AddTechnicianList";
 import { useAuth } from "@/contexts/AuthContext";
@@ -644,58 +645,16 @@ export default function TechnicianList() {
 				</div>
 			) : null}
 
-			{pendingDelete ? (
-				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
-					<button
-						type="button"
-						aria-label="Close delete dialog"
-						className="absolute inset-0 bg-[#020617]/75 backdrop-blur-[2px]"
-						onClick={() => {
-							if (!isDeleting) setPendingDelete(null);
-						}}
-					/>
-					<section
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="technician-delete-title"
-						className={`relative w-full max-w-md rounded-2xl border p-5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] ${
-							isDark ? "border-white/[0.10] bg-[#0a1630] text-white" : "border-slate-200 bg-white text-slate-900"
-						}`}
-					>
-						<h2 id="technician-delete-title" className="text-[15px] font-semibold">
-							Delete technician
-						</h2>
-						<p className={`mt-2 text-[12px] ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							Delete <span className="font-medium">{pendingDelete.username}</span>? This cannot be undone.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingDelete(null)}
-								disabled={isDeleting}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDelete()}
-								disabled={isDeleting}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-rose-300/30 bg-rose-300/[0.14] text-rose-50"
-										: "border-rose-300 bg-rose-50 text-rose-700"
-								}`}
-							>
-								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!pendingDelete}
+				title="Delete technician?"
+				entityName={pendingDelete?.username || "this technician"}
+				isSubmitting={isDeleting}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDelete()}
+				titleId="technician-delete-title"
+			/>
 		</div>
 	);
 }

@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { AddInventory, type InventoryFormValues } from "@/components/DeviceInventory/AddInventory";
 import { UploadInventory, type UploadInventoryValues } from "@/components/DeviceInventory/UploadInventory";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { AssignType } from "@/enums/AssignType";
 import { Status, statusLabel } from "@/enums/Status";
@@ -155,6 +156,7 @@ export default function DeviceInventory() {
 	const [uploadError, setUploadError] = useState("");
 	const [inventoryError, setInventoryError] = useState("");
 	const [pendingStatusInventory, setPendingStatusInventory] = useState<InventoryRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<InventoryRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const isUpdatingStatus = isUpdatingInventory && Boolean(pendingStatusInventory);
@@ -341,6 +343,20 @@ export default function DeviceInventory() {
 		setMonth("");
 		setSearch("");
 		setPage(0);
+	};
+
+	const confirmDeleteInventory = async () => {
+		if (!pendingDelete?.externalId) return;
+		try {
+			await deleteInventory(pendingDelete.externalId).unwrap();
+			setInventoryError("");
+			toast.success("Inventory deleted.");
+			setPendingDelete(null);
+		} catch (error: unknown) {
+			const message = apiErrorMessage(error, "Could not delete inventory.");
+			setInventoryError(message);
+			toast.error(message);
+		}
 	};
 
 	const closeStatusDialog = () => {
@@ -625,17 +641,7 @@ export default function DeviceInventory() {
 																	toast.error("This inventory item cannot be deleted.");
 																	return;
 																}
-																void deleteInventory(row.externalId)
-																	.unwrap()
-																	.then(() => {
-																		setInventoryError("");
-																		toast.success("Inventory deleted.");
-																	})
-																	.catch((error: unknown) => {
-																		const message = apiErrorMessage(error, "Could not delete inventory.");
-																		setInventoryError(message);
-																		toast.error(message);
-																	});
+																setPendingDelete(row);
 															}}
 															className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 														>
@@ -760,6 +766,17 @@ export default function DeviceInventory() {
 					isSaving={isUploadingInventory}
 				/>
 			)}
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete inventory item?"
+				entityName={pendingDelete?.imei || pendingDelete?.inventoryType || "this inventory item"}
+				isSubmitting={isDeletingInventory}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDeleteInventory()}
+				titleId="inventory-delete-title"
+			/>
 
 			<ChangeStatusDialog
 				isDark={isDark}

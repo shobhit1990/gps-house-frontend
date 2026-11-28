@@ -58,7 +58,7 @@ const emptyValues = (): ExpenseFormValues => ({
 export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: AddExpenseProps) {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
-	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const { data: driverDetails = [] } = useGetDriverDetailsQuery();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
@@ -73,6 +73,16 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 	const canSelectExpenseFor = Boolean(values.client && values.transporter);
 	const showVehicle = values.expenseFor === ExpenseFor.VEHICLE_WISE;
 	const showDriver = values.expenseFor === ExpenseFor.DRIVER_WISE;
+
+	const vehicleMaster = useMemo(
+		() =>
+			allVehicles.filter((item) => {
+				const clientOk = !values.client || !item.clientId || item.clientId === values.client;
+				const transporterOk = !values.transporter || item.transporterId === values.transporter;
+				return clientOk && transporterOk;
+			}),
+		[allVehicles, values.client, values.transporter],
+	);
 
 	const driverOptions = useMemo<MasterOption[]>(
 		() =>
@@ -94,6 +104,18 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 		setValues(initial ?? emptyValues());
 		setFormError("");
 	}, [initial]);
+
+	useEffect(() => {
+		if (!values.transporter) return;
+		if (transporterMaster.some((item) => item.id === values.transporter)) return;
+		setValues((current) => ({ ...current, transporter: "", expenseFor: "", vehicle: "", driver: "" }));
+	}, [transporterMaster, values.transporter]);
+
+	useEffect(() => {
+		if (!values.vehicle) return;
+		if (vehicleMaster.some((item) => item.id === values.vehicle)) return;
+		setValues((current) => ({ ...current, vehicle: "" }));
+	}, [vehicleMaster, values.vehicle]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -225,7 +247,7 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 							"Transporter",
 							select(
 								"transporter",
-								values.client ? "Transporter" : "Select Client first",
+								"Transporter",
 								transporterMaster,
 								!values.client,
 							),
@@ -241,7 +263,7 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 									onChange={(event) => update("expenseFor", event.target.value as ExpenseFor | "")}
 									className={`${inputClass} appearance-none pr-8`}
 								>
-									<option value="">{canSelectExpenseFor ? "Select Expense For" : "Select Client & Transporter first"}</option>
+									<option value="">Select</option>
 									{expenseForOptions.map((option) => (
 										<option key={option.value} value={option.value}>{option.label}</option>
 									))}
@@ -254,11 +276,7 @@ export function AddExpense({ initial, isSaving = false, onClose, onSubmit }: Add
 							? field("Vehicle", select("vehicle", "Select Vehicle", vehicleMaster), true)
 							: showDriver
 								? field("Driver", select("driver", "Select Driver", driverOptions), true)
-								: field(
-									"Vehicle",
-									select("vehicle", "Select Expense For first", [], true),
-									false,
-								)}
+								: null}
 						{field("Expense Name", <input value={values.expenseName} placeholder="Expense Name" onChange={(event) => update("expenseName", event.target.value)} className={inputClass} />, false, true)}
 						{field("Expense Type", select("expenseType", "Select Expense Type", expenseTypeMaster), true)}
 						{field("Amount", <input required inputMode="decimal" value={values.amount} placeholder="Amount" onChange={(event) => update("amount", event.target.value.replace(/[^\d.]/g, ""))} className={inputClass} />, true)}

@@ -55,8 +55,10 @@ export function DashboardFilterDialog({
 		...emptyValues(),
 		...initialValues,
 	}));
-	/** Full list — `?client=` is unreliable (API often stores client name, not UUID). */
-	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
+	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery(
+		values.clientId ? { client: values.clientId } : undefined,
+		{ skip: !values.clientId },
+	);
 	const { data: groups = [], isLoading: groupsLoading } = useGetGroupsQuery();
 	const [fetchVehicles, { isFetching }] = useLazyGetVehicleHistoryVehiclesQuery();
 
@@ -202,7 +204,7 @@ export function DashboardFilterDialog({
 							>
 								<option value="">
 									{!values.clientId
-										? "Select client first"
+										? "Select Transporter"
 										: transportersLoading
 											? "Loading transporters…"
 											: transporters.length === 0

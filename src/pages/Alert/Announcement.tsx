@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import JoditEditor from "jodit-react";
 import "jodit/es2021/jodit.min.css";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
@@ -192,16 +193,31 @@ export default function Announcement() {
 		toolbarAdaptive: false,
 	}), [isDark]);
 	const { data: clients = [] } = useGetClientMasterQuery();
-	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	/** Unscoped list for table name resolution only. */
+	const { data: allTransporters = [] } = useGetTransporterMasterQuery();
 	const { data: announcements = [], isFetching, refetch } = useGetAnnouncementsQuery();
 	const [createAnnouncement, { isLoading: isCreating }] = useCreateAnnouncementMutation();
 	const [updateAnnouncement, { isLoading: isUpdating }] = useUpdateAnnouncementMutation();
 	const [updateAnnouncementStatus, { isLoading: isUpdatingStatus }] = useUpdateAnnouncementStatusMutation();
 	const [deleteAnnouncement, { isLoading: isDeleting }] = useDeleteAnnouncementMutation();
 	const isSaving = isCreating || isUpdating;
+	const [search, setSearch] = useState("");
+	const [page, setPage] = useState(0);
+	const [sortKey, setSortKey] = useState<ColumnKey>("allocatedTo");
+	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+	const [formOpen, setFormOpen] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
+	const [previewOpen, setPreviewOpen] = useState(false);
+	const [editorResetKey, setEditorResetKey] = useState(0);
+	const [form, setForm] = useState<AnnouncementForm>(emptyForm);
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(form.client ? { client: form.client } : undefined, { skip: !form.client });
 	const rows = useMemo<AnnouncementRow[]>(() => {
 		const clientNames = new Map(clients.map((client) => [client.id, client.name]));
-		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
+		const transporterNames = new Map(allTransporters.map((transporter) => [transporter.id, transporter.name]));
 		return announcements.map((record) => {
 			const status = currentStatus(record.status);
 			const clientId = refId(record.client);
@@ -225,16 +241,7 @@ export default function Announcement() {
 				reason: status === Status.INACTIVE ? (record.reason?.trim() ?? "") : "",
 			};
 		});
-	}, [announcements, clients, transporters]);
-	const [search, setSearch] = useState("");
-	const [page, setPage] = useState(0);
-	const [sortKey, setSortKey] = useState<ColumnKey>("allocatedTo");
-	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-	const [formOpen, setFormOpen] = useState(false);
-	const [editingId, setEditingId] = useState<string | null>(null);
-	const [previewOpen, setPreviewOpen] = useState(false);
-	const [editorResetKey, setEditorResetKey] = useState(0);
-	const [form, setForm] = useState<AnnouncementForm>(emptyForm);
+	}, [announcements, clients, allTransporters]);
 	const [previewImageUrl, setPreviewImageUrl] = useState("");
 	const [pendingStatus, setPendingStatus] = useState<AnnouncementRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<AnnouncementRow | null>(null);
@@ -250,6 +257,13 @@ export default function Announcement() {
 		setPreviewImageUrl(imageUrl);
 		return () => URL.revokeObjectURL(imageUrl);
 	}, [previewOpen, form.messageImage]);
+
+	useEffect(() => {
+		if (!form.transporter || !form.client) return;
+		if (transportersLoading || transportersFetching) return;
+		if (transporters.some((item) => item.id === form.transporter)) return;
+		setForm((current) => ({ ...current, transporter: "" }));
+	}, [form.client, form.transporter, transporters, transportersFetching, transportersLoading]);
 
 	const pageSize = 10;
 	const filteredRows = useMemo(() => {
@@ -622,8 +636,20 @@ export default function Announcement() {
 							</select>
 						))}
 						{form.announcement === "transporter" && field("announcement-transporter", "Transporter", (
-							<select id="announcement-transporter" value={form.transporter} onChange={(event) => setForm({ ...form, transporter: event.target.value })} className={inputClass(isDark)}>
-								<option value="">Select Transporter</option>
+							<select
+								id="announcement-transporter"
+								value={form.transporter}
+								disabled={!form.client || transportersLoading || transportersFetching}
+								onChange={(event) => setForm({ ...form, transporter: event.target.value })}
+								className={`${inputClass(isDark)} disabled:cursor-not-allowed disabled:opacity-55`}
+							>
+								<option value="">
+									{!form.client
+										? "Select Transporter"
+										: transportersLoading || transportersFetching
+											? "Loading transporters…"
+											: "Select Transporter"}
+								</option>
 								{transporters.map((transporter) => <option key={transporter.id} value={transporter.id}>{transporter.name}</option>)}
 							</select>
 						))}
@@ -746,62 +772,19 @@ export default function Announcement() {
 				zIndexClassName="z-[810]"
 			/>
 
-			{pendingDelete ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="announcement-delete-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="announcement-delete-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Delete announcement?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingDelete.messageTitle || "this announcement"}
-							</strong>
-							.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingDelete(null)}
-								disabled={isDeleting}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDelete()}
-								disabled={isDeleting}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
-										: "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-								}`}
-							>
-								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!pendingDelete}
+				title="Delete announcement?"
+				entityName={pendingDelete?.messageTitle || "this announcement"}
+				isSubmitting={isDeleting}
+				onCancel={() => {
+					if (!isDeleting) setPendingDelete(null);
+				}}
+				onConfirm={() => void confirmDelete()}
+				titleId="announcement-delete-title"
+				zIndexClassName="z-[810]"
+			/>
 		</div>
 	);
 }

@@ -1,9 +1,10 @@
-import {useEffect, useMemo, useState, useRef} from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { DriverAssignment } from "@/interfaces/DriverAssignmentReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -56,7 +57,7 @@ const toApiDateTime = (value: string) => {
 const textValue = (value: string) => (value.trim() ? value : "—");
 
 export default function DriverAssignmentReport() {
-	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const { data: clientOptions = [], isLoading: clientsLoading } = useGetClientMasterQuery();
 	const { data: allVehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
 	const [fetchAssignments, { isFetching }] = useLazyGetDriverAssignmentReportQuery();
 	const { logout } = useAuth();
@@ -72,38 +73,69 @@ export default function DriverAssignmentReport() {
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [client, setClient] = useState("");
-	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [clients, setClients] = useState<string[]>([]);
+	const [transporters, setTransporters] = useState<string[]>([]);
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 
+	const transporterQueryArg = useMemo(() => {
+		if (clients.length === 0) return undefined;
+		if (clients.length === 1) return { client: clients[0] };
+		return undefined;
+	}, [clients]);
+
 	const {
-		data: transporters = [],
+		data: transporterMaster = [],
 		isLoading: transportersLoading,
 		isFetching: transportersFetching,
-	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+	} = useGetTransporterMasterQuery(transporterQueryArg, { skip: clients.length === 0 });
 
-	const vehicles = useMemo(() => {
-		if (!client || !transporter) return [];
-		return allVehicles.filter((item) => {
-			const clientOk = !item.clientId || item.clientId === client;
-			return clientOk && item.transporterId === transporter;
+	const selectedClientKeys = useMemo(() => {
+		const keys = new Set<string>();
+		for (const id of clients) {
+			keys.add(id.toLowerCase());
+			const option = clientOptions.find((item) => item.id === id);
+			for (const alias of option?.aliases ?? []) keys.add(alias.toLowerCase());
+			if (option?.name) keys.add(option.name.toLowerCase());
+		}
+		return keys;
+	}, [clientOptions, clients]);
+
+	const transporterOptions = useMemo(() => {
+		if (clients.length === 0) return [];
+		if (clients.length === 1) return transporterMaster;
+		return transporterMaster.filter((option) => {
+			const ref = (option.clientRef ?? "").trim().toLowerCase();
+			if (!ref) return true;
+			return selectedClientKeys.has(ref);
 		});
-	}, [allVehicles, client, transporter]);
+	}, [clients.length, selectedClientKeys, transporterMaster]);
+
+	const vehicleOptions = useMemo(() => {
+		if (clients.length === 0 || transporters.length === 0) return [];
+		const clientSet = new Set(clients);
+		const transporterSet = new Set(transporters);
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || clientSet.has(item.clientId);
+			const transporterOk = !item.transporterId || transporterSet.has(item.transporterId);
+			return clientOk && transporterOk;
+		});
+	}, [allVehicles, clients, transporters]);
 
 	useEffect(() => {
-		if (!transporter) return;
-		if (transporters.some((item) => item.id === transporter)) return;
-		setTransporter("");
-		setVehicle("");
-	}, [transporter, transporters]);
+		if (transporters.length === 0) return;
+		const allowed = new Set(transporterOptions.map((option) => option.id));
+		const next = transporters.filter((id) => allowed.has(id));
+		if (next.length !== transporters.length) setTransporters(next);
+	}, [transporterOptions, transporters]);
 
 	useEffect(() => {
-		if (!vehicle) return;
-		if (vehicles.some((item) => item.id === vehicle)) return;
-		setVehicle("");
-	}, [vehicle, vehicles]);
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -131,26 +163,20 @@ export default function DriverAssignmentReport() {
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
-	const selectClass = `h-10 w-full appearance-none rounded-lg border px-3 pr-9 text-xs outline-none transition ${
-		isDark
-			? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 focus:border-cyan-300/35 [color-scheme:dark]"
-			: "border-slate-200 bg-white text-slate-800 focus:border-cyan-400 [color-scheme:light]"
-	}`;
-
-	const onClientChange = (next: string) => {
-		setClient(next);
-		setTransporter("");
-		setVehicle("");
+	const onClientsChange = (next: string[]) => {
+		setClients(next);
+		setTransporters([]);
+		setVehicles([]);
 	};
 
-	const onTransporterChange = (next: string) => {
-		setTransporter(next);
-		setVehicle("");
+	const onTransportersChange = (next: string[]) => {
+		setTransporters(next);
+		setVehicles([]);
 	};
 
 	const applyFilters = async () => {
-		if (!client || !transporter || !vehicle) {
-			toast.error("Select client, transporter, and vehicle.");
+		if (clients.length === 0 || transporters.length === 0 || vehicles.length === 0) {
+			toast.error("Select at least one client, transporter, and vehicle.");
 			return;
 		}
 		if (!from || !to) {
@@ -160,20 +186,22 @@ export default function DriverAssignmentReport() {
 
 		const apiFrom = toApiDateTime(from);
 		const apiTo = toApiDateTime(to);
-		const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? "";
+		const clientParam = clients.join(",");
+		const transporterParam = transporters.join(",");
+		const vehicleParam = vehicles.join(",");
 
 		try {
 			const data = await fetchAssignments({
-				client,
-				transporter,
-				vehicle,
+				client: clientParam,
+				transporter: transporterParam,
+				vehicle: vehicleParam,
 				from: apiFrom,
 				to: apiTo,
 			}).unwrap();
 			const nextRows = data.map((row, index) => ({
 				...row,
-				id: row.id || `${vehicle}-${index}`,
-				vehicleNo: row.vehicleNo || vehicleName,
+				id: row.id || `${vehicleParam}-${index}`,
+				vehicleNo: row.vehicleNo || "—",
 			}));
 			setRows(nextRows);
 			setSearched(true);
@@ -193,52 +221,15 @@ export default function DriverAssignmentReport() {
 		setRows([]);
 		setSearched(false);
 		setSearch("");
-		setClient("");
-		setTransporter("");
-		setVehicle("");
+		setClients([]);
+		setTransporters([]);
+		setVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
 		setHiddenColumns([]);
 		setPage(0);
 		setPageSize(10);
 	};
-
-	const SelectField = ({
-		id,
-		label,
-		value,
-		onChange,
-		disabled,
-		placeholder,
-		options,
-	}: {
-		id: string;
-		label: string;
-		value: string;
-		onChange: (value: string) => void;
-		disabled?: boolean;
-		placeholder: string;
-		options: { id: string; name: string }[];
-	}) => (
-		<label className="relative block min-w-0 flex-1">
-			<span className="sr-only">{label}</span>
-			<select
-				id={id}
-				value={value}
-				disabled={disabled}
-				onChange={(event) => onChange(event.target.value)}
-				className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-55`}
-			>
-				<option value="">{placeholder}</option>
-				{options.map((option) => (
-					<option key={option.id} value={option.id}>
-						{option.name}
-					</option>
-				))}
-			</select>
-			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-		</label>
-	);
 
 	const cell = (key: ColumnKey, row: DriverAssignment, serial: number) => {
 		if (key === "sn") return String(row.sn || serial).padStart(2, "0");
@@ -285,48 +276,57 @@ export default function DriverAssignmentReport() {
 					className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}
 				>
 					<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto]">
-						<SelectField
+						<VehicleMultiSelect
 							id="driver-assignment-client"
-							label="Client"
-							value={client}
-							onChange={onClientChange}
+							options={clientOptions}
+							values={clients}
+							onValuesChange={onClientsChange}
 							disabled={clientsLoading}
 							placeholder={clientsLoading ? "Loading clients…" : "Select Client"}
-							options={clients}
+							emptyText="No clients"
+							entityLabel="clients"
+							searchLabel="Search clients"
+							isDark={isDark}
 						/>
-						<SelectField
+						<VehicleMultiSelect
 							id="driver-assignment-transporter"
-							label="Transporter"
-							value={transporter}
-							onChange={onTransporterChange}
-							disabled={!client || transportersLoading || transportersFetching}
+							options={transporterOptions}
+							values={transporters}
+							onValuesChange={onTransportersChange}
+							disabled={clients.length === 0 || transportersLoading || transportersFetching}
 							placeholder={
-								!client
-									? "Select client first"
+								clients.length === 0
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
-										: transporters.length === 0
+										: transporterOptions.length === 0
 											? "No transporters"
 											: "Select Transporter"
 							}
-							options={transporters}
+							emptyText="No transporters"
+							entityLabel="transporters"
+							searchLabel="Search transporters"
+							isDark={isDark}
 						/>
-						<SelectField
+						<VehicleMultiSelect
 							id="driver-assignment-vehicle"
-							label="Vehicle"
-							value={vehicle}
-							onChange={setVehicle}
-							disabled={!transporter || vehiclesLoading}
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
+							disabled={transporters.length === 0 || vehiclesLoading}
 							placeholder={
-								!transporter
-									? "Select transporter first"
+								transporters.length === 0
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
-										: vehicles.length === 0
+										: vehicleOptions.length === 0
 											? "No vehicles"
 											: "Select Vehicle"
 							}
-							options={vehicles}
+							emptyText="No vehicles"
+							entityLabel="vehicles"
+							searchLabel="Search vehicles"
+							isDark={isDark}
 						/>
 						<div
 							className={`flex h-10 min-w-0 items-center gap-2 rounded-lg border px-2 ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}
@@ -456,7 +456,7 @@ export default function DriverAssignmentReport() {
 												No driver assignments available
 											</p>
 											<p className="mt-1 text-xs text-slate-500">
-												Select client, transporter, and vehicle, then search.
+												Select clients, transporters, and vehicles, then search.
 											</p>
 										</td>
 									</tr>

@@ -17,6 +17,7 @@ import {
 	X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddPayment, type PaymentFormValues } from "@/components/Payment/AddPayment";
 import {
@@ -686,51 +687,28 @@ export default function Payment() {
 				/>
 			) : null}
 
-			{pendingDelete ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="payment-delete-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}
-					>
-						<h3 id="payment-delete-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
-							Delete payment details?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove payment for{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{resolveTransporterName(pendingDelete) || "this transporter"}
-							</strong>
-							.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingDelete(null)}
-								disabled={isDeleting}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDelete()}
-								disabled={isDeleting}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
-							>
-								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!pendingDelete}
+				title="Delete payment details?"
+				entityName={pendingDelete ? resolveTransporterName(pendingDelete) || "this transporter" : "this transporter"}
+				description={
+					<>
+						This will permanently remove payment for{" "}
+						<strong className={isDark ? "text-white" : "text-slate-900"}>
+							{pendingDelete ? resolveTransporterName(pendingDelete) || "this transporter" : "this transporter"}
+						</strong>
+						.
+					</>
+				}
+				isSubmitting={isDeleting}
+				onCancel={() => {
+					if (!isDeleting) setPendingDelete(null);
+				}}
+				onConfirm={() => void confirmDelete()}
+				titleId="payment-delete-title"
+				zIndexClassName="z-[810]"
+			/>
 
 			{pendingStatusPayment ? (
 				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">

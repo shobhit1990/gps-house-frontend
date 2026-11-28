@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 import { ChevronsUp, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
   thClass,
   toolbarClass,
 } from "@/components/Alert/alertTheme";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/contexts/AuthContext";
 import { addAlertTypeOptions } from "@/enums/AddAlertType";
@@ -82,7 +83,7 @@ export default function AddAlert() {
   const isDark = theme !== "light";
   const { data: alerts = [] } = useGetAlertsQuery();
   const { data: alertTypes = [] } = useGetAlertTypeMasterQuery();
-  const { data: vehicles = [] } = useGetVehicleMasterQuery();
+  const { data: allVehicles = [] } = useGetVehicleMasterQuery();
   const { data: transporters = [] } = useGetTransporterMasterQuery();
   const { data: users = [] } = useGetUsersQuery();
   const { data: groups = [] } = useGetGroupsQuery();
@@ -93,10 +94,18 @@ export default function AddAlert() {
   const [assignedTo, setAssignedTo] = useState<AlertAssignee | "">("");
   const [selectedParty, setSelectedParty] = useState("");
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
+
+  const vehicles = useMemo(() => {
+    if (assignedTo !== "transporter" || !selectedParty) return allVehicles;
+    return allVehicles.filter((item) => item.transporterId === selectedParty);
+  }, [allVehicles, assignedTo, selectedParty]);
   const [draftTypes, setDraftTypes] = useState<DraftType[]>([]);
   const [searchText, setSearchText] = useState("");
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [tableVisible, setTableVisible] = useState(true);
+  const [pendingDelete, setPendingDelete] = useState<{ kind: "row" } | { kind: "detail"; detail: AlertDetail } | null>(
+    null,
+  );
 
   const [typeModalOpen, setTypeModalOpen] = useState(false);
   const [customModalOpen, setCustomModalOpen] = useState(false);
@@ -126,7 +135,14 @@ export default function AddAlert() {
     [users, groups, transporters],
   );
 
-  const vehicleNames = useMemo(() => new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name])), [vehicles]);
+  const vehicleNames = useMemo(
+    () => new Map(allVehicles.map((vehicle) => [vehicle.id, vehicle.name])),
+    [allVehicles],
+  );
+
+  useEffect(() => {
+    setSelectedVehicles((current) => current.filter((id) => vehicles.some((vehicle) => vehicle.id === id)));
+  }, [vehicles]);
   const alertTypeNames = useMemo(() => new Map(alertTypes.map((type) => [type.id, type.name])), [alertTypes]);
 
   const rows = useMemo<AlertRow[]>(() => {
@@ -192,6 +208,7 @@ export default function AddAlert() {
   const handleAssignmentChange = (value: AlertAssignee | "") => {
     setAssignedTo(value);
     setSelectedParty("");
+    setSelectedVehicles([]);
   };
 
   const handleVehicleChange = (value: string) => {
@@ -267,29 +284,48 @@ export default function AddAlert() {
     else toast.success("Alert saved.");
   };
 
-  const handleDeleteRow = async () => {
+  const requestDeleteRow = () => {
     if (!activeRow) {
       toast.error("Select a transporter, user, or group first.");
       return;
     }
-    const results = await Promise.allSettled(activeRow.details.map((detail) => deleteAlert(detail.id).unwrap()));
-    const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failed.length) {
-      toast.error(apiErrorMessage(failed[0].reason, "Could not delete the alert."));
-      return;
-    }
-    setActiveRowId(null);
-    toast.success("Alert deleted.");
+    setPendingDelete({ kind: "row" });
   };
 
-  const handleDeleteDetail = async (detail: AlertDetail) => {
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    if (pendingDelete.kind === "row") {
+      if (!activeRow) {
+        setPendingDelete(null);
+        return;
+      }
+      const results = await Promise.allSettled(activeRow.details.map((detail) => deleteAlert(detail.id).unwrap()));
+      const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed.length) {
+        toast.error(apiErrorMessage(failed[0].reason, "Could not delete the alert."));
+        return;
+      }
+      setActiveRowId(null);
+      setPendingDelete(null);
+      toast.success("Alert deleted.");
+      return;
+    }
     try {
-      await deleteAlert(detail.id).unwrap();
+      await deleteAlert(pendingDelete.detail.id).unwrap();
+      setPendingDelete(null);
       toast.success("Alert type removed.");
     } catch (error) {
       toast.error(apiErrorMessage(error, "Could not remove the alert type."));
     }
   };
+
+  const deleteDialogTitle = pendingDelete?.kind === "row" ? "Delete alert?" : "Delete alert type?";
+  const deleteDialogEntityName =
+    pendingDelete?.kind === "row"
+      ? activeRow?.name || activeRow?.party || "this alert"
+      : pendingDelete?.kind === "detail"
+        ? `${pendingDelete.detail.type} (${pendingDelete.detail.vehicle})`
+        : "this alert";
 
   const insertToken = (token: string) => {
     setMessageBody((current) => `${current}${current ? " " : ""}{${token}}`);
@@ -342,7 +378,15 @@ export default function AddAlert() {
               {assignedTo && (
                 <div>
                   <label className={labelClass(isDark)} htmlFor="alert-party">{assigneeLabel} {required}</label>
-                  <select id="alert-party" className={inputClass(isDark)} value={selectedParty} onChange={(event) => setSelectedParty(event.target.value)}>
+                  <select
+                    id="alert-party"
+                    className={inputClass(isDark)}
+                    value={selectedParty}
+                    onChange={(event) => {
+                      setSelectedParty(event.target.value);
+                      setSelectedVehicles([]);
+                    }}
+                  >
                     <option value="">{assigneeLabel}</option>
                     {partyOptions[assignedTo].map((party) => (
                       <option key={party.id} value={party.id}>{party.name}</option>
@@ -424,7 +468,7 @@ export default function AddAlert() {
               />
             </label>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={dangerButtonClass(isDark)} onClick={handleDeleteRow} disabled={!activeRowId || isDeleting}>
+              <button type="button" className={dangerButtonClass(isDark)} onClick={requestDeleteRow} disabled={!activeRowId || isDeleting}>
                 <Trash2 className="h-3.5 w-3.5" /> Delete Selected
               </button>
               <button
@@ -500,7 +544,12 @@ export default function AddAlert() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            <button type="button" onClick={() => handleDeleteDetail(detail)} className={rowActionClass(isDark, "rose")}>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDelete({ kind: "detail", detail })}
+                              disabled={isDeleting}
+                              className={rowActionClass(isDark, "rose")}
+                            >
                               Delete
                             </button>
                           </td>
@@ -521,6 +570,17 @@ export default function AddAlert() {
           )}
         </section>
       </main>
+
+      <DeleteConfirmDialog
+        isDark={isDark}
+        open={Boolean(pendingDelete)}
+        title={deleteDialogTitle}
+        entityName={deleteDialogEntityName}
+        isSubmitting={isDeleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+        titleId="alert-delete-title"
+      />
 
       {typeModalOpen && (
         <AlertModal

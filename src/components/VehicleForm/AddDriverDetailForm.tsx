@@ -6,7 +6,11 @@ import { digitsOnly, isValidPhone, PHONE_MAX_LENGTH, phoneErrorMessage } from "@
 import type { DriverDetail } from "@/interfaces/DriverDetail";
 import type { MasterOption } from "@/interfaces/EntityMaster";
 import { Status } from "@/enums/Status";
-import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
+import {
+	useGetClientMasterQuery,
+	useGetTransporterMasterQuery,
+	useGetVehicleMasterQuery,
+} from "@/store/services/api/Master";
 import { useGetLicensesQuery } from "@/store/services/api/License";
 
 export type DriverDocumentValues = {
@@ -19,6 +23,7 @@ export type DriverDocumentValues = {
 export type DriverDetailFormValues = {
 	client: string;
 	transporter: string;
+	vehicle: string;
 	firstName: string;
 	lastName: string;
 	deviceId: string;
@@ -85,6 +90,7 @@ const isAtLeastEighteen = (dateOfBirth: string) => {
 const detailDefaults = () => ({
 	client: "",
 	transporter: "",
+	vehicle: "",
 	firstName: "",
 	lastName: "",
 	deviceId: "",
@@ -151,10 +157,12 @@ const toFormValues = (
 	clients: MasterOption[] = [],
 	transporters: MasterOption[] = [],
 	licenses: MasterOption[] = [],
+	vehicles: MasterOption[] = [],
 ): ReturnType<typeof detailDefaults> => ({
 	...detailDefaults(),
 	client: resolveMasterId(String(driver.client ?? ""), clients, driver.clientName),
 	transporter: resolveMasterId(String(driver.transporter ?? ""), transporters, driver.transporterName),
+	vehicle: resolveMasterId(String(driver.vehicle ?? ""), vehicles, driver.vehicleName),
 	firstName: driver.firstName ?? "",
 	lastName: driver.lastName ?? "",
 	deviceId: driver.deviceId ?? "",
@@ -187,8 +195,7 @@ const toFormValues = (
 export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDetailFormProps) {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
 	const clients = clientMaster;
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster;
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const { data: licenses = [], isLoading: licensesLoading } = useGetLicensesQuery();
 	const licenseOptions: MasterOption[] = useMemo(
 		() =>
@@ -205,8 +212,22 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 	const nextDocumentId = useRef(1);
 	const [activeTab, setActiveTab] = useState<DriverTab>(tabs[0]);
 	const [values, setValues] = useState(() =>
-		driver ? toFormValues(driver, clients, transporters, licenseOptions) : detailDefaults(),
+		driver ? toFormValues(driver, clients, [], licenseOptions, []) : detailDefaults(),
 	);
+	const clientId = String(values.client ?? "").trim();
+	const transporterId = String(values.transporter ?? "").trim();
+	const { data: transporterMaster = [] } = useGetTransporterMasterQuery(
+		clientId ? { client: clientId } : undefined,
+		{ skip: !clientId },
+	);
+	const transporters = transporterMaster;
+	const vehicles = useMemo(() => {
+		if (!clientId || !transporterId) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === clientId;
+			return clientOk && item.transporterId === transporterId;
+		});
+	}, [allVehicles, clientId, transporterId]);
 	const [documents, setDocuments] = useState<DriverDocumentValues[]>([]);
 	const [formError, setFormError] = useState("");
 	const [detailsSaved, setDetailsSaved] = useState(Boolean(driver?.externalId));
@@ -225,7 +246,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 			setFormError("");
 			return;
 		}
-		setValues(toFormValues(driver, clients, transporters, licenseOptions));
+		setValues(toFormValues(driver, clients, transporters, licenseOptions, vehicles));
 		setSavedDriverId(driver.externalId);
 		setDetailsSaved(true);
 		setActiveTab(tabs[0]);
@@ -237,23 +258,25 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 
 	useEffect(() => {
 		if (!driverKey || !driver) return;
-		if (!clients.length && !transporters.length && !licenseOptions.length) return;
+		if (!clients.length && !transporters.length && !licenseOptions.length && !vehicles.length) return;
 		setValues((current) => {
 			const clientMatched = clients.some((option) => option.id === current.client);
 			const transporterMatched = transporters.some((option) => option.id === current.transporter);
+			const vehicleMatched = !current.vehicle || vehicles.some((option) => option.id === current.vehicle);
 			const licenseMatched =
 				!current.licenseToDrive ||
 				licenseOptions.some((option) => option.id === current.licenseToDrive);
-			if (clientMatched && transporterMatched && licenseMatched) return current;
-			const next = toFormValues(driver, clients, transporters, licenseOptions);
+			if (clientMatched && transporterMatched && vehicleMatched && licenseMatched) return current;
+			const next = toFormValues(driver, clients, transporters, licenseOptions, vehicles);
 			return {
 				...current,
 				client: clientMatched ? current.client : next.client || current.client,
 				transporter: transporterMatched ? current.transporter : next.transporter || current.transporter,
+				vehicle: vehicleMatched ? current.vehicle : next.vehicle || current.vehicle,
 				licenseToDrive: licenseMatched ? current.licenseToDrive : next.licenseToDrive || current.licenseToDrive,
 			};
 		});
-	}, [driver, driverKey, clients, transporters, licenseOptions]);
+	}, [driver, driverKey, clients, transporters, vehicles, licenseOptions]);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -274,9 +297,31 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 	}`;
 
 	const update = (name: keyof ReturnType<typeof detailDefaults>, value: string | boolean) => {
-		setValues((current) => ({ ...current, [name]: value }));
+		setValues((current) => {
+			const next = { ...current, [name]: value };
+			if (name === "client") {
+				next.transporter = "";
+				next.vehicle = "";
+			}
+			if (name === "transporter") next.vehicle = "";
+			return next;
+		});
 		setFormError("");
 	};
+
+	useEffect(() => {
+		const selected = String(values.transporter ?? "").trim();
+		if (!selected || !clientId) return;
+		if (transporters.some((option) => option.id === selected)) return;
+		setValues((current) => ({ ...current, transporter: "", vehicle: "" }));
+	}, [clientId, transporters, values.transporter]);
+
+	useEffect(() => {
+		const selected = String(values.vehicle ?? "").trim();
+		if (!selected || !transporterId) return;
+		if (vehicles.some((option) => option.id === selected)) return;
+		setValues((current) => ({ ...current, vehicle: "" }));
+	}, [transporterId, vehicles, values.vehicle]);
 
 	const addDocument = () => {
 		const id = nextDocumentId.current;
@@ -514,7 +559,41 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 					{activeTab === "Add Driver Detail" ? (
 						<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
 							{field("Client", select("client", "Select Client", clients, true), true)}
-							{field("Transporter", select("transporter", "Select", transporters))}
+							{field(
+								"Transporter",
+								<select
+									value={String(values.transporter)}
+									disabled={!clientId}
+									onChange={(event) => update("transporter", event.target.value)}
+									className={inputClass}
+								>
+									<option value="">Select Transporter</option>
+									{transporters.map((option) => (
+										<option key={option.id} value={option.id}>{option.name}</option>
+									))}
+								</select>,
+								true,
+							)}
+							{field(
+								"Vehicle",
+								<select
+									value={String(values.vehicle)}
+									disabled={!transporterId}
+									onChange={(event) => update("vehicle", event.target.value)}
+									className={inputClass}
+								>
+									<option value="">
+										{!transporterId
+											? "Select Vehicle"
+											: vehicles.length === 0
+												? "No vehicles"
+												: "Select Vehicle"}
+									</option>
+									{vehicles.map((option) => (
+										<option key={option.id} value={option.id}>{option.name}</option>
+									))}
+								</select>,
+							)}
 							{field("First Name", text("firstName", "First Name", true), true)}
 							{field("Last Name", text("lastName", "Last Name", true), true)}
 							{field("Device Id", text("deviceId", "Device Id"))}
@@ -631,7 +710,7 @@ export function AddDriverDetailForm({ onClose, onSubmit, driver }: AddDriverDeta
 							onClick={() => {
 								setValues(
 									driver
-										? toFormValues(driver, clients, transporters, licenseOptions)
+										? toFormValues(driver, clients, transporters, licenseOptions, vehicles)
 										: detailDefaults(),
 								);
 								setFormError("");

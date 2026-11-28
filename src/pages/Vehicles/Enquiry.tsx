@@ -5,6 +5,7 @@ import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Pencil, Pow
 import { toast } from "sonner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { Status, statusLabel } from "@/enums/Status";
 
@@ -87,6 +88,7 @@ export default function Enquiry() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [pendingStatusRow, setPendingStatusRow] = useState<EnquiryRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<EnquiryRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const [editingRow, setEditingRow] = useState<EnquiryRecord | null>(null);
@@ -178,6 +180,13 @@ export default function Enquiry() {
 
 	const updateFormField = <K extends keyof EnquiryFormValues>(key: K, value: EnquiryFormValues[K]) => {
 		setFormValues((current) => ({ ...current, [key]: value }));
+	};
+
+	const confirmDelete = () => {
+		if (!pendingDelete) return;
+		setRows((current) => current.filter((item) => item.id !== pendingDelete.id));
+		toast.success(`${pendingDelete.enquiryBy || "Enquiry"} deleted.`);
+		setPendingDelete(null);
 	};
 
 	const confirmStatusChange = () => {
@@ -404,7 +413,7 @@ export default function Enquiry() {
 													type="button"
 													title="Delete"
 													aria-label={`Delete ${row.enquiryBy}`}
-													onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}
+													onClick={() => setPendingDelete(row)}
 													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-100 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 												>
 													<Trash2 className="h-3.5 w-3.5" />
@@ -529,6 +538,16 @@ export default function Enquiry() {
 					</section>
 				</div>
 			)}
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete enquiry?"
+				entityName={pendingDelete?.enquiryBy || pendingDelete?.name || "this enquiry"}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={confirmDelete}
+				titleId="enquiry-delete-title"
+			/>
 
 			<ChangeStatusDialog
 				isDark={isDark}

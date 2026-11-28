@@ -83,29 +83,6 @@ const asTrimmedText = (value: unknown): string | undefined => {
   return String(value).trim() || undefined;
 };
 
-/** Company + login/name so shared company names stay distinguishable in dropdowns. */
-function entityMasterLabel(
-  item: {
-    companyName?: string;
-    company?: string;
-    name?: string;
-    userName?: string;
-    username?: string;
-    owner_name?: string;
-    ownerName?: string;
-  },
-  primaryName?: string,
-): string | undefined {
-  const company = asTrimmedText(primaryName ?? item.companyName ?? item.company);
-  const identity = asTrimmedText(
-    item.userName ??
-    item.name ??
-    item.owner_name 
-  );
-  if (company && identity && company !== identity) return `${company} (${identity})`;
-  return company || identity || undefined;
-}
-
 /** Client dropdowns show only login `userName` (e.g. ravi / roshni). */
 function clientMasterLabel(item: ClientMaster): string | undefined {
   return asTrimmedText(
@@ -113,6 +90,23 @@ function clientMasterLabel(item: ClientMaster): string | undefined {
     item.name ??
     item.owner_name
   );
+}
+
+/** Transporter dropdown: username first, then company — e.g. `shobhit (GPS House)`. */
+function transporterMasterLabel(item: TransporterMaster): string | undefined {
+  const username = asTrimmedText(
+    item.userName ??
+    item.username ??
+    item.name ??
+    item.transporterName,
+  );
+  const company = asTrimmedText(
+    item.companyName ??
+    item.company ??
+    item.transporterName,
+  );
+  if (username && company && username !== company) return `${username} (${company})`;
+  return username || company || undefined;
 }
 
 /** Extra match keys — QA often stores transporter.client as name/username, not UUID. */
@@ -133,7 +127,7 @@ function clientMasterExtra(item: ClientMaster): Partial<MasterOption> | undefine
 function mapTransporterMaster(response: MasterListResponse<TransporterMaster>): MasterOption[] {
   return toMasterOptions(
     response,
-    (item) => entityMasterLabel(item, item.transporterName),
+    transporterMasterLabel,
     (item) => {
       const clientRef = masterRefId(item.client) ?? asTrimmedText(item.client);
       return clientRef && clientRef !== "[object Object]" ? { clientRef } : undefined;
@@ -144,37 +138,6 @@ function mapTransporterMaster(response: MasterListResponse<TransporterMaster>): 
 
 function mapClientMaster(response: MasterListResponse<ClientMaster>): MasterOption[] {
   return toMasterOptions(response, clientMasterLabel, clientMasterExtra, { includeInactive: true });
-}
-
-/** Match transporters to a selected client id using aliases (name / username / uuid). */
-function filterTransportersByClient(
-  transporters: MasterOption[],
-  clientId: string,
-  clients: MasterOption[],
-): MasterOption[] {
-  const selected = clients.find(
-    (client) =>
-      client.id === clientId ||
-      String(client.externalId ?? "") === clientId ||
-      client.name === clientId,
-  );
-  const keys = new Set(
-    [
-      clientId,
-      selected?.id,
-      selected?.externalId,
-      selected?.name,
-      ...(selected?.aliases ?? []),
-    ]
-      .map((value) => asTrimmedText(value)?.toLowerCase())
-      .filter((value): value is string => Boolean(value)),
-  );
-  const matched = transporters.filter((item) => {
-    const ref = asTrimmedText(item.clientRef)?.toLowerCase();
-    return Boolean(ref && keys.has(ref));
-  });
-  // If aliases cannot resolve (legacy data), keep the full list so the dropdown is never empty.
-  return matched.length > 0 ? matched : transporters;
 }
 
 export const masterApi = api.injectEndpoints({
@@ -214,37 +177,17 @@ export const masterApi = api.injectEndpoints({
       providesTags: [{ type: "Master", id: "CLIENT" }, { type: "Clients", id: "LIST" }],
     }),
     getTransporterMaster: builder.query<MasterOption[], { client?: string } | void>({
-      // QA `/master/transporter?client=<uuid>` returns [] — always fetch the full list and
-      // filter client-side using client aliases (name / username), not the broken query param.
-      async queryFn(arg, { getState }, _extraOptions, baseQuery) {
-        const transporterResult = await baseQuery({ url: "/master/transporter" });
-        if (transporterResult.error) {
-          return { error: transporterResult.error };
-        }
-        const transporters = mapTransporterMaster(
-          transporterResult.data as MasterListResponse<TransporterMaster>,
-        );
-        const clientId =
+      /** Pass `client` so `/master/transporter?client=<id>` returns that client's transporters. */
+      query: (arg) => {
+        const client =
           typeof arg === "object" && arg?.client ? String(arg.client).trim() : "";
-        if (!clientId) {
-          return { data: transporters };
-        }
-
-        // Prefer cached client master (void query → select(undefined)); otherwise fetch.
-        let clients =
-          masterApi.endpoints.getClientMaster.select(undefined)(getState() as never).data ??
-          undefined;
-        if (!clients) {
-          const clientResult = await baseQuery({ url: "/master/client" });
-          if (!clientResult.error) {
-            clients = mapClientMaster(clientResult.data as MasterListResponse<ClientMaster>);
-          }
-        }
-
         return {
-          data: filterTransportersByClient(transporters, clientId, clients ?? []),
+          url: "/master/transporter",
+          ...(client ? { params: { client } } : {}),
         };
       },
+      transformResponse: (response: MasterListResponse<TransporterMaster>) =>
+        mapTransporterMaster(response),
       providesTags: (_result, _error, arg) => [
         {
           type: "Master",

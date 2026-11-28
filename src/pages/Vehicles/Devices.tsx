@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import AddDeviceForm from "@/components/Devices/AddDeviceForm";
 import { useAuth } from "@/contexts/AuthContext";
@@ -116,7 +117,7 @@ export default function Devices() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingDeviceId, setEditingDeviceId] = useState<string | undefined>();
-	const [deletingId, setDeletingId] = useState<string | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<DeviceRecord | null>(null);
 	const [pendingStatusDevice, setPendingStatusDevice] = useState<DeviceRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
@@ -219,17 +220,15 @@ export default function Devices() {
 		setShowAddDialog(true);
 	};
 
-	const handleDelete = async (device: DeviceRecord) => {
-		if (!device.externalId) return;
-		setDeletingId(device.externalId);
+	const confirmDelete = async () => {
+		if (!pendingDelete?.externalId) return;
 		try {
-			await deleteDevice(device.externalId).unwrap();
+			await deleteDevice(pendingDelete.externalId).unwrap();
 			toast.success("Device deleted.");
+			setPendingDelete(null);
 		} catch (error) {
 			console.error("Failed to delete device.", error);
 			toast.error(apiErrorMessage(error, "Could not delete the device."));
-		} finally {
-			setDeletingId(null);
 		}
 	};
 
@@ -476,8 +475,8 @@ export default function Devices() {
 																</button>
 																<button
 																	type="button"
-																	onClick={() => void handleDelete(device)}
-																	disabled={isDeleting && deletingId === device.externalId}
+																	onClick={() => setPendingDelete(device)}
+																	disabled={isDeleting && pendingDelete?.externalId === device.externalId}
 																	aria-label={`Delete device ${device.imei}`}
 																	title="Delete device"
 																	className={`flex h-7 w-7 items-center justify-center rounded-md border transition disabled:opacity-50 ${
@@ -486,7 +485,7 @@ export default function Devices() {
 																			: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
 																	}`}
 																>
-																	{isDeleting && deletingId === device.externalId ? (
+																	{isDeleting && pendingDelete?.externalId === device.externalId ? (
 																		<Loader2 className="h-3.5 w-3.5 animate-spin" />
 																	) : (
 																		<Trash2 className="h-3.5 w-3.5" />
@@ -594,6 +593,17 @@ export default function Devices() {
 					</div>
 				</div>
 			)}
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete device?"
+				entityName={pendingDelete?.imei || "this device"}
+				isSubmitting={isDeleting}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDelete()}
+				titleId="device-delete-title"
+			/>
 
 			<ChangeStatusDialog
 				isDark={isDark}

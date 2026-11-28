@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { TravelSummary } from "@/interfaces/TravelSummaryReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -15,7 +16,7 @@ import {
 import { useLazyGetTravelSummaryReportQuery } from "@/store/services/api/TravelSummaryReport";
 
 type ColumnKey = "sn" | "vehicle" | "startAddress" | "totalDistance" | "running" | "idle" | "stop" | "overSpeed" | "overSpeedCount" | "endAddress";
-type MenuKind = "client" | "transporter" | "vehicle";
+type MenuKind = "client" | "transporter";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -82,8 +83,7 @@ const formatDistance = (value: number) => (Number.isInteger(value) ? String(valu
 
 export default function TravelSummaryReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const [fetchTravelSummary, { isFetching }] = useLazyGetTravelSummaryReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
@@ -91,7 +91,6 @@ export default function TravelSummaryReport() {
 	const initialRange = todayRange();
 	const clientRef = useRef<HTMLDivElement>(null);
 	const transporterRef = useRef<HTMLDivElement>(null);
-	const vehicleRef = useRef<HTMLDivElement>(null);
 	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
 	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [rows, setRows] = useState<TravelSummary[]>([]);
@@ -102,13 +101,40 @@ export default function TravelSummaryReport() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
 	const [transporterQuery, setTransporterQuery] = useState("");
-	const [vehicleQuery, setVehicleQuery] = useState("");
+
+	const {
+		data: transporterMaster = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+
+	const vehicleOptions = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
+		});
+	}, [allVehicles, client, transporter]);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporterMaster.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicles([]);
+	}, [transporter, transporterMaster]);
+
+	useEffect(() => {
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -137,13 +163,24 @@ export default function TravelSummaryReport() {
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 	const visibleClients = clientMaster.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
 	const visibleTransporters = transporterMaster.filter((option) => option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleMaster.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+
+	const onClientChange = (next: string) => {
+		setClient(next);
+		setTransporter("");
+		setVehicles([]);
+		setTransporterQuery("");
+	};
+
+	const onTransporterChange = (next: string) => {
+		setTransporter(next);
+		setVehicles([]);
+	};
 
 	useEffect(() => {
 		if (!openMenu) return;
 		const onPointer = (event: MouseEvent) => {
 			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : openMenu === "transporter" ? transporterRef : vehicleRef;
+			const menuRef = openMenu === "client" ? clientRef : transporterRef;
 			if (!menuRef.current?.contains(target)) setOpenMenu(null);
 		};
 		const onKey = (event: KeyboardEvent) => {
@@ -158,8 +195,8 @@ export default function TravelSummaryReport() {
 	}, [openMenu]);
 
 	const applyFilters = async () => {
-		if (!client || !transporter || !vehicle) {
-			toast.error("Select client, transporter, and vehicle.");
+		if (!client || !transporter || vehicles.length === 0) {
+			toast.error("Select client, transporter, and at least one vehicle.");
 			return;
 		}
 		if (!from || !to) {
@@ -169,16 +206,16 @@ export default function TravelSummaryReport() {
 
 		const apiFrom = toApiDateTime(from);
 		const apiTo = toApiDateTime(to);
+		const vehicleParam = vehicles.join(",");
 
 		try {
 			const data = await fetchTravelSummary({
 				client,
 				transporter,
-				vehicle,
+				vehicle: vehicleParam,
 				from: apiFrom,
 				to: apiTo,
 			}).unwrap();
-			const vehicleName = vehicleMaster.find((option) => option.id === vehicle)?.name ?? "";
 			const asField = (value: unknown, fallback = "") => {
 				const text = displayText(value);
 				return text === "—" ? fallback : text;
@@ -186,8 +223,8 @@ export default function TravelSummaryReport() {
 			setRows(
 				data.map((row, index) => ({
 					...row,
-					id: row.id || `${vehicle}-${index}`,
-					vehicle: asField(row.vehicle, vehicleName),
+					id: row.id || `${vehicleParam}-${index}`,
+					vehicle: asField(row.vehicle),
 					startAddress: asField(row.startAddress),
 					endAddress: asField(row.endAddress),
 				})),
@@ -207,12 +244,11 @@ export default function TravelSummaryReport() {
 		setSearch("");
 		setClient("");
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
 		setClientQuery("");
 		setTransporterQuery("");
-		setVehicleQuery("");
 		setHiddenColumns([]);
 		setOpenMenu(null);
 		setPage(0);
@@ -233,6 +269,7 @@ export default function TravelSummaryReport() {
 		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
+		disabled = false,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[180px]">
 			<button
@@ -240,15 +277,19 @@ export default function TravelSummaryReport() {
 				aria-expanded={openMenu === kind}
 				aria-haspopup="listbox"
 				aria-label={emptyLabel}
-				onClick={() => setOpenMenu((current) => (current === kind ? null : kind))}
-				className={controlClass}
+				disabled={disabled}
+				onClick={() => {
+					if (disabled) return;
+					setOpenMenu((current) => (current === kind ? null : kind));
+				}}
+				className={`${controlClass} disabled:cursor-not-allowed disabled:opacity-50`}
 			>
 				<span className={`truncate ${value ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
 					{value ? optionLabel(value, options) : emptyLabel}
 				</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
-			{openMenu === kind && (
+			{openMenu === kind && !disabled && (
 				<div className={menuClass}>
 					<div className="p-2">
 						<input
@@ -333,9 +374,35 @@ export default function TravelSummaryReport() {
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{singleSelect("client", clientRef, "Select Client", client, setClient, visibleClients, clientQuery, setClientQuery)}
-						{singleSelect("transporter", transporterRef, "Select Transporter", transporter, setTransporter, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{singleSelect("vehicle", vehicleRef, "Select Vehicle", vehicle, setVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", client, onClientChange, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect(
+							"transporter",
+							transporterRef,
+							!client
+								? "Select Transporter"
+								: transportersLoading || transportersFetching
+									? "Loading transporters…"
+									: visibleTransporters.length === 0 && !transporterQuery
+										? "No transporters"
+										: "Select Transporter",
+							transporter,
+							onTransporterChange,
+							visibleTransporters,
+							transporterQuery,
+							setTransporterQuery,
+							!client || transportersLoading || transportersFetching,
+						)}
+						<VehicleMultiSelect
+							id="travel-summary-vehicle"
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
+							disabled={!transporter}
+							placeholder={!transporter ? "Select Vehicle" : vehicleOptions.length === 0 ? "No vehicles" : "Select Vehicle"}
+							emptyText="No vehicles"
+							isDark={isDark}
+							compact
+						/>
 						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
 							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 							<span className="text-slate-500">-</span>

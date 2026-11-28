@@ -24,7 +24,14 @@ const paymentTermValues: Record<string, string> = {
 };
 
 export function Payment({ isDark, values, onChange }: PaymentProps) {
-    const { data: transporters = [], isLoading: isLoadingTransporters, isError: transportersError } = useGetTransporterMasterQuery();
+    const clientId = values.vehicleClient?.trim() ?? "";
+    const {
+        data: transporters = [],
+        isLoading: isLoadingTransporters,
+        isError: transportersError,
+    } = useGetTransporterMasterQuery(clientId ? { client: clientId } : undefined, {
+        skip: !clientId,
+    });
     const { data: technicians = [], isLoading: isLoadingTechnicians } = useGetTechnicianMasterQuery();
     const masterOptions: Partial<Record<string, { value: string; label: string }[]>> = {
         paymentTransporter: transporters.map((transporter) => ({ value: transporter.id, label: transporter.name })),
@@ -53,11 +60,25 @@ export function Payment({ isDark, values, onChange }: PaymentProps) {
                                 <select
                                     value={values[field.name] ?? ""}
                                     onChange={(event) => onChange(field.name, event.target.value)}
-                                    disabled={(field.name === "paymentTransporter" && (isLoadingTransporters || transportersError)) || (field.name === "technicianName" && isLoadingTechnicians)}
+                                    disabled={
+                                        (field.name === "paymentTransporter" &&
+                                            (!clientId || isLoadingTransporters || transportersError)) ||
+                                        (field.name === "technicianName" && isLoadingTechnicians)
+                                    }
                                     className={`${inputClass} appearance-none pr-9`}
                                     aria-required={"required" in field ? field.required : undefined}
                                 >
-                                    <option value="">{"placeholder" in field ? field.placeholder : "Select"}</option>
+                                    <option value="">
+                                        {field.name === "paymentTransporter"
+                                            ? !clientId
+                                                ? "Select Transporter"
+                                                : isLoadingTransporters
+                                                    ? "Loading transporters..."
+                                                    : "Select Transporter"
+                                            : "placeholder" in field
+                                                ? field.placeholder
+                                                : "Select"}
+                                    </option>
                                     {masterOptions[field.name]
                                         ? masterOptions[field.name]?.map((option) => (
                                             <option key={option.value} value={option.value}>{option.label}</option>

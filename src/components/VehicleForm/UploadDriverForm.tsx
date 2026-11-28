@@ -138,10 +138,7 @@ const readDrivers = async (file: File) => {
 };
 
 export function UploadDriverForm({ onClose, onSubmit }: UploadDriverFormProps) {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name);
+	const { data: clients = [] } = useGetClientMasterQuery();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const titleId = useId();
@@ -149,6 +146,16 @@ export function UploadDriverForm({ onClose, onSubmit }: UploadDriverFormProps) {
 	const [transporter, setTransporter] = useState("");
 	const [file, setFile] = useState<File | null>(null);
 	const [formError, setFormError] = useState("");
+	const { data: transporters = [] } = useGetTransporterMasterQuery(
+		client ? { client } : undefined,
+		{ skip: !client },
+	);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+	}, [transporter, transporters]);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -224,16 +231,38 @@ export function UploadDriverForm({ onClose, onSubmit }: UploadDriverFormProps) {
 					<div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
 						<label className={labelClass}>
 							<span className="mb-1.5 flex items-center gap-1">Client <span className="text-rose-400">*</span></span>
-							<select required value={client} onChange={(event) => { setClient(event.target.value); setFormError(""); }} className={inputClass}>
+							<select
+								required
+								value={client}
+								onChange={(event) => {
+									setClient(event.target.value);
+									setTransporter("");
+									setFormError("");
+								}}
+								className={inputClass}
+							>
 								<option value="">Select Client</option>
-								{clients.map((option) => <option key={option} value={option}>{option}</option>)}
+								{clients.map((option) => (
+									<option key={option.id} value={option.id}>{option.name}</option>
+								))}
 							</select>
 						</label>
 						<label className={labelClass}>
 							<span className="mb-1.5 flex items-center gap-1">Transporter <span className="text-rose-400">*</span></span>
-							<select required value={transporter} onChange={(event) => { setTransporter(event.target.value); setFormError(""); }} className={inputClass}>
+							<select
+								required
+								value={transporter}
+								disabled={!client}
+								onChange={(event) => {
+									setTransporter(event.target.value);
+									setFormError("");
+								}}
+								className={inputClass}
+							>
 								<option value="">Select Transporter</option>
-								{transporters.map((option) => <option key={option} value={option}>{option}</option>)}
+								{transporters.map((option) => (
+									<option key={option.id} value={option.id}>{option.name}</option>
+								))}
 							</select>
 						</label>
 						<label className={labelClass}>

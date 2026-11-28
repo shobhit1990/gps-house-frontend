@@ -19,6 +19,7 @@ import {
 	X,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { StatusReportRow } from "@/interfaces/StatusReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -266,7 +267,7 @@ export default function StatusReport() {
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
 	const [vehicle, setVehicle] = useState("");
-	const [status, setStatus] = useState("");
+	const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 
@@ -276,7 +277,7 @@ export default function StatusReport() {
 		isFetching: transportersFetching,
 	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
 
-	const vehicles = useMemo(() => {
+	const vehicleOptions = useMemo(() => {
 		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
 			const clientOk = !item.clientId || item.clientId === client;
@@ -293,9 +294,9 @@ export default function StatusReport() {
 
 	useEffect(() => {
 		if (!vehicle) return;
-		if (vehicles.some((item) => item.id === vehicle)) return;
+		if (vehicleOptions.some((option) => option.id === vehicle)) return;
 		setVehicle("");
-	}, [vehicle, vehicles]);
+	}, [vehicleOptions, vehicle]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -353,8 +354,8 @@ export default function StatusReport() {
 			toast.error("Select client, transporter, and vehicle.");
 			return;
 		}
-		if (!status) {
-			toast.error("Select status.");
+		if (selectedStatuses.length === 0) {
+			toast.error("Select at least one status.");
 			return;
 		}
 		if (!from || !to) {
@@ -367,7 +368,7 @@ export default function StatusReport() {
 				client,
 				transporter,
 				vehicle,
-				status,
+				status: selectedStatuses.join(","),
 				from: toApiDateTime(from),
 				to: toApiDateTime(to),
 			}).unwrap();
@@ -392,7 +393,7 @@ export default function StatusReport() {
 		setClient("");
 		setTransporter("");
 		setVehicle("");
-		setStatus("");
+		setSelectedStatuses([]);
 		setFrom(range.from);
 		setTo(range.to);
 		setHiddenColumns([]);
@@ -529,7 +530,7 @@ export default function StatusReport() {
 							disabled={!client || transportersLoading || transportersFetching}
 							placeholder={
 								!client
-									? "Select client first"
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
 										: transporters.length === 0
@@ -546,33 +547,26 @@ export default function StatusReport() {
 							disabled={!transporter || vehiclesLoading}
 							placeholder={
 								!transporter
-									? "Select transporter first"
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
-										: vehicles.length === 0
+										: vehicleOptions.length === 0
 											? "No vehicles"
 											: "Select Vehicle"
 							}
-							options={vehicles}
+							options={vehicleOptions}
 						/>
-						<label className="relative block min-w-0 flex-1">
-							<span className="sr-only">Status</span>
-							<select
-								id="status-report-status"
-								aria-label="Select Status"
-								value={status}
-								onChange={(event) => setStatus(event.target.value)}
-								className={selectClass}
-							>
-								<option value="">Select Status</option>
-								{statuses.map((item) => (
-									<option key={item} value={item}>
-										{item}
-									</option>
-								))}
-							</select>
-							<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-						</label>
+						<VehicleMultiSelect
+							id="status-report-status"
+							options={statuses.map((item) => ({ id: item, name: item }))}
+							values={selectedStatuses}
+							onValuesChange={setSelectedStatuses}
+							placeholder="Select Status"
+							emptyText="No statuses"
+							entityLabel="statuses"
+							searchLabel="Search statuses"
+							isDark={isDark}
+						/>
 						<div
 							className={`flex h-10 min-w-0 items-center gap-2 rounded-lg border px-2 ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}
 						>

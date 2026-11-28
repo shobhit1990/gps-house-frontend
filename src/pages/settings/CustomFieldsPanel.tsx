@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { useSelector } from "@/store/hooks";
 import { selectCurrentUser } from "@/store/slices/authSlice";
 import { vehicles } from "@/components/data/vehicles";
-import type { CustomFieldDraft } from "@/interfaces/Settings";
+import type { CustomFieldDraft, CustomFieldRecord } from "@/interfaces/Settings";
 import { useSettings } from "./SettingsState";
 import { EmptyState, Field, PanelIntro, quietButtonClass, SelectInput, TextInput } from "./ui";
 
@@ -21,6 +23,8 @@ export function CustomFieldsPanel({
   section: string;
   onSectionChange: (section: string) => void;
 }) {
+  const { theme } = useTheme();
+  const isDark = theme !== "light";
   const { draft, update } = useSettings();
   const currentUser = useSelector(selectCurrentUser);
   const clients = [...new Set(vehicles.map((vehicle) => vehicle.branch).filter(Boolean))];
@@ -29,6 +33,7 @@ export function CustomFieldsPanel({
   const [entity, setEntity] = useState("");
   const [fields, setFields] = useState<CustomFieldDraft[]>([blankField()]);
   const [search, setSearch] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<CustomFieldRecord | null>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -187,7 +192,7 @@ export function CustomFieldsPanel({
                     <button
                       type="button"
                       aria-label={`Remove ${row.fieldName}`}
-                      onClick={() => update("customFields", draft.customFields.filter((item) => item.id !== row.id))}
+                      onClick={() => setPendingDelete(row)}
                       className="rounded-md p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-400/10"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -200,6 +205,22 @@ export function CustomFieldsPanel({
         </table>
       </div>
       <p className="mt-3 text-xs text-slate-500">Showing {filtered.length === 0 ? 0 : 1} to {filtered.length} of {filtered.length} entries</p>
+      <DeleteConfirmDialog
+        isDark={isDark}
+        open={!!pendingDelete}
+        title="Delete custom field?"
+        entityName={pendingDelete?.fieldName || "this field"}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (!pendingDelete) return;
+          update(
+            "customFields",
+            draft.customFields.filter((item) => item.id !== pendingDelete.id),
+          );
+          setPendingDelete(null);
+        }}
+        titleId="custom-field-delete-title"
+      />
     </div>
   );
 }

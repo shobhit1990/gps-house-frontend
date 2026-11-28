@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { X } from "lucide-react";
+import type { MasterOption } from "@/interfaces/EntityMaster";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery, useGetVehicleMasterQuery } from "@/store/services/api/Master";
 import { ServiceMaintenanceForm, type ServiceMaintenanceHandle, type ServiceMaintenanceValues } from "@/components/VehicleForm/ServiceMaintenanceForm";
 import { digitsOnly } from "@/lib/formValidation";
@@ -62,14 +63,26 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 	const titleId = useId();
 	const serviceRef = useRef<ServiceMaintenanceHandle>(null);
 	const { data: clients = [] } = useGetClientMasterQuery();
-	const { data: transporters = [] } = useGetTransporterMasterQuery();
-	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const [activeTab, setActiveTab] = useState<DetailTab>(tabs[0]);
 	const [values, setValues] = useState<VehicleDetailFormValues>(() => ({
 		...detailDefaults(),
 		...initialValues,
 	}));
 	const [formError, setFormError] = useState("");
+	const { data: transporters = [] } = useGetTransporterMasterQuery(
+		values.client ? { client: values.client } : undefined,
+		{ skip: !values.client },
+	);
+	const vehicles = useMemo(
+		() =>
+			allVehicles.filter((item) => {
+				const clientOk = !values.client || !item.clientId || item.clientId === values.client;
+				const transporterOk = !values.transporter || item.transporterId === values.transporter;
+				return clientOk && transporterOk;
+			}),
+		[allVehicles, values.client, values.transporter],
+	);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -79,6 +92,18 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [onClose]);
 
+	useEffect(() => {
+		if (!values.transporter) return;
+		if (transporters.some((item) => item.id === values.transporter)) return;
+		setValues((current) => ({ ...current, transporter: "", vehicleNo: "" }));
+	}, [transporters, values.transporter]);
+
+	useEffect(() => {
+		if (!values.vehicleNo) return;
+		if (vehicles.some((item) => item.id === values.vehicleNo || item.name === values.vehicleNo)) return;
+		setValues((current) => ({ ...current, vehicleNo: "" }));
+	}, [vehicles, values.vehicleNo]);
+
 	const inputClass = `h-[37px] w-full rounded-lg border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
 			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/[0.08] [color-scheme:dark]"
@@ -87,7 +112,15 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 	const labelClass = `block min-w-0 text-[12px] font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`;
 
 	const update = (name: keyof VehicleDetailFormValues, value: string) => {
-		setValues((current) => ({ ...current, [name]: value }));
+		setValues((current) => {
+			const next = { ...current, [name]: value };
+			if (name === "client") {
+				next.transporter = "";
+				next.vehicleNo = "";
+			}
+			if (name === "transporter") next.vehicleNo = "";
+			return next;
+		});
 		setFormError("");
 	};
 
@@ -125,10 +158,26 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 		</label>
 	);
 
-	const select = (name: keyof VehicleDetailFormValues, placeholder: string, options: string[], required?: boolean) => (
-		<select required={required} value={values[name]} onChange={(event) => update(name, event.target.value)} className={inputClass}>
+	const select = (
+		name: keyof VehicleDetailFormValues,
+		placeholder: string,
+		options: string[] | MasterOption[],
+		required?: boolean,
+		disabled = false,
+	) => (
+		<select
+			required={required}
+			disabled={disabled}
+			value={values[name]}
+			onChange={(event) => update(name, event.target.value)}
+			className={inputClass}
+		>
 			<option value="">{placeholder}</option>
-			{options.map((option) => <option key={option} value={option}>{option}</option>)}
+			{options.map((option) => {
+				const value = typeof option === "string" ? option : option.id;
+				const label = typeof option === "string" ? option : option.name;
+				return <option key={value} value={value}>{label}</option>;
+			})}
 		</select>
 	);
 
@@ -186,9 +235,29 @@ export function AddVehicleDetailForm({ initialValues, onClose, onSubmit, onSaveS
 					)}
 					{activeTab === "Add Vehicle Detail" ? (
 						<div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-							{field("Client", select("client", "Select Client", clients.map((client) => client.name), true), true)}
-							{field("Transporter", select("transporter", "Select Transporter", transporters.map((transporter) => transporter.name), true), true)}
-							{field("Vehicle", select("vehicleNo", "Select", vehicles.map((vehicle) => vehicle.name), true), true)}
+							{field("Client", select("client", "Select Client", clients, true), true)}
+							{field(
+								"Transporter",
+								select(
+									"transporter",
+									"Select Transporter",
+									transporters,
+									true,
+									!values.client,
+								),
+								true,
+							)}
+							{field(
+								"Vehicle",
+								select(
+									"vehicleNo",
+									"Select Vehicle",
+									vehicles,
+									true,
+									!values.transporter,
+								),
+								true,
+							)}
 							{field("Owner Name", <input value={values.ownerName} placeholder="Owner Name" onChange={(event) => update("ownerName", event.target.value)} className={inputClass} />)}
 							{field("Owned By", select("ownedBy", "Select", ownedByOptions))}
 							{field("Vehicle Brand", <input value={values.vehicleBrand} placeholder="Vehicle Brand" onChange={(event) => update("vehicleBrand", event.target.value)} className={inputClass} />)}

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCloseOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import {
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { BulkUploadDialog } from "@/components/Alert/BulkUploadDialog";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
@@ -205,8 +206,7 @@ const toCreateRequest = (record: ServiceMaintenance): CreateServiceMaintenanceRe
 
 export default function ServiceAndMaintenance() {
 	const { data: clients = [] } = useGetClientMasterQuery();
-	const { data: transporters = [] } = useGetTransporterMasterQuery();
-	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const { data: services = [], isFetching, refetch } = useGetServiceMaintenancesQuery();
 	const [createService, { isLoading: isCreating }] = useCreateServiceMaintenanceMutation();
 	const [updateService, { isLoading: isUpdating }] = useUpdateServiceMaintenanceMutation();
@@ -217,8 +217,38 @@ export default function ServiceAndMaintenance() {
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const fileRef = useRef<HTMLInputElement>(null);
+	const [client, setClient] = useState("");
+	const [transporter, setTransporter] = useState("");
+	const [vehicle, setVehicle] = useState("");
+	const [applied, setApplied] = useState({ client: "", transporter: "", vehicle: "" });
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+	const filterVehicles = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
+		});
+	}, [allVehicles, client, transporter]);
+
+	useEffect(() => {
+		if (!transporter || !client) return;
+		if (transportersLoading || transportersFetching) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicle("");
+	}, [client, transporter, transporters, transportersFetching, transportersLoading]);
+
+	useEffect(() => {
+		if (!vehicle || !transporter) return;
+		if (filterVehicles.some((item) => item.id === vehicle)) return;
+		setVehicle("");
+	}, [vehicle, transporter, filterVehicles]);
 	const rows = useMemo<ServiceRow[]>(() => {
-		const vehicleNames = new Map(vehicles.map((item) => [item.id, item.name]));
+		const vehicleNames = new Map(allVehicles.map((item) => [item.id, item.name]));
 		return services.map((service) => {
 			const serviceVehicleId = vehicleId(service.vehicle);
 			return {
@@ -254,11 +284,7 @@ export default function ServiceAndMaintenance() {
 				vehicleId: serviceVehicleId,
 			};
 		});
-	}, [services, vehicles]);
-	const [client, setClient] = useState("");
-	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
-	const [applied, setApplied] = useState({ client: "", transporter: "", vehicle: "" });
+	}, [services, allVehicles]);
 	const [search, setSearch] = useState("");
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
@@ -537,19 +563,49 @@ export default function ServiceAndMaintenance() {
 				<section aria-label="Service filters" className={filterCardClass(isDark)}>
 					<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
 						<label className="sr-only" htmlFor="service-client">Client</label>
-						<select id="service-client" value={client} onChange={(event) => setClient(event.target.value)} className={inputClass(isDark)}>
+						<select
+							id="service-client"
+							value={client}
+							onChange={(event) => {
+								setClient(event.target.value);
+								setTransporter("");
+								setVehicle("");
+							}}
+							className={inputClass(isDark)}
+						>
 							<option value="">Select Client</option>
 							{clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<label className="sr-only" htmlFor="service-transporter">Transporter</label>
-						<select id="service-transporter" value={transporter} onChange={(event) => setTransporter(event.target.value)} className={inputClass(isDark)}>
-							<option value="">Select Transporter</option>
+						<select
+							id="service-transporter"
+							value={transporter}
+							disabled={!client || transportersLoading || transportersFetching}
+							onChange={(event) => {
+								setTransporter(event.target.value);
+								setVehicle("");
+							}}
+							className={`${inputClass(isDark)} disabled:cursor-not-allowed disabled:opacity-55`}
+						>
+							<option value="">
+								{!client
+									? "Select Transporter"
+									: transportersLoading || transportersFetching
+										? "Loading transporters…"
+										: "Select Transporter"}
+							</option>
 							{transporters.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<label className="sr-only" htmlFor="service-vehicle">Vehicle</label>
-						<select id="service-vehicle" value={vehicle} onChange={(event) => setVehicle(event.target.value)} className={inputClass(isDark)}>
+						<select
+							id="service-vehicle"
+							value={vehicle}
+							disabled={!transporter}
+							onChange={(event) => setVehicle(event.target.value)}
+							className={`${inputClass(isDark)} disabled:cursor-not-allowed disabled:opacity-55`}
+						>
 							<option value="">Select Vehicle</option>
-							{vehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+							{filterVehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 						</select>
 						<button type="button" onClick={() => { setApplied({ client, transporter, vehicle }); setPage(0); }} className={primaryButtonClass(isDark)}>
 							<Search className="h-3.5 w-3.5" /> Search
@@ -737,7 +793,7 @@ export default function ServiceAndMaintenance() {
 									<span className="mb-1.5 block">Vehicle <span className="text-rose-400">*</span></span>
 									<select value={form.vehicleNo} onChange={(event) => patch({ vehicleNo: event.target.value })} className={fieldClass()}>
 										<option value="">Select Vehicles</option>
-										{vehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+										{allVehicles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 									</select>
 								</label>
 								<label className={labelClass}>
@@ -825,62 +881,19 @@ export default function ServiceAndMaintenance() {
 				zIndexClassName="z-[810]"
 			/>
 
-			{pendingDelete ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="service-delete-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="service-delete-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Delete service?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingDelete.serviceName || "this service"}
-							</strong>
-							.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingDelete(null)}
-								disabled={isDeleting}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDelete()}
-								disabled={isDeleting}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
-										: "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-								}`}
-							>
-								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!pendingDelete}
+				title="Delete service?"
+				entityName={pendingDelete?.serviceName || "this service"}
+				isSubmitting={isDeleting}
+				onCancel={() => {
+					if (!isDeleting) setPendingDelete(null);
+				}}
+				onConfirm={() => void confirmDelete()}
+				titleId="service-delete-title"
+				zIndexClassName="z-[810]"
+			/>
 		</div>
 	);
 }

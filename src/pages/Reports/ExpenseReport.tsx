@@ -3,10 +3,12 @@ import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddExpense, type ExpenseFormValues } from "@/components/Reports/AddExpense";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
-import { ExpenseFor } from "@/enums/ExpenseFor";
+import { ExpenseFor, expenseForOptions } from "@/enums/ExpenseFor";
 import { Status } from "@/enums/Status";
 import {
 	useGetClientMasterQuery,
@@ -14,6 +16,7 @@ import {
 	useGetTransporterMasterQuery,
 	useGetVehicleMasterQuery,
 } from "@/store/services/api/Master";
+import { useGetDriverDetailsQuery } from "@/store/services/api/DriverDetails";
 import {
 	useCreateExpenseMutation,
 	useDeleteExpenseMutation,
@@ -41,6 +44,7 @@ type ColumnKey =
 	| "sn"
 	| "vehicleNo"
 	| "driverName"
+	| "tripName"
 	| "expenseType"
 	| "expenseDate"
 	| "expenseName"
@@ -58,12 +62,13 @@ type ColumnKey =
 	| "delete"
 	| "documents";
 
-type MenuKind = "client" | "vehicle";
+type MenuKind = "client" | "transporter" | "expenseFor" | "entity";
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
 	{ key: "vehicleNo", label: "Vehicle No." },
 	{ key: "driverName", label: "Driver Name" },
+	{ key: "tripName", label: "Trip Name" },
 	{ key: "expenseType", label: "Expense Type" },
 	{ key: "expenseDate", label: "Expense Date" },
 	{ key: "expenseName", label: "Expense Name" },
@@ -81,6 +86,14 @@ const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "delete", label: "Delete" },
 	{ key: "documents", label: "Documents" },
 ];
+
+/** Columns that depend on Expense For — swapped in ahead of the shared expense columns. */
+const expenseForLeadColumns: Record<ExpenseFor, ColumnKey[]> = {
+	[ExpenseFor.VEHICLE_WISE]: ["vehicleNo"],
+	[ExpenseFor.DRIVER_WISE]: ["driverName"],
+	[ExpenseFor.TRIP_WISE]: ["tripName"],
+	[ExpenseFor.GENERAL_WISE]: [],
+};
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -150,9 +163,9 @@ const buildExpensePayload = (values: ExpenseFormValues): CreateExpenseRequest =>
 
 export default function ExpenseReport() {
 	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
 	const { data: expenseTypeMaster = [] } = useGetExpenseTypeMasterQuery();
 	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
+	const { data: driverDetails = [] } = useGetDriverDetailsQuery();
 	const [listParams, setListParams] = useState<ExpenseListParams | void>(undefined);
 	const {
 		data: expenseData = [],
@@ -164,14 +177,16 @@ export default function ExpenseReport() {
 	} = useGetExpensesQuery(listParams);
 	const [createExpense, { isLoading: isCreating }] = useCreateExpenseMutation();
 	const [updateExpense, { isLoading: isUpdating }] = useUpdateExpenseMutation();
-	const [deleteExpense] = useDeleteExpenseMutation();
+	const [deleteExpense, { isLoading: isDeleting }] = useDeleteExpenseMutation();
 	const [getExpenseById] = useLazyGetExpenseByIdQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const initialRange = todayRange();
 	const clientRef = useRef<HTMLDivElement>(null);
-	const vehicleRef = useRef<HTMLDivElement>(null);
+	const transporterRef = useRef<HTMLDivElement>(null);
+	const expenseForRef = useRef<HTMLDivElement>(null);
+	const entityRef = useRef<HTMLDivElement>(null);
 	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
 	useCloseDetailsOnOutsideClick(columnVisibilityRef);
 	const [search, setSearch] = useState("");
@@ -179,14 +194,25 @@ export default function ExpenseReport() {
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [selectedClient, setSelectedClient] = useState("");
-	const [selectedVehicle, setSelectedVehicle] = useState("");
+	const [selectedTransporter, setSelectedTransporter] = useState("");
+	const [selectedExpenseFor, setSelectedExpenseFor] = useState<ExpenseFor | "">("");
+	const [selectedEntity, setSelectedEntity] = useState("");
+	const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
 	const [clientQuery, setClientQuery] = useState("");
-	const [vehicleQuery, setVehicleQuery] = useState("");
+	const [transporterQuery, setTransporterQuery] = useState("");
+	const [expenseForQuery, setExpenseForQuery] = useState("");
+	const [entityQuery, setEntityQuery] = useState("");
 	const [showForm, setShowForm] = useState(false);
 	const [editing, setEditing] = useState<ExpenseRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<ExpenseRecord | null>(null);
+
+	const { data: transporterMaster = [], isFetching: transportersFetching } = useGetTransporterMasterQuery(
+		selectedClient ? { client: selectedClient } : undefined,
+		{ skip: !selectedClient },
+	);
 
 	useEffect(() => {
 		if (!isError) return;
@@ -231,8 +257,17 @@ export default function ExpenseReport() {
 		[clientMaster, expenseData, expenseTypeMaster, transporterMaster],
 	);
 	const clients = clientMaster;
-	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
-	/** Filters (client/vehicle/from/to) are applied via `/expense/getAll` params; only text search stays client-side. */
+	const orderedColumns = useMemo(() => {
+		const leadKeys = selectedExpenseFor ? expenseForLeadColumns[selectedExpenseFor] : [];
+		const sn = columns.find((column) => column.key === "sn");
+		const lead = leadKeys
+			.map((key) => columns.find((column) => column.key === key))
+			.filter((column): column is (typeof columns)[number] => Boolean(column));
+		const rest = columns.filter((column) => column.key !== "sn" && !leadKeys.includes(column.key));
+		return sn ? [sn, ...lead, ...rest] : [...lead, ...rest];
+	}, [selectedExpenseFor]);
+	const visibleColumns = orderedColumns.filter((column) => !hiddenColumns.includes(column.key));
+	/** Filters are applied via `/expense/getAll` params; only text search stays client-side. */
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
 		if (!query) return rows;
@@ -240,6 +275,7 @@ export default function ExpenseReport() {
 			const haystack = [
 				row.vehicleNo,
 				row.driverName,
+				row.tripName,
 				row.expenseTypeName,
 				row.expenseName,
 				row.amount,
@@ -258,20 +294,75 @@ export default function ExpenseReport() {
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
 	const visibleClients = clients.filter((option) => option.name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+	const visibleTransporters = transporterMaster.filter((option) =>
+		option.name.toLowerCase().includes(transporterQuery.trim().toLowerCase()),
+	);
+	const visibleExpenseForOptions = expenseForOptions
+		.map((option) => ({ id: option.value, name: option.label }))
+		.filter((option) => option.name.toLowerCase().includes(expenseForQuery.trim().toLowerCase()));
+
 	const vehicleOptions = useMemo(() => {
-		const fromMaster = vehicleMaster.map((option) => option.name).filter(Boolean);
-		const fromRows = rows.map((row) => row.vehicleNo).filter(Boolean);
-		return [...new Set([...fromMaster, ...fromRows])].sort((a, b) => a.localeCompare(b));
-	}, [rows, vehicleMaster]);
-	const visibleVehicles = vehicleOptions
-		.map((name) => ({ id: name, name }))
-		.filter((option) => option.name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
+		if (!selectedTransporter) return [];
+		return vehicleMaster.filter((item) => {
+			const clientOk = !selectedClient || !item.clientId || item.clientId === selectedClient;
+			return clientOk && item.transporterId === selectedTransporter;
+		});
+	}, [selectedClient, selectedTransporter, vehicleMaster]);
+
+	const driverOptions = useMemo<MasterOption[]>(
+		() =>
+			driverDetails
+				.filter((driver) => {
+					if (selectedClient && driver.client && driver.client !== selectedClient) return false;
+					if (selectedTransporter && driver.transporter && driver.transporter !== selectedTransporter) return false;
+					return true;
+				})
+				.map((driver) => ({
+					id: driver.externalId,
+					externalId: driver.externalId,
+					name: `${driver.firstName} ${driver.lastName}`.trim() || driver.externalId,
+				})),
+		[driverDetails, selectedClient, selectedTransporter],
+	);
+
+	const tripOptions = useMemo(() => {
+		const names = rows.map((row) => row.tripName).filter(Boolean);
+		return [...new Set(names)].sort((a, b) => a.localeCompare(b)).map((name) => ({ id: name, name }));
+	}, [rows]);
+
+	const entityOptions = useMemo(() => {
+		if (selectedExpenseFor === ExpenseFor.DRIVER_WISE) return driverOptions;
+		if (selectedExpenseFor === ExpenseFor.TRIP_WISE) return tripOptions;
+		return [];
+	}, [driverOptions, selectedExpenseFor, tripOptions]);
+
+	const visibleEntities = entityOptions.filter((option) =>
+		option.name.toLowerCase().includes(entityQuery.trim().toLowerCase()),
+	);
+
+	const entityPlaceholder =
+		selectedExpenseFor === ExpenseFor.DRIVER_WISE
+			? "Select Driver"
+			: selectedExpenseFor === ExpenseFor.TRIP_WISE
+				? "Select Trip"
+				: "Select";
+
+	const showVehicleFilter = selectedExpenseFor === ExpenseFor.VEHICLE_WISE;
+	const showEntityFilter =
+		selectedExpenseFor === ExpenseFor.DRIVER_WISE || selectedExpenseFor === ExpenseFor.TRIP_WISE;
 
 	useEffect(() => {
 		if (!openMenu) return;
 		const onPointer = (event: MouseEvent) => {
 			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : vehicleRef;
+			const menuRef =
+				openMenu === "client"
+					? clientRef
+					: openMenu === "transporter"
+						? transporterRef
+						: openMenu === "expenseFor"
+							? expenseForRef
+							: entityRef;
 			if (!menuRef.current?.contains(target)) setOpenMenu(null);
 		};
 		const onKey = (event: KeyboardEvent) => {
@@ -285,14 +376,69 @@ export default function ExpenseReport() {
 		};
 	}, [openMenu]);
 
+	useEffect(() => {
+		if (!selectedTransporter) return;
+		if (transporterMaster.some((item) => item.id === selectedTransporter)) return;
+		setSelectedTransporter("");
+		setSelectedExpenseFor("");
+		setSelectedEntity("");
+		setSelectedVehicles([]);
+	}, [selectedTransporter, transporterMaster]);
+
+	useEffect(() => {
+		if (!selectedEntity) return;
+		if (entityOptions.some((item) => item.id === selectedEntity)) return;
+		setSelectedEntity("");
+	}, [entityOptions, selectedEntity]);
+
+	useEffect(() => {
+		if (selectedVehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = selectedVehicles.filter((id) => allowed.has(id));
+		if (next.length !== selectedVehicles.length) setSelectedVehicles(next);
+	}, [selectedVehicles, vehicleOptions]);
+
+	const onClientChange = (next: string) => {
+		setSelectedClient(next);
+		setSelectedTransporter("");
+		setSelectedExpenseFor("");
+		setSelectedEntity("");
+		setSelectedVehicles([]);
+		setOpenMenu(null);
+		setClientQuery("");
+	};
+
+	const onTransporterChange = (next: string) => {
+		setSelectedTransporter(next);
+		setSelectedExpenseFor("");
+		setSelectedEntity("");
+		setSelectedVehicles([]);
+		setOpenMenu(null);
+		setTransporterQuery("");
+	};
+
+	const onExpenseForChange = (next: string) => {
+		setSelectedExpenseFor((next as ExpenseFor) || "");
+		setSelectedEntity("");
+		setSelectedVehicles([]);
+		setOpenMenu(null);
+		setExpenseForQuery("");
+	};
+
 	const buildListParams = (): ExpenseListParams => {
-		/** Vehicle dropdown stores plate/name as id — map to master UUID when available. */
-		const vehicleId =
-			vehicleMaster.find((option) => option.id === selectedVehicle || option.name === selectedVehicle)?.id ||
-			selectedVehicle;
+		const vehicleParam =
+			selectedExpenseFor === ExpenseFor.VEHICLE_WISE && selectedVehicles.length > 0
+				? selectedVehicles.join(",")
+				: "";
+		const driverId = selectedExpenseFor === ExpenseFor.DRIVER_WISE ? selectedEntity : "";
+		const tripId = selectedExpenseFor === ExpenseFor.TRIP_WISE ? selectedEntity : "";
 		return {
 			...(selectedClient ? { client: selectedClient } : {}),
-			...(vehicleId ? { vehicle: vehicleId } : {}),
+			...(selectedTransporter ? { transporter: selectedTransporter } : {}),
+			...(selectedExpenseFor ? { expenseFor: selectedExpenseFor } : {}),
+			...(vehicleParam ? { vehicle: vehicleParam } : {}),
+			...(driverId ? { driver: driverId } : {}),
+			...(tripId ? { trip: tripId } : {}),
 			...(from ? { from: toIsoExpenseDate(from) } : {}),
 			...(to ? { to: toIsoExpenseDate(to) } : {}),
 		};
@@ -351,11 +497,12 @@ export default function ExpenseReport() {
 		}
 	};
 
-	const removeExpense = async (row: ExpenseRecord) => {
-		if (!window.confirm("Delete this expense?")) return;
+	const confirmDelete = async () => {
+		if (!pendingDelete) return;
 		try {
-			await deleteExpense(row.externalId).unwrap();
+			await deleteExpense(pendingDelete.externalId).unwrap();
 			toast.success("Expense deleted.");
+			setPendingDelete(null);
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Could not delete the expense."));
 		}
@@ -372,16 +519,42 @@ export default function ExpenseReport() {
 		options: { id: string; name: string }[],
 		query: string,
 		setQuery: (value: string) => void,
+		disabled = false,
 	) => (
 		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[220px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={`flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`}>
-				<span className={`truncate ${selected ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{selected ? optionLabel(selected, options, selected) : emptyLabel}</span>
+			<button
+				type="button"
+				aria-expanded={openMenu === kind}
+				aria-haspopup="listbox"
+				aria-label={emptyLabel}
+				disabled={disabled}
+				onClick={() => {
+					if (disabled) return;
+					setOpenMenu((current) => (current === kind ? null : kind));
+				}}
+				className={`flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition disabled:cursor-not-allowed disabled:opacity-50 ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`}
+			>
+				<span className={`truncate ${selected ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>
+					{selected
+						? optionLabel(
+								selected,
+								options.length ? options : expenseForOptions.map((o) => ({ id: o.value, name: o.label })),
+								selected,
+							)
+						: emptyLabel}
+				</span>
 				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
 			</button>
-			{openMenu === kind && (
+			{openMenu === kind && !disabled && (
 				<div className={menuClass}>
 					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
+						<input
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							aria-label={`Search ${emptyLabel}`}
+							autoFocus
+							className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`}
+						/>
 					</div>
 					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
 						{options.map((option) => {
@@ -421,6 +594,18 @@ export default function ExpenseReport() {
 
 	const cell = (key: ColumnKey, row: ExpenseRecord, serial: number) => {
 		if (key === "sn") return String(serial).padStart(2, "0");
+		if (key === "vehicleNo" || key === "driverName" || key === "tripName") {
+			const value = row[key];
+			const isLead =
+				(selectedExpenseFor === ExpenseFor.VEHICLE_WISE && key === "vehicleNo") ||
+				(selectedExpenseFor === ExpenseFor.DRIVER_WISE && key === "driverName") ||
+				(selectedExpenseFor === ExpenseFor.TRIP_WISE && key === "tripName");
+			return (
+				<span className={isLead ? `font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}` : undefined}>
+					{textValue(value)}
+				</span>
+			);
+		}
 		if (key === "expenseType" || key === "expenseName") {
 			const value = key === "expenseType"
 				? row.expenseTypeName || expenseTypeMaster.find((option) => option.id === row.expenseType)?.name || row.expenseType
@@ -437,7 +622,7 @@ export default function ExpenseReport() {
 		}
 		if (key === "delete") {
 			return (
-				<button type="button" onClick={() => void removeExpense(row)} aria-label={`Delete expense ${row.expenseName || row.externalId}`} className={`rounded-md p-1.5 transition ${isDark ? "text-slate-400 hover:bg-rose-400/[0.10] hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}>
+				<button type="button" onClick={() => setPendingDelete(row)} disabled={isDeleting && pendingDelete?.externalId === row.externalId} aria-label={`Delete expense ${row.expenseName || row.externalId}`} className={`rounded-md p-1.5 transition disabled:opacity-50 ${isDark ? "text-slate-400 hover:bg-rose-400/[0.10] hover:text-rose-200" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`}>
 					<Trash2 className="h-3.5 w-3.5" />
 				</button>
 			);
@@ -468,12 +653,17 @@ export default function ExpenseReport() {
 							const range = todayRange();
 							setSearch("");
 							setSelectedClient("");
-							setSelectedVehicle("");
+							setSelectedTransporter("");
+							setSelectedExpenseFor("");
+							setSelectedEntity("");
+							setSelectedVehicles([]);
 							setFrom(range.from);
 							setTo(range.to);
 							setListParams(undefined);
 							setClientQuery("");
-							setVehicleQuery("");
+							setTransporterQuery("");
+							setExpenseForQuery("");
+							setEntityQuery("");
 							setOpenMenu(null);
 							setPage(0);
 							void refetch();
@@ -488,8 +678,74 @@ export default function ExpenseReport() {
 
 				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{singleSelect("client", clientRef, "Select Client", selectedClient, setSelectedClient, visibleClients, clientQuery, setClientQuery)}
-						{singleSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicle, setSelectedVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
+						{singleSelect("client", clientRef, "Select Client", selectedClient, onClientChange, visibleClients, clientQuery, setClientQuery)}
+						{singleSelect(
+							"transporter",
+							transporterRef,
+							!selectedClient
+								? "Select Transporter"
+								: transportersFetching
+									? "Loading transporters…"
+									: transporterMaster.length === 0
+										? "No transporters"
+										: "Select Transporter",
+							selectedTransporter,
+							onTransporterChange,
+							visibleTransporters,
+							transporterQuery,
+							setTransporterQuery,
+							!selectedClient || transportersFetching,
+						)}
+						{singleSelect(
+							"expenseFor",
+							expenseForRef,
+							"Select",
+							selectedExpenseFor,
+							onExpenseForChange,
+							visibleExpenseForOptions,
+							expenseForQuery,
+							setExpenseForQuery,
+							!selectedTransporter,
+						)}
+						{showVehicleFilter && (
+							<VehicleMultiSelect
+								id="expense-report-vehicle"
+								options={vehicleOptions}
+								values={selectedVehicles}
+								onValuesChange={setSelectedVehicles}
+								disabled={!selectedTransporter}
+								placeholder={
+									!selectedTransporter
+										? "Select Vehicle"
+										: vehicleOptions.length === 0
+											? "No vehicles"
+											: "Select Vehicle"
+								}
+								emptyText="No vehicles"
+								isDark={isDark}
+								compact
+							/>
+						)}
+						{showEntityFilter &&
+							singleSelect(
+								"entity",
+								entityRef,
+								!selectedTransporter
+									? entityPlaceholder
+									: entityOptions.length === 0
+										? `No ${entityPlaceholder.replace("Select ", "").toLowerCase()}s`
+										: entityPlaceholder,
+								selectedEntity,
+								(next) => {
+									setSelectedEntity(next);
+									setOpenMenu(null);
+									setEntityQuery("");
+								},
+								visibleEntities,
+								entityQuery,
+								setEntityQuery,
+								!selectedTransporter,
+							)}
 						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[360px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
 							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 							<span className="text-slate-500">-</span>
@@ -520,7 +776,7 @@ export default function ExpenseReport() {
 									<ChevronDown className="h-3 w-3 text-slate-500" />
 								</summary>
 								<div className={`absolute right-0 top-11 z-30 max-h-52 w-56 overflow-y-auto rounded-xl border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-									{columns.map((column) => (
+									{orderedColumns.map((column) => (
 										<label key={column.key} className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-xs ${isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
 											<input type="checkbox" checked={!hiddenColumns.includes(column.key)} onChange={() => setHiddenColumns((current) => (current.includes(column.key) ? current.filter((item) => item !== column.key) : [...current, column.key]))} className="h-3.5 w-3.5 accent-cyan-300" />
 											{column.label}
@@ -601,6 +857,22 @@ export default function ExpenseReport() {
 					</footer>
 				</section>
 			</main>
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete expense?"
+				entityName={
+					pendingDelete?.expenseName ||
+					pendingDelete?.expenseTypeName ||
+					pendingDelete?.vehicleNo ||
+					"this expense"
+				}
+				isSubmitting={isDeleting}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDelete()}
+				titleId="expense-delete-title"
+			/>
 
 			{showForm && (
 				<AddExpense

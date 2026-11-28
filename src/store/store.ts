@@ -26,6 +26,7 @@ import "./services/api/AnalyticsDashboard";
 import "./services/api/DriverAssignmentReport";
 import "./services/api/DistanceReport";
 import "./services/api/IdleSummaryReport";
+import "./services/api/GeofenceReport";
 import "./services/api/SensorReport";
 import "./services/api/SendCommandLogReport";
 import "./services/api/RideReport";

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useTheme } from "next-themes";
 import { X } from "lucide-react";
 import { useGetClientMasterQuery, useGetTransporterMasterQuery } from "@/store/services/api/Master";
@@ -19,10 +19,19 @@ export function ChangeVehicleClientDialog({
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
-	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery();
 	const [vehicle, setVehicle] = useState(vehicleNo === "—" ? "" : vehicleNo);
 	const [client, setClient] = useState(clientId);
 	const [transporter, setTransporter] = useState(transporterId);
+	const { data: transporters = [], isLoading: transportersLoading } = useGetTransporterMasterQuery(
+		client ? { client } : undefined,
+		{ skip: !client },
+	);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+	}, [transporter, transporters]);
 
 	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -108,7 +117,10 @@ export function ChangeVehicleClientDialog({
 							<select
 								required
 								value={client}
-								onChange={(event) => setClient(event.target.value)}
+								onChange={(event) => {
+									setClient(event.target.value);
+									setTransporter("");
+								}}
 								disabled={clientsLoading}
 								className={`${inputClass} appearance-none pr-9`}
 							>
@@ -134,10 +146,16 @@ export function ChangeVehicleClientDialog({
 								required
 								value={transporter}
 								onChange={(event) => setTransporter(event.target.value)}
-								disabled={transportersLoading}
+								disabled={!client || transportersLoading}
 								className={`${inputClass} appearance-none pr-9`}
 							>
-								<option value="">Select Transporter</option>
+								<option value="">
+									{!client
+										? "Select Transporter"
+										: transportersLoading
+											? "Loading transporters…"
+											: "Select Transporter"}
+								</option>
 								{transporters.map((option) => (
 									<option key={option.id} value={option.id}>
 										{option.name}

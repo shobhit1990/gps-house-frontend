@@ -3,6 +3,7 @@ import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, LoaderCircle, Pencil, Plus, Power, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddDriverDetailForm, type DriverDetailFormValues } from "@/components/VehicleForm/AddDriverDetailForm";
 import { UploadDriverForm, type UploadDriverValues } from "@/components/VehicleForm/UploadDriverForm";
@@ -109,7 +110,7 @@ const toDriverRecord = (driver: DriverDetail, transporterName: string): DriverRe
 	id: driver.externalId,
 	name: `${driver.firstName} ${driver.lastName}`.trim(),
 	transporter: transporterName || driver.transporterName || driver.transporter,
-	vehicle: driver.deviceId ?? "",
+	vehicle: driver.vehicleName || driver.vehicle || driver.deviceId || "",
 	active: String(driver.status ?? "").trim().toLowerCase() === Status.ACTIVE,
 	assigned: false,
 	joiningDate: driver.dateOfJoining ?? "",
@@ -144,7 +145,7 @@ export default function DriverDetails() {
 	const [updateDriverDetailStatus, { isLoading: isUpdatingDriverStatus }] =
 		useUpdateDriverDetailStatusMutation();
 	const isUpdatingStatus = isUpdatingDriver || isUpdatingDriverStatus;
-	const [deleteDriverDetail] = useDeleteDriverDetailMutation();
+	const [deleteDriverDetail, { isLoading: isDeleting }] = useDeleteDriverDetailMutation();
 	const [getDriverDetailById] = useLazyGetDriverDetailByIdQuery();
 	const [uploadedRows, setUploadedRows] = useState<DriverRecord[]>([]);
 	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
@@ -157,6 +158,7 @@ export default function DriverDetails() {
 	const [showUploadDialog, setShowUploadDialog] = useState(false);
 	const [editingDriver, setEditingDriver] = useState<DriverDetail | undefined>();
 	const [pendingStatusDriver, setPendingStatusDriver] = useState<DriverRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<DriverRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.ACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const transporterNames = useMemo(
@@ -205,6 +207,7 @@ export default function DriverDetails() {
 		const body: CreateDriverDetailRequest = {
 			client: values.client,
 			transporter: values.transporter,
+			...(values.vehicle ? { vehicle: values.vehicle } : {}),
 			firstName: values.firstName,
 			lastName: values.lastName,
 			deviceId: values.deviceId,
@@ -358,14 +361,19 @@ export default function DriverDetails() {
 		}
 	};
 
-	const removeDriver = async (id: string) => {
+	const confirmDelete = async () => {
+		if (!pendingDelete) return;
+		const id = pendingDelete.id;
 		if (id.startsWith("upload-")) {
 			setUploadedRows((current) => current.filter((row) => row.id !== id));
+			toast.success("Driver removed.");
+			setPendingDelete(null);
 			return;
 		}
 		try {
 			await deleteDriverDetail(id).unwrap();
 			toast.success("Driver details deleted.");
+			setPendingDelete(null);
 		} catch (error) {
 			toast.error(apiErrorMessage(error, "Unable to delete driver details."));
 		}
@@ -536,7 +544,8 @@ export default function DriverDetails() {
 													type="button"
 													aria-label={`Delete ${row.name}`}
 													title="Delete"
-													onClick={() => void removeDriver(row.id)}
+													onClick={() => setPendingDelete(row)}
+													disabled={isDeleting && pendingDelete?.id === row.id}
 													className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isDark ? "border-rose-300/20 bg-rose-300/[0.08] text-rose-200 hover:bg-rose-300/[0.14]" : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}
 												>
 													<Trash2 className="h-3.5 w-3.5" />
@@ -599,6 +608,17 @@ export default function DriverDetails() {
 				/>
 			)}
 			{showUploadDialog && <UploadDriverForm onClose={() => setShowUploadDialog(false)} onSubmit={uploadDrivers} />}
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete driver?"
+				entityName={pendingDelete?.name || "this driver"}
+				isSubmitting={isDeleting}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDelete()}
+				titleId="driver-delete-title"
+			/>
 
 			{pendingStatusDriver ? (
 				<div className="fixed inset-0 z-[820] flex items-center justify-center p-4">
