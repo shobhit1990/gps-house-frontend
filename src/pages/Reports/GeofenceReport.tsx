@@ -1,43 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
+import type { GeofenceReportRow } from "@/interfaces/GeofenceReport";
+import { apiErrorMessage } from "@/lib/apiErrorMessage";
+import { useLazyGetGeofenceReportQuery } from "@/store/services/api/GeofenceReport";
 import {
 	useGetClientMasterQuery,
 	useGetTransporterMasterQuery,
 	useGetVehicleMasterQuery,
 } from "@/store/services/api/Master";
 import { Duration } from "@/enums/duration";
-type GeofenceReportRecord = {
-	id: number;
-	client: string;
-	transporter: string;
-	vehicle: string;
-	geoName: string;
-	inTime: string;
-	outTime: string;
-	inLoc: string;
-	outLoc: string;
-	haltTime: string;
-	distance: string;
-	reportType: string;
-	remark: string;
-};
 
 type ColumnKey = "sn" | "vehicle" | "geoName" | "inTime" | "outTime" | "inLoc" | "outLoc" | "haltTime" | "distance" | "reportType" | "remark";
-
-type MenuKind = "client" | "transporter" | "vehicle" | "duration";
-
-type AppliedFilters = {
-	client: string;
-	transporter: string;
-	vehicle: string;
-	duration: string;
-	from: string;
-	to: string;
-};
 
 const columns: { key: ColumnKey; label: string }[] = [
 	{ key: "sn", label: "SN" },
@@ -67,212 +46,213 @@ const todayRange = () => {
 	return { from: toInput(now, false), to: toInput(now, true) };
 };
 
-const haltMinutes = (value: string) => {
-	const clock = value.trim().match(/^(\d+):(\d+)(?::(\d+))?$/);
-	if (clock) return Number(clock[1]) * 60 + Number(clock[2]) + (clock[3] ? Number(clock[3]) / 60 : 0);
-	const minutes = value.match(/(\d+(?:\.\d+)?)/);
-	return minutes ? Number(minutes[1]) : Number.NaN;
-};
-
-const matchesDuration = (haltTime: string, duration: string) => {
-	if (!duration || duration === Duration.ALL) return true;
-	const minutes = haltMinutes(haltTime);
-	if (Number.isNaN(minutes)) return false;
-	if (duration === Duration.LESS_THAN_5_MINUTES) return minutes < 5;
-	if (duration === Duration.GREATER_THAN_5_AND_LESS_THAN_10_MINUTES) return minutes > 5 && minutes < 10;
-	if (duration === Duration.GREATER_THAN_10_AND_LESS_THAN_30_MINUTES) return minutes > 10 && minutes < 30;
-	if (duration === Duration.MORE_THAN_1_HOUR) return minutes > 60;
-	return true;
+/** datetime-local → API `YYYY-MM-DDTHH:mm:ss` */
+const toApiDateTime = (value: string) => {
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) return trimmed.slice(0, 19);
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) return `${trimmed}:00`;
+	return trimmed;
 };
 
 const textValue = (value: string) => (value.trim() ? value : "—");
 
 export default function GeofenceReport() {
-	const { data: clientMaster = [] } = useGetClientMasterQuery();
-	const clients = clientMaster.map((client) => client.name).filter(Boolean);
-	const { data: transporterMaster = [] } = useGetTransporterMasterQuery();
-	const transporters = transporterMaster.map((transporter) => transporter.name).filter(Boolean);
-	const { data: vehicleMaster = [] } = useGetVehicleMasterQuery();
-	const vehicleOptions = vehicleMaster.map((vehicle) => vehicle.name).filter(Boolean);
+	const { data: clients = [], isLoading: clientsLoading } = useGetClientMasterQuery();
+	const { data: allVehicles = [], isLoading: vehiclesLoading } = useGetVehicleMasterQuery();
+	const [fetchGeofenceReport, { isFetching }] = useLazyGetGeofenceReportQuery();
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
 	const initialRange = todayRange();
-	const clientRef = useRef<HTMLDivElement>(null);
-	const transporterRef = useRef<HTMLDivElement>(null);
-	const vehicleRef = useRef<HTMLDivElement>(null);
-	const durationRef = useRef<HTMLDivElement>(null);
 	const columnVisibilityRef = useRef<HTMLDetailsElement>(null);
 	useCloseDetailsOnOutsideClick(columnVisibilityRef);
-	const [rows] = useState<GeofenceReportRecord[]>([]);
+
+	const [rows, setRows] = useState<GeofenceReportRow[]>([]);
+	const [searched, setSearched] = useState(false);
 	const [search, setSearch] = useState("");
 	const [pageSize, setPageSize] = useState(10);
 	const [page, setPage] = useState(0);
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
-	const [selectedClient, setSelectedClient] = useState("");
-	const [selectedTransporter, setSelectedTransporter] = useState("");
-	const [selectedVehicle, setSelectedVehicle] = useState("");
+	const [client, setClient] = useState("");
+	const [transporter, setTransporter] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [duration, setDuration] = useState(Duration.ALL);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
-	const [applied, setApplied] = useState<AppliedFilters>({
-		client: "",
-		transporter: "",
-		vehicle: "",
-		duration: Duration.ALL,
-		from: initialRange.from,
-		to: initialRange.to,
-	});
-	const [openMenu, setOpenMenu] = useState<MenuKind | null>(null);
-	const [clientQuery, setClientQuery] = useState("");
-	const [transporterQuery, setTransporterQuery] = useState("");
-	const [vehicleQuery, setVehicleQuery] = useState("");
-	const [durationQuery, setDurationQuery] = useState("");
+
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+
+	const vehicleOptions = useMemo(() => {
+		if (!client || !transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
+		});
+	}, [allVehicles, client, transporter]);
+
+	useEffect(() => {
+		if (!transporter) return;
+		if (transporters.some((item) => item.id === transporter)) return;
+		setTransporter("");
+		setVehicles([]);
+	}, [transporter, transporters]);
+
+	useEffect(() => {
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
-		const fromTime = applied.from ? new Date(applied.from).getTime() : Number.NEGATIVE_INFINITY;
-		const toTime = applied.to ? new Date(applied.to).getTime() : Number.POSITIVE_INFINITY;
+		if (!searched) return [];
 		const query = search.trim().toLowerCase();
-		return rows.filter((row, index) => {
-			if (applied.client && row.client !== applied.client) return false;
-			if (applied.transporter && row.transporter !== applied.transporter) return false;
-			if (applied.vehicle && row.vehicle !== applied.vehicle) return false;
-			if (!matchesDuration(row.haltTime, applied.duration)) return false;
-			const inTime = new Date(row.inTime).getTime();
-			if (!Number.isNaN(inTime) && (inTime < fromTime || inTime > toTime)) return false;
-			if (!query) return true;
-			return [String(index + 1), row.vehicle, row.geoName, row.inTime, row.outTime, row.inLoc, row.outLoc, row.haltTime, row.distance, row.reportType, row.remark].join(" ").toLowerCase().includes(query);
-		});
-	}, [applied, rows, search]);
+		if (!query) return rows;
+		return rows.filter((row) =>
+			[
+				row.vehicle,
+				row.geoName,
+				row.inTime,
+				row.outTime,
+				row.inLoc,
+				row.outLoc,
+				row.haltTime,
+				row.distance,
+				row.reportType,
+				row.remark,
+			]
+				.join(" ")
+				.toLowerCase()
+				.includes(query),
+		);
+	}, [rows, search, searched]);
 	const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 	const safePage = Math.min(page, pageCount - 1);
 	const pageRows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
-	const visibleClients = clients.filter((name) => name.toLowerCase().includes(clientQuery.trim().toLowerCase()));
-	const visibleTransporters = transporters.filter((name) => name.toLowerCase().includes(transporterQuery.trim().toLowerCase()));
-	const visibleVehicles = vehicleOptions.filter((name) => name.toLowerCase().includes(vehicleQuery.trim().toLowerCase()));
-	const visibleDurations = durations.filter((name) => name.toLowerCase().includes(durationQuery.trim().toLowerCase()));
 
-	useEffect(() => {
-		if (!openMenu) return;
-		const onPointer = (event: MouseEvent) => {
-			const target = event.target as Node;
-			const menuRef = openMenu === "client" ? clientRef : openMenu === "transporter" ? transporterRef : openMenu === "vehicle" ? vehicleRef : durationRef;
-			if (!menuRef.current?.contains(target)) setOpenMenu(null);
-		};
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setOpenMenu(null);
-		};
-		document.addEventListener("mousedown", onPointer);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onPointer);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, [openMenu]);
+	const selectClass = `h-10 w-full appearance-none rounded-lg border px-3 pr-9 text-xs outline-none transition ${
+		isDark
+			? "border-white/[0.08] bg-[#03091c]/70 text-slate-200 focus:border-cyan-300/35 [color-scheme:dark]"
+			: "border-slate-200 bg-white text-slate-800 focus:border-cyan-400 [color-scheme:light]"
+	}`;
 
-	const applyFilters = () => {
-		setApplied({
-			client: selectedClient,
-			transporter: selectedTransporter,
-			vehicle: selectedVehicle,
-			duration,
-			from,
-			to,
-		});
-		setOpenMenu(null);
-		setPage(0);
+	const onClientChange = (next: string) => {
+		setClient(next);
+		setTransporter("");
+		setVehicles([]);
 	};
 
-	const menuClass = `absolute left-0 top-12 z-40 w-full min-w-[220px] overflow-hidden rounded-xl border shadow-[0_18px_40px_rgba(0,0,0,0.4)] ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`;
-	const controlClass = `flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs outline-none transition ${isDark ? "border-white/[0.08] bg-[#03091c]/65 text-slate-300 hover:border-cyan-300/35" : "border-slate-200 bg-white text-slate-700 hover:border-cyan-400"}`;
+	const onTransporterChange = (next: string) => {
+		setTransporter(next);
+		setVehicles([]);
+	};
 
-	const singleSelect = (
-		kind: MenuKind,
-		ref: RefObject<HTMLDivElement | null>,
-		emptyLabel: string,
-		selected: string,
-		setSelected: (next: string) => void,
-		options: string[],
-		query: string,
-		setQuery: (value: string) => void,
-	) => (
-		<div ref={ref} className="relative min-w-0 flex-1 sm:max-w-[190px]">
-			<button type="button" aria-expanded={openMenu === kind} aria-haspopup="listbox" aria-label={emptyLabel} onClick={() => setOpenMenu((current) => (current === kind ? null : kind))} className={controlClass}>
-				<span className={`truncate ${selected ? "" : isDark ? "text-slate-500" : "text-slate-400"}`}>{selected || emptyLabel}</span>
-				<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === kind ? "rotate-180" : ""}`} />
-			</button>
-			{openMenu === kind && (
-				<div className={menuClass}>
-					<div className="p-2">
-						<input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={`Search ${emptyLabel}`} className={`h-9 w-full rounded-md border px-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
-					</div>
-					<ul role="listbox" aria-label={emptyLabel} className="max-h-48 overflow-y-auto p-1">
-						{options.map((name) => {
-							const isSelected = selected === name;
-							return (
-								<li key={name}>
-									<button
-										type="button"
-										role="option"
-										aria-selected={isSelected}
-										onClick={() => {
-											setSelected(name);
-											setOpenMenu(null);
-											setQuery("");
-										}}
-										className={`w-full rounded-md px-2.5 py-2 text-left text-xs ${
-											isSelected
-												? isDark
-													? "bg-cyan-300/[0.16] text-cyan-50"
-													: "bg-cyan-50 text-cyan-800"
-												: isDark
-													? "text-slate-300 hover:bg-white/[0.04]"
-													: "text-slate-700 hover:bg-slate-100"
-										}`}
-									>
-										{name}
-									</button>
-								</li>
-							);
-						})}
-						{options.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
-					</ul>
-				</div>
-			)}
-		</div>
-	);
+	const applyFilters = async () => {
+		if (!client || !transporter || vehicles.length === 0) {
+			toast.error("Select client, transporter, and at least one vehicle.");
+			return;
+		}
+		if (!from || !to) {
+			toast.error("Select from and to date.");
+			return;
+		}
 
-	const cell = (key: ColumnKey, row: GeofenceReportRecord, serial: number) => {
-		if (key === "sn") return String(serial).padStart(2, "0");
-		if (key === "vehicle" || key === "geoName") return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
-		return textValue(row[key]);
+		const vehicleParam = vehicles.join(",");
+		try {
+			const data = await fetchGeofenceReport({
+				client,
+				transporter,
+				vehicle: vehicleParam,
+				duration,
+				from: toApiDateTime(from),
+				to: toApiDateTime(to),
+			}).unwrap();
+			const vehicleName = vehicles
+				.map((id) => vehicleOptions.find((option) => option.id === id)?.name ?? id)
+				.join(", ");
+			const nextRows = data.map((row, index) => ({
+				...row,
+				id: row.id || `${vehicleParam}-${index}`,
+				vehicle: row.vehicle && row.vehicle !== "—" ? row.vehicle : vehicleName || row.vehicle,
+			}));
+			setRows(nextRows);
+			setSearched(true);
+			setPage(0);
+			if (nextRows.length === 0) {
+				toast.message("No geofence reports for this range.");
+			} else {
+				toast.success("Geofence report loaded");
+			}
+		} catch (error) {
+			toast.error(apiErrorMessage(error, "Could not load geofence report."));
+		}
 	};
 
 	const refresh = () => {
 		const range = todayRange();
+		setRows([]);
+		setSearched(false);
 		setSearch("");
-		setSelectedClient("");
-		setSelectedTransporter("");
-		setSelectedVehicle("");
+		setClient("");
+		setTransporter("");
+		setVehicles([]);
 		setDuration(Duration.ALL);
 		setFrom(range.from);
 		setTo(range.to);
-		setApplied({
-			client: "",
-			transporter: "",
-			vehicle: "",
-			duration: Duration.ALL,
-			from: range.from,
-			to: range.to,
-		});
-		setClientQuery("");
-		setTransporterQuery("");
-		setVehicleQuery("");
-		setDurationQuery("");
-		setOpenMenu(null);
+		setHiddenColumns([]);
 		setPage(0);
 		setPageSize(10);
+	};
+
+	const SelectField = ({
+		id,
+		label,
+		value,
+		onChange,
+		disabled,
+		placeholder,
+		options,
+	}: {
+		id: string;
+		label: string;
+		value: string;
+		onChange: (value: string) => void;
+		disabled?: boolean;
+		placeholder: string;
+		options: { id: string; name: string }[];
+	}) => (
+		<label className="relative block min-w-0 flex-1">
+			<span className="sr-only">{label}</span>
+			<select
+				id={id}
+				value={value}
+				disabled={disabled}
+				onChange={(event) => onChange(event.target.value)}
+				className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-55`}
+			>
+				<option value="">{placeholder}</option>
+				{options.map((option) => (
+					<option key={option.id} value={option.id}>
+						{option.name}
+					</option>
+				))}
+			</select>
+			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+		</label>
+	);
+
+	const cell = (key: ColumnKey, row: GeofenceReportRow, serial: number) => {
+		if (key === "sn") return String(row.sn || serial).padStart(2, "0");
+		if (key === "vehicle" || key === "geoName") {
+			return <span className={`font-semibold ${isDark ? "text-cyan-200" : "text-cyan-700"}`}>{textValue(row[key])}</span>;
+		}
+		return textValue(row[key]);
 	};
 
 	return (
@@ -290,54 +270,102 @@ export default function GeofenceReport() {
 							<Activity className="h-3.5 w-3.5" /> Reports
 						</p>
 						<h1 className={`text-xl font-semibold tracking-tight sm:text-2xl ${isDark ? "text-white" : "text-slate-900"}`}>Geofence Report</h1>
-						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>{rows.length} reports</p>
+						<p className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-slate-600"}`}>
+							{searched ? filteredRows.length : 0} reports
+						</p>
 					</div>
-					<button type="button" onClick={refresh} aria-label="Refresh geofence report" title="Refresh geofence report" className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}>
-						<RefreshCw className="h-4 w-4" />
+					<button
+						type="button"
+						onClick={refresh}
+						aria-label="Refresh geofence report"
+						title="Refresh geofence report"
+						className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${isDark ? "border-white/[0.09] bg-white/[0.035] text-slate-400 hover:border-cyan-200/20 hover:text-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:text-cyan-700"}`}
+					>
+						<RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
 					</button>
 				</section>
 
-				<section className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}>
-					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-						{singleSelect("client", clientRef, "Select Client", selectedClient, setSelectedClient, visibleClients, clientQuery, setClientQuery)}
-						{singleSelect("transporter", transporterRef, "Select Transporter", selectedTransporter, setSelectedTransporter, visibleTransporters, transporterQuery, setTransporterQuery)}
-						{singleSelect("vehicle", vehicleRef, "Select Vehicle", selectedVehicle, setSelectedVehicle, visibleVehicles, vehicleQuery, setVehicleQuery)}
-						<div ref={durationRef} className="relative min-w-0 flex-1 sm:max-w-[210px]">
-							<button type="button" aria-expanded={openMenu === "duration"} aria-haspopup="listbox" aria-label="Select Duration" onClick={() => setOpenMenu((current) => (current === "duration" ? null : "duration"))} className={controlClass}>
-								<span className={`truncate ${duration === Duration.ALL ? (isDark ? "text-slate-500" : "text-slate-400") : ""}`}>{duration === Duration.ALL ? "Select Duration" : duration}</span>
-								<ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${openMenu === "duration" ? "rotate-180" : ""}`} />
-							</button>
-							{openMenu === "duration" && (
-								<div className={`${menuClass} w-[260px]`}>
-									<div className="p-2">
-										<label className="relative block">
-											<Search className={`absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 ${isDark ? "text-slate-500" : "text-slate-400"}`} />
-											<input value={durationQuery} onChange={(event) => setDurationQuery(event.target.value)} aria-label="Search duration" className={`h-9 w-full rounded-md border pl-8 pr-3 text-xs outline-none ${isDark ? "border-white/[0.10] bg-[#03091c]/70 text-white focus:border-cyan-300/35" : "border-slate-200 bg-white text-slate-900 focus:border-cyan-400"}`} />
-										</label>
-									</div>
-									<ul role="listbox" aria-label="Select Duration" className="max-h-52 overflow-y-auto p-1">
-										{visibleDurations.map((item) => {
-											const selected = duration === item;
-											return (
-												<li key={item}>
-													<button type="button" role="option" aria-selected={selected} onClick={() => { setDuration(item); setOpenMenu(null); setDurationQuery(""); }} className={`w-full rounded-md px-2.5 py-2 text-left text-xs leading-5 transition ${selected ? (isDark ? "bg-cyan-300/[0.16] text-cyan-50" : "bg-cyan-50 text-cyan-800") : isDark ? "text-slate-300 hover:bg-white/[0.04]" : "text-slate-700 hover:bg-slate-100"}`}>
-														{item}
-													</button>
-												</li>
-											);
-										})}
-										{visibleDurations.length === 0 && <li className="px-2 py-3 text-center text-[11px] text-slate-500">Nothing found</li>}
-									</ul>
-								</div>
-							)}
-						</div>
-						<div className={`flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 sm:max-w-[340px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}>
+				<section
+					aria-label="Geofence report filters"
+					className={`mb-4 rounded-xl border p-3 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-4 ${isDark ? "border-white/[0.09] bg-gradient-to-br from-[#0b1835]/95 via-[#08142e]/95 to-[#10102d]/90" : "border-slate-200 bg-white/90"}`}
+				>
+					<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.3fr)_auto]">
+						<SelectField
+							id="geofence-client"
+							label="Client"
+							value={client}
+							onChange={onClientChange}
+							disabled={clientsLoading}
+							placeholder={clientsLoading ? "Loading clients…" : "Select Client"}
+							options={clients}
+						/>
+						<SelectField
+							id="geofence-transporter"
+							label="Transporter"
+							value={transporter}
+							onChange={onTransporterChange}
+							disabled={!client || transportersLoading || transportersFetching}
+							placeholder={
+								!client
+									? "Select Transporter"
+									: transportersLoading || transportersFetching
+										? "Loading transporters…"
+										: transporters.length === 0
+											? "No transporters"
+											: "Select Transporter"
+							}
+							options={transporters}
+						/>
+						<VehicleMultiSelect
+							id="geofence-vehicle"
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
+							disabled={!transporter || vehiclesLoading}
+							placeholder={
+								!transporter
+									? "Select Vehicle"
+									: vehiclesLoading
+										? "Loading vehicles…"
+										: vehicleOptions.length === 0
+											? "No vehicles"
+											: "Select Vehicle"
+							}
+							emptyText="No vehicles"
+							isDark={isDark}
+						/>
+						<label className="relative block min-w-0 flex-1">
+							<span className="sr-only">Duration</span>
+							<select
+								id="geofence-duration"
+								aria-label="Select Duration"
+								value={duration}
+								onChange={(event) => setDuration(event.target.value as Duration)}
+								className={selectClass}
+							>
+								<option value={Duration.ALL}>Select Duration</option>
+								{durations
+									.filter((item) => item !== Duration.ALL)
+									.map((item) => (
+										<option key={item} value={item}>
+											{item}
+										</option>
+									))}
+							</select>
+							<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+						</label>
+						<div className={`flex h-10 min-w-0 items-center gap-2 rounded-lg border px-2 ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}>
 							<input type="datetime-local" aria-label="From date" value={from} onChange={(event) => setFrom(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 							<span className="text-slate-500">-</span>
 							<input type="datetime-local" aria-label="To date" value={to} onChange={(event) => setTo(event.target.value)} className={`h-8 min-w-0 flex-1 bg-transparent text-[11px] outline-none ${isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700"}`} />
 						</div>
-						<button type="button" onClick={applyFilters} className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}>
-							Search
+						<button
+							type="button"
+							onClick={() => void applyFilters()}
+							disabled={isFetching}
+							className={`h-10 rounded-lg border px-5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${isDark ? "border-cyan-300/25 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]" : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"}`}
+						>
+							{isFetching ? "Searching…" : "Search"}
 						</button>
 					</div>
 				</section>
@@ -396,8 +424,18 @@ export default function GeofenceReport() {
 								{pageRows.length === 0 && (
 									<tr>
 										<td colSpan={visibleColumns.length} className="px-6 py-16 text-center">
-											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>No geofence reports available</p>
-											<p className="mt-1 text-xs text-slate-500">Change the filters or search to see reports.</p>
+											<p className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+												{isFetching
+													? "Loading geofence reports…"
+													: searched
+														? "No geofence reports available"
+														: "Select filters and search"}
+											</p>
+											<p className="mt-1 text-xs text-slate-500">
+												{searched
+													? "Change the filters or search to see reports."
+													: "Choose client, transporter, vehicle, and date range, then Search."}
+											</p>
 										</td>
 									</tr>
 								)}

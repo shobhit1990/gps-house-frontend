@@ -78,15 +78,29 @@ const normalizePoiRow = (record: PoiReportApiRecord, index: number): PoiReportRo
 		asText(record.poi) ||
 		"—";
 
+	const duration = formatDuration(record);
+	const visitCount = asNumber(
+		record.visits ?? record.visitCount ?? record.noOfVisits ?? record.numberOfVisits,
+	);
+	const stop =
+		asText(record.stop) ||
+		asText(record.stopTime) ||
+		(asNumber(record.stopMinutes) > 0
+			? formatDuration({ duration: record.stopMinutes } as PoiReportApiRecord)
+			: "") ||
+		duration;
+
 	return {
 		id: String(record.id ?? externalId),
 		externalId,
 		sn: asNumber(record.sn) || index + 1,
 		vehicle: vehicle || "—",
+		visits: visitCount > 0 ? visitCount : 1,
+		stop: stop || "—",
 		poiName,
 		inTime: asText(record.inTime ?? record.arrivalTime ?? record.startTime) || "—",
 		outTime: asText(record.outTime ?? record.departureTime ?? record.endTime) || "—",
-		duration: formatDuration(record),
+		duration,
 		location:
 			asText(record.location ?? record.address ?? record.inLoc ?? record.outLoc) || "—",
 		distance: asText(record.distance) || "—",
@@ -120,14 +134,15 @@ const unwrapPoiRows = (
 export const poiReportApi = api.injectEndpoints({
 	endpoints: (builder) => ({
 		getPoiReport: builder.query<PoiReportRow[], PoiReportParams>({
-			query: ({ type, filterType, transporter, group, vehicle, from, to }) => ({
+			query: ({ type, filterType, transporter, group, vehicle, geofence, from, to }) => ({
 				url: "/poi-report",
 				params: {
 					type,
 					filterType,
 					...(transporter ? { transporter } : {}),
 					...(group ? { group } : {}),
-					vehicle,
+					...(vehicle ? { vehicle } : {}),
+					...(geofence ? { geofence } : {}),
 					from,
 					to,
 				},

@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddExpenseTypeDialog } from "@/components/Master/AddExpenseType";
 import { useAuth } from "@/contexts/AuthContext";
@@ -138,7 +139,6 @@ export default function ExpenseTypePage() {
 		return `flex h-8 w-8 items-center justify-center rounded-lg border transition ${tones[tone]}`;
 	};
 
-	const isConfirming = isDeleting;
 
 	return (
 		<div className={`relative min-h-screen overflow-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -239,7 +239,7 @@ export default function ExpenseTypePage() {
 														<span className={`h-1.5 w-1.5 rounded-full ${item.status === Status.ACTIVE ? "bg-emerald-400" : "bg-rose-400"}`} />
 														{statusLabel(item.status)}
 													</span>
-												) : item.reason || "—"}
+												) : item.status === Status.INACTIVE ? item.reason || "—" : "—"}
 											</td>
 										))}
 										<td className="px-4 py-2.5">
@@ -280,23 +280,16 @@ export default function ExpenseTypePage() {
 				/>
 			)}
 
-			{pendingAction?.type === "delete" && (
-				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isConfirming) closeConfirm(); }}>
-					<section role="alertdialog" aria-modal="true" aria-labelledby="expense-type-confirm-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-						<h3 id="expense-type-confirm-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Delete expense type?</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{pendingAction.expenseType.expenseName}</strong>.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button type="button" onClick={closeConfirm} disabled={isConfirming} className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button type="button" onClick={() => void confirmDelete()} disabled={isConfirming} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}>
-								{isConfirming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			)}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={pendingAction?.type === "delete"}
+				title="Delete expense type?"
+				entityName={pendingAction?.expenseType.expenseName || "this expense type"}
+				isSubmitting={isDeleting}
+				onCancel={closeConfirm}
+				onConfirm={() => void confirmDelete()}
+				titleId="expense-type-confirm-title"
+			/>
 
 			<ChangeStatusDialog
 				isDark={isDark}

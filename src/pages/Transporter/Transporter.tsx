@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Columns3, FileDown, FileSpreadsheet, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -156,6 +157,7 @@ export default function Transporter() {
 		useUpdateTransporterStatusMutation();
 	const isUpdatingStatus = isUpdatingTransporter || isUpdatingStatusMutation;
 	const [pendingStatusTransporter, setPendingStatusTransporter] = useState<TransporterRecord | null>(null);
+	const [pendingDelete, setPendingDelete] = useState<TransporterRecord | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
 	const [statusReason, setStatusReason] = useState("");
 	const [clientFilter, setClientFilter] = useState("");
@@ -253,7 +255,8 @@ export default function Transporter() {
 				selectedTransporter?.id,
 				selectedTransporter?.externalId,
 				selectedTransporter?.name,
-				// entityMasterLabel is often "company (userName)" — also match bare username from table rows
+				// transporterMasterLabel is "username (company)" — also match bare username from table rows
+				selectedTransporter?.name?.match(/^([^(]+)/)?.[1],
 				selectedTransporter?.name?.match(/\(([^)]+)\)\s*$/)?.[1],
 			]
 				.map((value) => String(value ?? "").trim().toLowerCase())
@@ -301,10 +304,12 @@ export default function Transporter() {
 		);
 	};
 
-	const removeTransporter = async (row: TransporterRecord) => {
+	const confirmDelete = async () => {
+		if (!pendingDelete) return;
 		try {
-			await deleteTransporter(row.id).unwrap();
-			toast.success(`${row.username || "Transporter"} deleted.`);
+			await deleteTransporter(pendingDelete.id).unwrap();
+			toast.success(`${pendingDelete.username || "Transporter"} deleted.`);
+			setPendingDelete(null);
 		} catch (error) {
 			console.error("Failed to delete transporter.", error);
 			toast.error(apiErrorMessage(error, "Could not delete the transporter."));
@@ -432,7 +437,7 @@ export default function Transporter() {
 						type="button"
 						title="Delete transporter"
 						aria-label={`Delete ${row.username}`}
-						onClick={() => void removeTransporter(row)}
+						onClick={() => setPendingDelete(row)}
 						disabled={isDeleting}
 						className={`flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:opacity-60 ${isDark ? "border-rose-300/20 bg-rose-400/[0.06] text-rose-300 hover:bg-rose-400/[0.15]" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}
 					>
@@ -617,6 +622,17 @@ export default function Transporter() {
 					onSave={saveTransporter}
 				/>
 			)}
+
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={Boolean(pendingDelete)}
+				title="Delete transporter?"
+				entityName={pendingDelete?.username || pendingDelete?.contactPerson || "this transporter"}
+				isSubmitting={isDeleting}
+				onCancel={() => setPendingDelete(null)}
+				onConfirm={() => void confirmDelete()}
+				titleId="transporter-delete-title"
+			/>
 
 			<ChangeStatusDialog
 				isDark={isDark}

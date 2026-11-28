@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { SendCommandLogRow } from "@/interfaces/SendCommandLogReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -64,7 +65,7 @@ export default function SendComandLog() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 
@@ -74,7 +75,7 @@ export default function SendComandLog() {
 		isFetching: transportersFetching,
 	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
 
-	const vehicles = useMemo(() => {
+	const vehicleOptions = useMemo(() => {
 		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
 			const clientOk = !item.clientId || item.clientId === client;
@@ -86,14 +87,15 @@ export default function SendComandLog() {
 		if (!transporter) return;
 		if (transporters.some((item) => item.id === transporter)) return;
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	}, [transporter, transporters]);
 
 	useEffect(() => {
-		if (!vehicle) return;
-		if (vehicles.some((item) => item.id === vehicle)) return;
-		setVehicle("");
-	}, [vehicle, vehicles]);
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -121,17 +123,17 @@ export default function SendComandLog() {
 	const onClientChange = (next: string) => {
 		setClient(next);
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const onTransporterChange = (next: string) => {
 		setTransporter(next);
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const applyFilters = async () => {
-		if (!client || !transporter || !vehicle) {
-			toast.error("Select client, transporter, and vehicle.");
+		if (!client || !transporter || vehicles.length === 0) {
+			toast.error("Select client, transporter, and at least one vehicle.");
 			return;
 		}
 		if (!from || !to) {
@@ -139,20 +141,23 @@ export default function SendComandLog() {
 			return;
 		}
 
+		const vehicleParam = vehicles.join(",");
 		try {
 			const data = await fetchCommandLogs({
 				client,
 				transporter,
-				vehicle,
+				vehicle: vehicleParam,
 				from: toApiDateTime(from),
 				to: toApiDateTime(to),
 			}).unwrap();
 			const clientName = clients.find((option) => option.id === client)?.name ?? "";
 			const transporterName = transporters.find((option) => option.id === transporter)?.name ?? "";
-			const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? "";
+			const vehicleName = vehicles
+				.map((id) => vehicleOptions.find((option) => option.id === id)?.name ?? id)
+				.join(", ");
 			const nextRows = data.map((row, index) => ({
 				...row,
-				id: row.id || `${vehicle}-${index}`,
+				id: row.id || `${vehicleParam}-${index}`,
 				vehicleNumber: row.vehicleNumber || vehicleName,
 				client: row.client || clientName,
 				transporter: row.transporter || transporterName,
@@ -177,7 +182,7 @@ export default function SendComandLog() {
 		setSearch("");
 		setClient("");
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
 		setHiddenColumns([]);
@@ -284,7 +289,7 @@ export default function SendComandLog() {
 							disabled={!client || transportersLoading || transportersFetching}
 							placeholder={
 								!client
-									? "Select client first"
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
 										: transporters.length === 0
@@ -293,22 +298,23 @@ export default function SendComandLog() {
 							}
 							options={transporters}
 						/>
-						<SelectField
+						<VehicleMultiSelect
 							id="send-command-vehicle"
-							label="Vehicle"
-							value={vehicle}
-							onChange={setVehicle}
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
 							disabled={!transporter || vehiclesLoading}
 							placeholder={
 								!transporter
-									? "Select transporter first"
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
-										: vehicles.length === 0
+										: vehicleOptions.length === 0
 											? "No vehicles"
 											: "Select Vehicle"
 							}
-							options={vehicles}
+							emptyText="No vehicles"
+							isDark={isDark}
 						/>
 						<div
 							className={`flex h-10 min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2 sm:max-w-[280px] ${isDark ? "border-white/[0.08] bg-[#03091c]/65" : "border-slate-200 bg-white"}`}

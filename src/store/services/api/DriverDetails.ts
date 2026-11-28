@@ -6,17 +6,34 @@ import { unwrapList, unwrapResponse, type ApiEnvelope } from "../utils/unwrapRes
 
 type NestedParty =
 	| string
-	| { id?: string | number; externalId?: string; name?: string; companyName?: string }
+	| {
+			id?: string | number;
+			externalId?: string;
+			name?: string;
+			companyName?: string;
+			vehicle?: string;
+			vehicleNo?: string;
+			vehicleNickname?: string;
+	  }
 	| null
 	| undefined;
 
 type DriverDetailApiRecord = Omit<
 	DriverDetail,
-	"externalId" | "client" | "transporter" | "clientName" | "transporterName" | "status" | "reason"
+	| "externalId"
+	| "client"
+	| "transporter"
+	| "vehicle"
+	| "clientName"
+	| "transporterName"
+	| "vehicleName"
+	| "status"
+	| "reason"
 > & {
 	externalId?: string;
 	client?: NestedParty;
 	transporter?: NestedParty;
+	vehicle?: NestedParty;
 	status?: Status | string;
 	reason?: string | null;
 	active?: boolean;
@@ -34,6 +51,18 @@ const asPartyName = (value: NestedParty): string => {
 	return (value.name ?? value.companyName ?? "").trim();
 };
 
+const asVehicleName = (value: NestedParty): string => {
+	if (!value) return "";
+	if (typeof value === "string") return value.trim();
+	return (
+		value.vehicle?.trim() ||
+		value.vehicleNo?.trim() ||
+		value.vehicleNickname?.trim() ||
+		value.name?.trim() ||
+		""
+	);
+};
+
 const normalizeStatus = (status?: string, active?: boolean): Status => {
 	const value = String(status ?? "").trim().toLowerCase();
 	if (value === Status.INACTIVE || value === "inactive") return Status.INACTIVE;
@@ -49,6 +78,8 @@ const normalizeDriverDetail = (record: DriverDetailApiRecord): DriverDetail => (
 	clientName: asPartyName(record.client),
 	transporter: asId(record.transporter),
 	transporterName: asPartyName(record.transporter),
+	vehicle: asId(record.vehicle) || undefined,
+	vehicleName: asVehicleName(record.vehicle),
 	licenseToDrive: Array.isArray(record.licenseToDrive) ? record.licenseToDrive : [],
 	geofences: Array.isArray(record.geofences) ? record.geofences : [],
 	status: normalizeStatus(record.status, record.active),

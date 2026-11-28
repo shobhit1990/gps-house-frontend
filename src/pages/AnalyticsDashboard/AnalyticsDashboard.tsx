@@ -187,18 +187,13 @@ export default function AnalyticsDashboard() {
 	const transporterRef = useRef<HTMLDivElement>(null);
 	const vehicleRef = useRef<HTMLDivElement>(null);
 
-	/** Full lists always available so dropdowns stay selectable without prior picks. */
 	const {
-		data: allTransporters = [],
+		data: transporters = [],
 		isLoading: transportersLoading,
+		isFetching: transportersFetching,
 		isError: transportersError,
 		refetch: refetchTransporters,
-	} = useGetTransporterMasterQuery();
-	/** Optional client filter when a client is chosen. */
-	const { data: transportersByClient = [] } = useGetTransporterMasterQuery(
-		client ? { client } : undefined,
-		{ skip: !client },
-	);
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
 	/** Master vehicle IDs are UUIDs — required by `/analytics-dashboard`. */
 	const {
 		data: allVehicles = [],
@@ -255,25 +250,11 @@ export default function AnalyticsDashboard() {
 		[chartData],
 	);
 
-	/** Full list by default; narrow when client is selected. */
-	const transporters = useMemo(() => {
-		if (!client) return allTransporters;
-		const byId = new Map(transportersByClient.map((item) => [item.id, item]));
-		for (const item of allVehicles) {
-			if (item.clientId !== client || !item.transporterId || byId.has(item.transporterId)) continue;
-			const linked = allTransporters.find((row) => row.id === item.transporterId);
-			if (linked) byId.set(linked.id, linked);
-		}
-		return byId.size > 0 ? [...byId.values()] : allTransporters;
-	}, [allTransporters, allVehicles, client, transportersByClient]);
-
-	/** Full list by default; narrow when transporter (and optional client) is selected. */
 	const vehicles = useMemo(() => {
-		if (!transporter && !client) return allVehicles;
+		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
-			const clientOk = !client || !item.clientId || item.clientId === client;
-			const transporterOk = !transporter || item.transporterId === transporter;
-			return clientOk && transporterOk;
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
 		});
 	}, [allVehicles, client, transporter]);
 
@@ -557,18 +538,22 @@ export default function AnalyticsDashboard() {
 			: clients.length === 0
 				? "No clients found"
 				: "Select client";
-	const transporterPlaceholder = transportersLoading
-		? "Loading transporters…"
-		: transportersError
-			? "Failed to load transporters"
-			: transporters.length === 0
-				? "No transporters found"
-				: "Select transporter";
-	const vehiclePlaceholder = vehiclesLoading
-		? "Loading vehicles…"
-		: vehicles.length === 0
-			? "No vehicles found"
-			: "Select vehicle";
+	const transporterPlaceholder = !client
+		? "Select transporter"
+		: transportersLoading || transportersFetching
+			? "Loading transporters…"
+			: transportersError
+				? "Failed to load transporters"
+				: transporters.length === 0
+					? "No transporters found"
+					: "Select transporter";
+	const vehiclePlaceholder = !transporter
+		? "Select vehicle"
+		: vehiclesLoading
+			? "Loading vehicles…"
+			: vehicles.length === 0
+				? "No vehicles found"
+				: "Select vehicle";
 
 	return (
 		<div className={`relative min-h-screen overflow-x-hidden font-sans ${isDark ? "bg-[#03091c] text-white" : "bg-[#f5f8ff] text-slate-900"}`}>
@@ -646,7 +631,7 @@ export default function AnalyticsDashboard() {
 								setVehicle("");
 								setVehicleQuery("");
 							},
-							transportersLoading,
+							!client || transportersLoading || transportersFetching,
 							"Transporter",
 						)}
 						{filterSelect(
@@ -660,7 +645,7 @@ export default function AnalyticsDashboard() {
 							vehicleQuery,
 							setVehicleQuery,
 							(id) => setVehicle(id),
-							vehiclesLoading,
+							!transporter || vehiclesLoading,
 							"Vehicle",
 						)}
 						<div className="min-w-0">

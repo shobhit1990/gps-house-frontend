@@ -192,7 +192,7 @@ export function AddPayment({ onClose, onSubmit, initialValues, isSaving = false 
 									selectControl(
 										"vehicle",
 										!form.transporter
-											? "Select transporter first"
+											? "Select Vehicle"
 											: vehiclesLoading
 												? "Loading..."
 												: vehicleOptions.length === 0

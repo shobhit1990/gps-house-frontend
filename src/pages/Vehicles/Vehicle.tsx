@@ -31,18 +31,17 @@ import {
   Pencil,
   Power,
   ScrollText,
-  Terminal,
   Trash2,
   X,
   Loader2,
 } from "lucide-react";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddVehicleForm } from "@/components/VehicleForm/AddVehicleForm";
 import { ChangeVehicleClientDialog } from "@/components/VehicleForm/ChangeVehicleClientDialog";
 import { AddDeviceDialog } from "@/components/VehicleForm/AddDeviceDialog";
 import { VehicleCertificateDialog } from "@/components/VehicleForm/VehicleCertificateDialog";
-import { VehicleCommandDialog } from "@/components/VehicleForm/VehicleCommandDialog";
 import { VehicleLogDialog } from "@/components/VehicleForm/VehicleLogDialog";
 import { AddTransporterDialog } from "@/components/Transporter/AddTransporterDialog";
 import { AddJobSheet } from "@/components/ManageTechnician/AddJobSheet";
@@ -121,10 +120,10 @@ const columns: { key: string; label: string }[] = [
   { key: "loadingStatus", label: "Loading Status" },
   { key: "address", label: "Address" },
   { key: "vehicleLog", label: "Vehicle Log" },
-  { key: "delete", label: "Delete" },
+  // { key: "delete", label: "Delete" },
   { key: "certificate", label: "Certificate" },
-  { key: "command", label: "Command" },
   { key: "technician", label: "Assign To Technician" },
+  { key: "status", label: "Status" },
   { key: "reason", label: "Reason" },
 ];
 
@@ -377,8 +376,8 @@ const toVehicleRow = (vehicle: Vehicle, index: number): VehicleRecord => {
     ),
     vehicleLog: displayValue(record.vehicleLog),
     certificate: displayValue(record.certificate),
-    command: displayValue(record.command),
     technician: displayValue(record.technician),
+    status: statusLabel(normalizeLifecycleStatus(displayValue(vehicle.status, Status.ACTIVE))),
     reason: displayValue(vehicle.reason ?? record.reason),
     filterStatus,
     month: getVehicleMonth(lastUpdated || vehicle.createdAt || ""),
@@ -434,7 +433,6 @@ export default function Vehicle() {
   const [pendingStatusVehicle, setPendingStatusVehicle] = useState<VehicleRecord | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
   const [statusReason, setStatusReason] = useState("");
-  const [commandVehicle, setCommandVehicle] = useState<VehicleRecord | null>(null);
   const [certificateVehicle, setCertificateVehicle] = useState<VehicleRecord | null>(null);
   const [logVehicle, setLogVehicle] = useState<VehicleRecord | null>(null);
   const [editingTransporterId, setEditingTransporterId] = useState<string | null>(null);
@@ -1671,20 +1669,6 @@ export default function Vehicle() {
                             ) : (
                               "—"
                             )
-                          ) : column.key === "command" ? (
-                            <button
-                              type="button"
-                              onClick={() => setCommandVehicle(row)}
-                              aria-label={`Send command to ${row.vehicleNo}`}
-                              title={`Send command to ${row.vehicleNo}`}
-                              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${
-                                isDark
-                                  ? "border-cyan-300/20 bg-cyan-300/[0.08] text-cyan-200 hover:bg-cyan-300/[0.14]"
-                                  : "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
-                              }`}
-                            >
-                              <Terminal className="h-3.5 w-3.5" />
-                            </button>
                           ) : column.key === "certificate" ? (
                             <button
                               type="button"
@@ -1724,6 +1708,24 @@ export default function Vehicle() {
                             >
                               {value === "—" ? "Assign" : value}
                             </button>
+                          ) : column.key === "status" ? (
+                            <button
+                              type="button"
+                              onClick={() => openStatusChange(row)}
+                              disabled={isUpdatingVehicleStatus || !row.vehicleId}
+                              title="Change status"
+                              className={`rounded-md border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                isInactiveVehicleStatus(row.lifecycleStatus)
+                                  ? isDark
+                                    ? "border-rose-300/20 bg-rose-300/[0.10] text-rose-200 hover:bg-rose-300/[0.16]"
+                                    : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                  : isDark
+                                    ? "border-emerald-300/20 bg-emerald-300/[0.10] text-emerald-200 hover:bg-emerald-300/[0.16]"
+                                    : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              }`}
+                            >
+                              {row.status || statusLabel(normalizeLifecycleStatus(row.lifecycleStatus))}
+                            </button>
                           ) : isStatus ? (
                             <span
                               className={`rounded-md border px-2 py-1 text-[9px] ${
@@ -1740,7 +1742,15 @@ export default function Vehicle() {
                                 page * pageSize + rowIndex + 1,
                               ).padStart(2, "0")}
                             </span>
-                          ) : column.key === "address" || column.key === "reason" ? (
+                          ) : column.key === "reason" ? (
+                            isInactiveVehicleStatus(row.lifecycleStatus) ? (
+                              <span className="block max-w-[250px] truncate" title={value}>
+                                {value}
+                              </span>
+                            ) : (
+                              "—"
+                            )
+                          ) : column.key === "address" ? (
                             <span
                               className="block max-w-[250px] truncate"
                               title={value}
@@ -2029,13 +2039,6 @@ export default function Vehicle() {
         />
       )}
 
-      {commandVehicle && (
-        <VehicleCommandDialog
-          vehicleNo={commandVehicle.vehicleNo}
-          onClose={() => setCommandVehicle(null)}
-        />
-      )}
-
       {certificateVehicle && (
         <VehicleCertificateDialog
           vehicleNo={certificateVehicle.vehicleNo}
@@ -2106,64 +2109,19 @@ export default function Vehicle() {
         />
       )}
 
-      {pendingDelete && (
-        <div
-          className={`fixed inset-0 z-[820] flex items-center justify-center p-4 backdrop-blur-sm ${
-            isDark ? "bg-[#020718]/80" : "bg-slate-900/50"
-          }`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isDeletingVehicle) setPendingDelete(null);
-          }}
-        >
-          <section
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="vehicle-delete-title"
-            className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-              isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-            }`}
-          >
-            <h3
-              id="vehicle-delete-title"
-              className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-            >
-              Delete vehicle?
-            </h3>
-            <p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-              This will permanently remove{" "}
-              <strong className={isDark ? "text-white" : "text-slate-900"}>
-                {pendingDelete.vehicleNo || "this vehicle"}
-              </strong>
-              .
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={isDeletingVehicle}
-                className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-                  isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmDeleteVehicle()}
-                disabled={isDeletingVehicle}
-                className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-                  isDark
-                    ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
-                    : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                }`}
-              >
-                {isDeletingVehicle && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Delete
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+      <DeleteConfirmDialog
+        isDark={isDark}
+        open={!!pendingDelete}
+        title="Delete vehicle?"
+        entityName={pendingDelete?.vehicleNo || "this vehicle"}
+        isSubmitting={isDeletingVehicle}
+        onCancel={() => {
+          if (!isDeletingVehicle) setPendingDelete(null);
+        }}
+        onConfirm={() => void confirmDeleteVehicle()}
+        titleId="vehicle-delete-title"
+        zIndexClassName="z-[820]"
+      />
     </div>
   );
 }

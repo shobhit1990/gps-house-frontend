@@ -257,7 +257,7 @@ export default function NotificationList() {
 						>
 							<option value="">
 								{!client
-									? "Select client first"
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
 										: "Select Transporter"}
@@ -284,7 +284,7 @@ export default function NotificationList() {
 						>
 							<option value="">
 								{!transporter
-									? "Select transporter first"
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
 										: "Select Vehicle"}

@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import type { IdleSummary } from "@/interfaces/IdleSummaryReport";
 import { apiErrorMessage } from "@/lib/apiErrorMessage";
@@ -64,7 +65,7 @@ export default function IdleSummaryReport() {
 	const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>([]);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [duration, setDuration] = useState("5");
 	const [status, setStatus] = useState("Idle");
 	const [from, setFrom] = useState(initialRange.from);
@@ -76,7 +77,7 @@ export default function IdleSummaryReport() {
 		isFetching: transportersFetching,
 	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
 
-	const vehicles = useMemo(() => {
+	const vehicleOptions = useMemo(() => {
 		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
 			const clientOk = !item.clientId || item.clientId === client;
@@ -88,14 +89,15 @@ export default function IdleSummaryReport() {
 		if (!transporter) return;
 		if (transporters.some((item) => item.id === transporter)) return;
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	}, [transporter, transporters]);
 
 	useEffect(() => {
-		if (!vehicle) return;
-		if (vehicles.some((item) => item.id === vehicle)) return;
-		setVehicle("");
-	}, [vehicle, vehicles]);
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const visibleColumns = columns.filter((column) => !hiddenColumns.includes(column.key));
 	const filteredRows = useMemo(() => {
@@ -120,17 +122,17 @@ export default function IdleSummaryReport() {
 	const onClientChange = (next: string) => {
 		setClient(next);
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const onTransporterChange = (next: string) => {
 		setTransporter(next);
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const applyFilters = async () => {
-		if (!client || !transporter || !vehicle) {
-			toast.error("Select client, transporter, and vehicle.");
+		if (!client || !transporter || vehicles.length === 0) {
+			toast.error("Select client, transporter, and at least one vehicle.");
 			return;
 		}
 		if (!duration) {
@@ -146,20 +148,23 @@ export default function IdleSummaryReport() {
 			return;
 		}
 
+		const vehicleParam = vehicles.join(",");
 		try {
 			const data = await fetchIdleSummary({
 				client,
 				transporter,
-				vehicle,
+				vehicle: vehicleParam,
 				from: toApiDateTime(from),
 				to: toApiDateTime(to),
 				duration,
 				status,
 			}).unwrap();
-			const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? "";
+			const vehicleName = vehicles
+				.map((id) => vehicleOptions.find((option) => option.id === id)?.name ?? id)
+				.join(", ");
 			const nextRows = data.map((row, index) => ({
 				...row,
-				id: row.id || `${vehicle}-${index}`,
+				id: row.id || `${vehicleParam}-${index}`,
 				vehicle: row.vehicle || vehicleName,
 			}));
 			setRows(nextRows);
@@ -182,7 +187,7 @@ export default function IdleSummaryReport() {
 		setSearch("");
 		setClient("");
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 		setDuration("5");
 		setStatus("Idle");
 		setFrom(range.from);
@@ -291,7 +296,7 @@ export default function IdleSummaryReport() {
 							disabled={!client || transportersLoading || transportersFetching}
 							placeholder={
 								!client
-									? "Select client first"
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
 										: transporters.length === 0
@@ -300,22 +305,23 @@ export default function IdleSummaryReport() {
 							}
 							options={transporters}
 						/>
-						<SelectField
+						<VehicleMultiSelect
 							id="idle-summary-vehicle"
-							label="Vehicle"
-							value={vehicle}
-							onChange={setVehicle}
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
 							disabled={!transporter || vehiclesLoading}
 							placeholder={
 								!transporter
-									? "Select transporter first"
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
-										: vehicles.length === 0
+										: vehicleOptions.length === 0
 											? "No vehicles"
 											: "Select Vehicle"
 							}
-							options={vehicles}
+							emptyText="No vehicles"
+							isDark={isDark}
 						/>
 						<label className="relative block min-w-0 flex-1">
 							<span className="sr-only">Duration</span>

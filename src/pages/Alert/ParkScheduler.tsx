@@ -1,8 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import { ArrowUpDown, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ChangeStatusDialog } from "@/components/common/ChangeStatusDialog";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { AlertModal } from "@/components/Alert/AlertModal";
 import { EmptyTableRow, TableFooter } from "@/components/Alert/AlertTable";
 import {
@@ -121,8 +122,7 @@ const refLabel = (value: unknown, ...keys: string[]): string => {
 
 export default function ParkScheduler() {
 	const { data: clients = [] } = useGetClientMasterQuery();
-	const { data: transporters = [] } = useGetTransporterMasterQuery();
-	const { data: vehicles = [] } = useGetVehicleMasterQuery();
+	const { data: allVehicles = [] } = useGetVehicleMasterQuery();
 	const { data: schedulesData = [], isFetching, refetch } = useGetParkedSchedulesQuery();
 	const [createParkedSchedule, { isLoading: isCreating }] = useCreateParkedScheduleMutation();
 	const [updateParkedSchedule, { isLoading: isUpdating }] = useUpdateParkedScheduleMutation();
@@ -132,9 +132,44 @@ export default function ParkScheduler() {
 	const { logout } = useAuth();
 	const { theme } = useTheme();
 	const isDark = theme !== "light";
+	const [search, setSearch] = useState("");
+	const [page, setPage] = useState(0);
+	const [sortKey, setSortKey] = useState<ColumnKey>("transporter");
+	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+	const [formOpen, setFormOpen] = useState(false);
+	const [editingId, setEditingId] = useState<string | null>(null);
+	const [form, setForm] = useState(emptyForm);
+	/** Unscoped list for table name resolution only. */
+	const { data: allTransporters = [] } = useGetTransporterMasterQuery();
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+		isFetching: transportersFetching,
+	} = useGetTransporterMasterQuery(form.client ? { client: form.client } : undefined, { skip: !form.client });
+	const vehicles = useMemo(() => {
+		if (!form.client || !form.transporter) return [];
+		return allVehicles.filter((item) => {
+			const clientOk = !item.clientId || item.clientId === form.client;
+			return clientOk && item.transporterId === form.transporter;
+		});
+	}, [allVehicles, form.client, form.transporter]);
+
+	useEffect(() => {
+		if (!form.transporter || !form.client) return;
+		if (transportersLoading || transportersFetching) return;
+		if (transporters.some((item) => item.id === form.transporter)) return;
+		setForm((current) => ({ ...current, transporter: "", vehicle: "" }));
+	}, [form.client, form.transporter, transporters, transportersFetching, transportersLoading]);
+
+	useEffect(() => {
+		if (!form.vehicle || !form.transporter) return;
+		if (vehicles.some((item) => item.id === form.vehicle)) return;
+		setForm((current) => ({ ...current, vehicle: "" }));
+	}, [form.vehicle, form.transporter, vehicles]);
+
 	const rows = useMemo<ParkedRow[]>(() => {
-		const transporterNames = new Map(transporters.map((transporter) => [transporter.id, transporter.name]));
-		const vehicleNames = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle.name]));
+		const transporterNames = new Map(allTransporters.map((transporter) => [transporter.id, transporter.name]));
+		const vehicleNames = new Map(allVehicles.map((vehicle) => [vehicle.id, vehicle.name]));
 		return schedulesData.map((schedule) => {
 			const transporterId = refId(schedule.transporter);
 			const vehicleId = refId(schedule.vehicle);
@@ -160,14 +195,7 @@ export default function ParkScheduler() {
 						: "",
 			};
 		});
-	}, [schedulesData, transporters, vehicles]);
-	const [search, setSearch] = useState("");
-	const [page, setPage] = useState(0);
-	const [sortKey, setSortKey] = useState<ColumnKey>("transporter");
-	const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-	const [formOpen, setFormOpen] = useState(false);
-	const [editingId, setEditingId] = useState<string | null>(null);
-	const [form, setForm] = useState(emptyForm);
+	}, [schedulesData, allTransporters, allVehicles]);
 	const [pendingStatus, setPendingStatus] = useState<ParkedRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<ParkedRow | null>(null);
 	const [selectedStatus, setSelectedStatus] = useState<Status>(Status.INACTIVE);
@@ -557,7 +585,9 @@ export default function ParkScheduler() {
 							<select
 								id="park-client"
 								value={form.client}
-								onChange={(event) => setForm({ ...form, client: event.target.value })}
+								onChange={(event) =>
+									setForm({ ...form, client: event.target.value, transporter: "", vehicle: "" })
+								}
 								className={inputClass(isDark)}
 							>
 								<option value="">Select Client</option>
@@ -574,10 +604,19 @@ export default function ParkScheduler() {
 							<select
 								id="park-transporter"
 								value={form.transporter}
-								onChange={(event) => setForm({ ...form, transporter: event.target.value })}
-								className={inputClass(isDark)}
+								disabled={!form.client || transportersLoading || transportersFetching}
+								onChange={(event) =>
+									setForm({ ...form, transporter: event.target.value, vehicle: "" })
+								}
+								className={`${inputClass(isDark)} disabled:cursor-not-allowed disabled:opacity-55`}
 							>
-								<option value="">Select Transporter</option>
+								<option value="">
+									{!form.client
+										? "Select Transporter"
+										: transportersLoading || transportersFetching
+											? "Loading transporters…"
+											: "Select Transporter"}
+								</option>
 								{transporters.map((transporter) => (
 									<option key={transporter.id} value={transporter.id}>
 										{transporter.name}
@@ -591,8 +630,9 @@ export default function ParkScheduler() {
 							<select
 								id="park-vehicle"
 								value={form.vehicle}
+								disabled={!form.transporter}
 								onChange={(event) => setForm({ ...form, vehicle: event.target.value })}
-								className={inputClass(isDark)}
+								className={`${inputClass(isDark)} disabled:cursor-not-allowed disabled:opacity-55`}
 							>
 								<option value="">Select Vehicle</option>
 								{vehicles.map((vehicle) => (
@@ -687,62 +727,28 @@ export default function ParkScheduler() {
 				zIndexClassName="z-[810]"
 			/>
 
-			{pendingDelete ? (
-				<div
-					className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget && !isDeleting) setPendingDelete(null);
-					}}
-				>
-					<section
-						role="alertdialog"
-						aria-modal="true"
-						aria-labelledby="park-delete-title"
-						className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${
-							isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"
-						}`}
-					>
-						<h3
-							id="park-delete-title"
-							className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
-						>
-							Delete schedule?
-						</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove the schedule for{" "}
-							<strong className={isDark ? "text-white" : "text-slate-900"}>
-								{pendingDelete.vehicles || "this vehicle"}
-							</strong>
-							.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button
-								type="button"
-								onClick={() => setPendingDelete(null)}
-								disabled={isDeleting}
-								className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${
-									isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"
-								}`}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => void confirmDelete()}
-								disabled={isDeleting}
-								className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${
-									isDark
-										? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]"
-										: "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-								}`}
-							>
-								{isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			) : null}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!pendingDelete}
+				title="Delete schedule?"
+				entityName={pendingDelete?.vehicles || "this vehicle"}
+				description={
+					<>
+						This will permanently remove the schedule for{" "}
+						<strong className={isDark ? "text-white" : "text-slate-900"}>
+							{pendingDelete?.vehicles || "this vehicle"}
+						</strong>
+						.
+					</>
+				}
+				isSubmitting={isDeleting}
+				onCancel={() => {
+					if (!isDeleting) setPendingDelete(null);
+				}}
+				onConfirm={() => void confirmDelete()}
+				titleId="park-delete-title"
+				zIndexClassName="z-[810]"
+			/>
 		</div>
 	);
 }

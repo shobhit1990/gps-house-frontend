@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { Status } from "@/enums/Status";
@@ -14,9 +14,8 @@ type AddRaisedTicketProps = {
 };
 
 export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketProps) {
-  const { data: clients = [], isLoading: clientsLoading, isError: clientsError } = useGetClientMasterQuery();   
-  const { data: transporters = [], isLoading: transportersLoading, isError: transportersError } = useGetTransporterMasterQuery();
-  const { data: vehicles = [], isLoading: vehiclesLoading, isError: vehiclesError } = useGetVehicleMasterQuery();
+  const { data: clients = [], isLoading: clientsLoading, isError: clientsError } = useGetClientMasterQuery();
+  const { data: allVehicles = [], isLoading: vehiclesLoading, isError: vehiclesError } = useGetVehicleMasterQuery();
   const [createTicket, { isLoading: isSaving }] = useCreateRaiseTicketMutation();
   const [client, setClient] = useState("");
   const [transporter, setTransporter] = useState("");
@@ -24,6 +23,44 @@ export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketPro
   const [ticketType, setTicketType] = useState("");
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState("");
+
+  const {
+    data: transporters = [],
+    isLoading: transportersLoading,
+    isError: transportersError,
+  } = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
+
+  const vehicles = useMemo(() => {
+    return allVehicles.filter((item) => {
+      const clientOk = !client || !item.clientId || item.clientId === client;
+      const transporterOk = !transporter || item.transporterId === transporter;
+      return clientOk && transporterOk;
+    });
+  }, [allVehicles, client, transporter]);
+
+  useEffect(() => {
+    if (!transporter) return;
+    if (transporters.some((item) => item.id === transporter)) return;
+    setTransporter("");
+    setVehicle("");
+  }, [transporter, transporters]);
+
+  useEffect(() => {
+    if (!vehicle) return;
+    if (vehicles.some((item) => item.id === vehicle)) return;
+    setVehicle("");
+  }, [vehicle, vehicles]);
+
+  const onClientChange = (next: string) => {
+    setClient(next);
+    setTransporter("");
+    setVehicle("");
+  };
+
+  const onTransporterChange = (next: string) => {
+    setTransporter(next);
+    setVehicle("");
+  };
 
   const inputClass = `h-11 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${
     isDark
@@ -96,13 +133,13 @@ export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketPro
         <div className="grid gap-x-6 gap-y-5 px-5 py-6 sm:grid-cols-2 sm:px-7 lg:grid-cols-4">
           <label>
             <span className={labelClass}>Client <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} value={client} onChange={(event) => setClient(event.target.value)}>
+            <select className={inputClass} value={client} onChange={(event) => onClientChange(event.target.value)}>
               <option value="">Select Client</option>
               {clientsLoading ? <option disabled>Loading clients...</option> : null}
               {clientsError ? <option disabled>Could not load clients</option> : null}
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
+              {clients.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
             </select>
@@ -110,13 +147,18 @@ export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketPro
 
           <label>
             <span className={labelClass}>Transporter <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} value={transporter} onChange={(event) => setTransporter(event.target.value)}>
+            <select
+              className={inputClass}
+              value={transporter}
+              disabled={!client}
+              onChange={(event) => onTransporterChange(event.target.value)}
+            >
               <option value="">Select Transporter</option>
               {transportersLoading ? <option disabled>Loading transporters...</option> : null}
               {transportersError ? <option disabled>Could not load transporters</option> : null}
-              {transporters.map((transporter) => (
-                <option key={transporter.id} value={transporter.id}>
-                  {transporter.name}
+              {transporters.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
             </select>
@@ -124,13 +166,18 @@ export function AddRaisedTicket({ isDark, onClose, onSaved }: AddRaisedTicketPro
 
           <label>
             <span className={labelClass}>Vehicle <span className="font-normal text-slate-500">(Optional)</span></span>
-            <select className={inputClass} value={vehicle} onChange={(event) => setVehicle(event.target.value)}>
+            <select
+              className={inputClass}
+              value={vehicle}
+              disabled={!transporter}
+              onChange={(event) => setVehicle(event.target.value)}
+            >
               <option value="">Select Vehicle</option>
               {vehiclesLoading ? <option disabled>Loading vehicles...</option> : null}
               {vehiclesError ? <option disabled>Could not load vehicles</option> : null}
-              {vehicles.map((vehicle) => (
-                <option key={vehicle.id} value={vehicle.id}>
-                  {vehicle.name}
+              {vehicles.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
             </select>

@@ -291,7 +291,7 @@ export default function SensorReport() {
 							disabled={!client || transportersLoading || transportersFetching}
 							placeholder={
 								!client
-									? "Select client first"
+									? "Select Transporter"
 									: transportersLoading || transportersFetching
 										? "Loading transporters…"
 										: transporters.length === 0
@@ -308,7 +308,7 @@ export default function SensorReport() {
 							disabled={!transporter || vehiclesLoading}
 							placeholder={
 								!transporter
-									? "Select transporter first"
+									? "Select Vehicle"
 									: vehiclesLoading
 										? "Loading vehicles…"
 										: vehicles.length === 0

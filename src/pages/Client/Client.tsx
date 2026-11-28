@@ -3,6 +3,7 @@ import { useCloseDetailsOnOutsideClick } from "@/hooks/useCloseOnOutsideClick";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, Columns3, Loader2, Pencil, Plus, Power, RefreshCw, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { AddClientForm } from "@/components/Client/AddClientForm";
 import { useAuth } from "@/contexts/AuthContext";
@@ -524,23 +525,19 @@ export default function Client() {
 				</div>
 			) : null}
 
-			{deleteTarget && (
-				<div className="fixed inset-0 z-[810] flex items-center justify-center bg-[#020718]/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeleting) setDeleteTarget(null); }}>
-					<section role="alertdialog" aria-modal="true" aria-labelledby="client-delete-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${isDark ? "border-white/[0.10] bg-[#0a1630]" : "border-slate-200 bg-white"}`}>
-						<h3 id="client-delete-title" className={`text-base font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>Delete client?</h3>
-						<p className={`mt-2 text-sm leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
-							This will permanently remove <strong className={isDark ? "text-white" : "text-slate-900"}>{deleteTarget.username}</strong>.
-						</p>
-						<div className="mt-5 flex justify-end gap-2">
-							<button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} className={`h-9 rounded-lg border px-4 text-[12px] disabled:opacity-40 ${isDark ? "border-white/[0.08] text-slate-300" : "border-slate-200 text-slate-700"}`}>Cancel</button>
-							<button type="button" onClick={() => void confirmDelete()} disabled={isDeleting} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-4 text-[12px] font-semibold disabled:opacity-60 ${isDark ? "border-rose-300/30 bg-rose-400/[0.16] text-rose-100 hover:bg-rose-400/[0.24]" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`}>
-								{isDeleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-								Delete
-							</button>
-						</div>
-					</section>
-				</div>
-			)}
+			<DeleteConfirmDialog
+				isDark={isDark}
+				open={!!deleteTarget}
+				title="Delete client?"
+				entityName={deleteTarget?.username || "this client"}
+				isSubmitting={isDeleting}
+				onCancel={() => {
+					if (!isDeleting) setDeleteTarget(null);
+				}}
+				onConfirm={() => void confirmDelete()}
+				titleId="client-delete-title"
+				zIndexClassName="z-[810]"
+			/>
 		</div>
 	);
 }

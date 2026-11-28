@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmDialog } from "@/components/common/DeleteConfirmDialog";
 import { vehicles } from "@/components/data/vehicles";
 import { useGetStateMasterQuery } from "@/store/services/api/Master";
 import type { CertificateRecord } from "@/interfaces/Settings";
@@ -72,11 +74,14 @@ export function CertificatePanel({
   section: string;
   onSectionChange: (section: string) => void;
 }) {
+  const { theme } = useTheme();
+  const isDark = theme !== "light";
   const { draft, update } = useSettings();
   const [form, setForm] = useState<CertificateRecord>(emptyCertificate);
   const { data: states = [] } = useGetStateMasterQuery();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<CertificateRecord | null>(null);
   const pageSize = 8;
 
   const filtered = useMemo(() => {
@@ -121,9 +126,14 @@ export function CertificatePanel({
     onSectionChange("list");
   };
 
-  const remove = (id: string) => {
-    update("certificates", draft.certificates.filter((row) => row.id !== id));
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    update(
+      "certificates",
+      draft.certificates.filter((row) => row.id !== pendingDelete.id),
+    );
     toast.success("Certificate removed");
+    setPendingDelete(null);
   };
 
   if (section === "form") {
@@ -333,7 +343,12 @@ export function CertificatePanel({
                       <button type="button" aria-label="Edit certificate" onClick={() => openEdit(row)} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/10 dark:hover:text-white">
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
-                      <button type="button" aria-label="Remove certificate" onClick={() => remove(row.id)} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-400/10">
+                      <button
+                        type="button"
+                        aria-label="Remove certificate"
+                        onClick={() => setPendingDelete(row)}
+                        className="rounded-md p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-400/10"
+                      >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -353,6 +368,15 @@ export function CertificatePanel({
           <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)} className="rounded-md border border-slate-200 px-2 py-1 disabled:opacity-40 dark:border-white/10">Next</button>
         </div>
       </div>
+      <DeleteConfirmDialog
+        isDark={isDark}
+        open={!!pendingDelete}
+        title="Delete certificate?"
+        entityName={pendingDelete?.vehicleNo || pendingDelete?.deviceImei || "this certificate"}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+        titleId="certificate-delete-title"
+      />
     </div>
   );
 }

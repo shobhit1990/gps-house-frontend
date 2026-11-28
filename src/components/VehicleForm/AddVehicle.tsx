@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { Minus, Plus } from "lucide-react";
 import type { VehicleFieldConfig } from "@/interfaces/AddVehicleFields";
 import { addVehicleFields } from "@/interfaces/AddVehicleFields";
@@ -56,7 +56,13 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 		isLoading: devicesLoading,
 		isError: devicesError,
 	} = useGetDeviceMasterQuery();
-	const { data: transporters = [] } = useGetTransporterMasterQuery();
+	const clientId = values.vehicleClient?.trim() ?? "";
+	const {
+		data: transporters = [],
+		isLoading: transportersLoading,
+	} = useGetTransporterMasterQuery(clientId ? { client: clientId } : undefined, {
+		skip: !clientId,
+	});
 	const masterOptions = useMemo(
 		() => ({
 			vehicleClient: withSelectedOption(clients, values.vehicleClient, values.vehicleClientLabel),
@@ -79,6 +85,14 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 			values.vehicleTransporterLabel,
 		],
 	);
+
+	useEffect(() => {
+		const selected = values.vehicleTransporter?.trim();
+		if (!selected || !clientId) return;
+		if (transportersLoading) return;
+		if (transporters.some((option) => option.id === selected || option.externalId === selected)) return;
+		onChange("vehicleTransporter", "");
+	}, [clientId, onChange, transporters, transportersLoading, values.vehicleTransporter]);
 	const inputClass = `h-9 w-full rounded-md border px-3 text-[12px] font-normal outline-none transition focus:ring-2 ${
 		isDark
 			? "border-white/[0.09] bg-[#03091c]/70 text-white placeholder:text-slate-500 focus:border-cyan-300/35 focus:ring-cyan-300/10"
@@ -120,15 +134,28 @@ export function AddVehicle({ isDark, values, onChange }: AddVehicleProps) {
 						<select
 							value={selectValue}
 							required={field.required}
-							disabled={field.name === "vehicleDevice" && devicesLoading}
+							disabled={
+								(field.name === "vehicleDevice" && devicesLoading) ||
+								(field.name === "vehicleTransporter" && (!clientId || transportersLoading))
+							}
 							onChange={(event) => onChange(field.name, event.target.value)}
 							className={`${inputClass} appearance-none pr-9`}
 						>
-							{field.options?.map((option, index) => (
-								<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
-									{field.optionLabels?.[option] ?? option}
+							{field.name === "vehicleTransporter" ? (
+								<option value="">
+									{!clientId
+										? "Select Transporter"
+										: transportersLoading
+											? "Loading transporters..."
+											: "Select Transporter"}
 								</option>
-							))}
+							) : (
+								field.options?.map((option, index) => (
+									<option key={option} value={index === 0 && option.startsWith("Select ") ? "" : option}>
+										{field.optionLabels?.[option] ?? option}
+									</option>
+								))
+							)}
 							{relationOptions?.map((option) => (
 								<option key={option.id} value={option.id}>{option.name}</option>
 							))}

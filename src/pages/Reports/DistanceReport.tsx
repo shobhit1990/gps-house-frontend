@@ -3,6 +3,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Activity, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Search, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { VehicleMultiSelect } from "@/components/Reports/VehicleMultiSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReportType } from "@/enums/ReportType";
 import { SortOrder } from "@/enums/SortOrder";
@@ -164,7 +165,7 @@ export default function DistanceReport() {
 	const [page, setPage] = useState(0);
 	const [client, setClient] = useState("");
 	const [transporter, setTransporter] = useState("");
-	const [vehicle, setVehicle] = useState("");
+	const [vehicles, setVehicles] = useState<string[]>([]);
 	const [from, setFrom] = useState(initialRange.from);
 	const [to, setTo] = useState(initialRange.to);
 	const [applied, setApplied] = useState<AppliedFilters>({ days: [] });
@@ -175,13 +176,13 @@ export default function DistanceReport() {
 		data: transporters = [],
 		isLoading: transportersLoading,
 		isFetching: transportersFetching,
-	} = useGetTransporterMasterQuery(client ? { client } : undefined);
+	} = useGetTransporterMasterQuery(client ? { client } : undefined, { skip: !client });
 
-	const vehicles = useMemo(() => {
+	const vehicleOptions = useMemo(() => {
+		if (!client || !transporter) return [];
 		return allVehicles.filter((item) => {
-			const clientOk = !client || !item.clientId || item.clientId === client;
-			const transporterOk = !transporter || item.transporterId === transporter;
-			return clientOk && transporterOk;
+			const clientOk = !item.clientId || item.clientId === client;
+			return clientOk && item.transporterId === transporter;
 		});
 	}, [allVehicles, client, transporter]);
 
@@ -189,14 +190,15 @@ export default function DistanceReport() {
 		if (!transporter) return;
 		if (transporters.some((item) => item.id === transporter)) return;
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	}, [transporter, transporters]);
 
 	useEffect(() => {
-		if (!vehicle) return;
-		if (vehicles.some((item) => item.id === vehicle)) return;
-		setVehicle("");
-	}, [vehicle, vehicles]);
+		if (vehicles.length === 0) return;
+		const allowed = new Set(vehicleOptions.map((option) => option.id));
+		const next = vehicles.filter((id) => allowed.has(id));
+		if (next.length !== vehicles.length) setVehicles(next);
+	}, [vehicleOptions, vehicles]);
 
 	const filteredRows = useMemo(() => {
 		const query = search.trim().toLowerCase();
@@ -243,17 +245,17 @@ export default function DistanceReport() {
 	const onClientChange = (next: string) => {
 		setClient(next);
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const onTransporterChange = (next: string) => {
 		setTransporter(next);
-		setVehicle("");
+		setVehicles([]);
 	};
 
 	const applyFilters = async () => {
-		if (!client || !transporter || !vehicle) {
-			toast.error("Select client, transporter, and vehicle.");
+		if (!client || !transporter || vehicles.length === 0) {
+			toast.error("Select client, transporter, and at least one vehicle.");
 			return;
 		}
 		if (!from || !to) {
@@ -269,15 +271,18 @@ export default function DistanceReport() {
 
 		const apiFrom = toApiDateTime(from);
 		const apiTo = toApiDateTime(to);
+		const vehicleParam = vehicles.join(",");
 		const clientName = clients.find((option) => option.id === client)?.name ?? "";
 		const transporterName = transporters.find((option) => option.id === transporter)?.name ?? "";
-		const vehicleName = vehicles.find((option) => option.id === vehicle)?.name ?? vehicle;
+		const vehicleName = vehicles
+			.map((id) => vehicleOptions.find((option) => option.id === id)?.name ?? id)
+			.join(", ");
 
 		try {
 			const result = await fetchDistanceReport({
 				client,
 				transporter,
-				vehicle,
+				vehicle: vehicleParam,
 				from: apiFrom,
 				to: apiTo,
 				reportType,
@@ -289,8 +294,8 @@ export default function DistanceReport() {
 					? [
 							fillDays(
 								{
-									id: vehicle,
-									externalId: vehicle,
+									id: vehicleParam,
+									externalId: vehicleParam,
 									client: clientName,
 									transporter: transporterName,
 									vehicle: vehicleName,
@@ -306,7 +311,7 @@ export default function DistanceReport() {
 						]
 					: result.map((row) =>
 							fillDays(
-								{ ...row, id: row.vehicle || row.id || vehicle, externalId: row.externalId || vehicle },
+								{ ...row, id: row.vehicle || row.id || vehicleParam, externalId: row.externalId || vehicleParam },
 								days,
 								clientName,
 								transporterName,
@@ -335,7 +340,7 @@ export default function DistanceReport() {
 		setSearch("");
 		setClient("");
 		setTransporter("");
-		setVehicle("");
+		setVehicles([]);
 		setFrom(range.from);
 		setTo(range.to);
 		setApplied({ days: [] });
@@ -429,30 +434,35 @@ export default function DistanceReport() {
 							label="Transporter"
 							value={transporter}
 							onChange={onTransporterChange}
-							disabled={transportersLoading || transportersFetching}
+							disabled={!client || transportersLoading || transportersFetching}
 							placeholder={
-								transportersLoading || transportersFetching
-									? "Loading transporters…"
-									: transporters.length === 0
-										? "No transporters"
-										: "Select Transporter"
+								!client
+									? "Select Transporter"
+									: transportersLoading || transportersFetching
+										? "Loading transporters…"
+										: transporters.length === 0
+											? "No transporters"
+											: "Select Transporter"
 							}
 							options={transporters}
 						/>
-						<SelectField
+						<VehicleMultiSelect
 							id="distance-vehicle"
-							label="Vehicle"
-							value={vehicle}
-							onChange={setVehicle}
-							disabled={vehiclesLoading}
+							options={vehicleOptions}
+							values={vehicles}
+							onValuesChange={setVehicles}
+							disabled={!transporter || vehiclesLoading}
 							placeholder={
-								vehiclesLoading
-									? "Loading vehicles…"
-									: vehicles.length === 0
-										? "No vehicles"
-										: "Select Vehicle"
+								!transporter
+									? "Select Vehicle"
+									: vehiclesLoading
+										? "Loading vehicles…"
+										: vehicleOptions.length === 0
+											? "No vehicles"
+											: "Select Vehicle"
 							}
-							options={vehicles}
+							emptyText="No vehicles"
+							isDark={isDark}
 						/>
 						<div
 							className={`flex h-10 min-w-0 items-center gap-2 rounded-lg border px-2 ${isDark ? "border-white/[0.08] bg-[#03091c]/70" : "border-slate-200 bg-white"}`}

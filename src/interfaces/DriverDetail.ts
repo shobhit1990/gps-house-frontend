@@ -3,6 +3,8 @@ import type { Status } from "@/enums/Status";
 export interface CreateDriverDetailRequest {
 	client: string;
 	transporter: string;
+	/** Vehicle externalId / id when assigned. */
+	vehicle?: string;
 	firstName: string;
 	lastName: string;
 	deviceId: string;
@@ -38,6 +40,7 @@ export interface DriverDetail extends CreateDriverDetailRequest {
 	externalId: string;
 	clientName?: string;
 	transporterName?: string;
+	vehicleName?: string;
 	createdAt?: string;
 	updatedAt?: string;
 	dateOfLeaving?: string;

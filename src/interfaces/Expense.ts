@@ -19,7 +19,7 @@ export interface CreateExpenseRequest {
   client: string;
   /** Transporter externalId / id. */
   transporter: string;
-  /** Must be VehicleWise | DriverWise */
+  /** Must be VehicleWise | DriverWise | TripWise | GeneralWise */
   expenseFor: string;
   /** Vehicle id when expenseFor is VehicleWise */
   vehicle?: string;

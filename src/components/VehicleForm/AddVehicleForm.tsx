@@ -1133,7 +1133,15 @@ export function AddVehicleForm({ onClose, onSubmit, vehicleId, relationSeed }: A
                             isDark={isDark}
                             values={values}
                             onChange={(name, value) => {
-                                setValues((current) => ({ ...current, [name]: value }));
+                                setValues((current) => {
+                                    const next = { ...current, [name]: value };
+                                    if (name === "vehicleClient") {
+                                        next.vehicleTransporter = "";
+                                        next.vehicleTransporterLabel = "";
+                                        next.paymentTransporter = "";
+                                    }
+                                    return next;
+                                });
                                 setFormError("");
                             }}
                         />

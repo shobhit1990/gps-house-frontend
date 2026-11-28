@@ -2,11 +2,14 @@
 export type PoiReportParams = {
 	/** e.g. `Vehicle Wise` | `Geofence Wise` */
 	type: string;
-	/** e.g. `Transporter` | `Group` */
+	/** e.g. `Transporter` | `Group` | `GeoFence` */
 	filterType: string;
 	transporter?: string;
 	group?: string;
-	vehicle: string;
+	/** Comma-separated vehicle ids — Vehicle Wise. */
+	vehicle?: string;
+	/** Comma-separated geofence ids — Geofence Wise. */
+	geofence?: string;
 	/** ISO local datetime, e.g. `2026-11-23T00:00:00` */
 	from: string;
 	/** ISO local datetime, e.g. `2026-11-23T23:59:00` */
@@ -66,6 +69,14 @@ export interface PoiReportApiRecord {
 	type?: string | null;
 	remark?: string | null;
 	status?: string | null;
+	/** Summary fields (Vehicle Wise table). */
+	visits?: number | string | null;
+	visitCount?: number | string | null;
+	noOfVisits?: number | string | null;
+	numberOfVisits?: number | string | null;
+	stop?: string | number | null;
+	stopTime?: string | number | null;
+	stopMinutes?: number | string | null;
 }
 
 export interface PoiReportRow {
@@ -73,6 +84,10 @@ export interface PoiReportRow {
 	externalId: string;
 	sn: number;
 	vehicle: string;
+	/** No. of visits — summary count or 1 per detail hit. */
+	visits: number;
+	/** Stop duration / halt at POI (display string). */
+	stop: string;
 	poiName: string;
 	inTime: string;
 	outTime: string;
